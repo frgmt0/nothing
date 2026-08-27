@@ -1,0 +1,31 @@
+# 1. Factorial (bench/references.md §1), as the nearest Phase-1 program.
+#
+#   λn:Num. if n == 0 then 1 else n * ⦇⦈
+#
+# The recursive call `factorial(n - 1)` is an empty hole: Phase 1 has no
+# recursion (it arrives in Phase 6), and a hole is exactly the honest way to
+# say "an expression belongs here that cannot be written yet".
+
+# λn:Num. ⦇⦈
+construct-lam
+move-parent
+set-binder-id 0
+set-ann Num
+move-child 0
+
+# if ⦇⦈ == ⦇⦈ then ⦇⦈ else ⦇⦈
+construct-if
+construct-binop eq
+construct-var 0
+move-next-sibling
+construct-num 0
+
+# then 1
+move-parent
+move-next-sibling
+construct-num 1
+
+# else n * ⦇⦈
+move-next-sibling
+construct-var 0
+construct-binop mul

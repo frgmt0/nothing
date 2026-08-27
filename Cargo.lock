@@ -120,12 +120,14 @@ name = "nothing-action"
 version = "0.1.0"
 dependencies = [
  "nothing-core",
+ "proptest",
 ]
 
 [[package]]
 name = "nothing-bench"
 version = "0.1.0"
 dependencies = [
+ "nothing-action",
  "nothing-core",
 ]
 

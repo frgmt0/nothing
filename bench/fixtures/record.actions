@@ -1,0 +1,50 @@
+# 3. Two-field record constructor plus accessor (bench/references.md §3),
+#    as the nearest Phase-1 program.
+#
+#   let mkPoint = λx:Num. λy:Num. (x, y) in λp:Num * Num. fst p
+#
+# Phase 1 has no records and no nominal types, so `{ x: Num, y: Num }`
+# becomes the structural product `Num * Num`, the constructor becomes a
+# curried lambda building the pair, and the accessor `p.x` becomes `fst p`.
+# Field *names* are lost — a product's components are positional — which is
+# the one thing this encoding genuinely cannot express.
+
+# let mkPoint = ⦇⦈ in ⦇⦈
+construct-let
+move-parent
+set-binder-id 0
+move-child 0
+
+# λx:Num. ⦇⦈
+construct-lam
+move-parent
+set-binder-id 1
+set-ann Num
+move-child 0
+
+# λy:Num. ⦇⦈
+construct-lam
+move-parent
+set-binder-id 2
+set-ann Num
+move-child 0
+
+# (x, y)
+construct-pair
+construct-var 1
+move-next-sibling
+construct-var 2
+
+# in λp:Num * Num. fst p
+move-parent
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-lam
+move-parent
+set-binder-id 3
+set-ann Num * Num
+move-child 0
+construct-proj fst
+construct-var 3

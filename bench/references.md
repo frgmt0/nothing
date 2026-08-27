@@ -113,3 +113,97 @@ denominator, fixed forever:
 | 3 | Record constructor + accessor | 65 |
 | 4 | Three-case state machine | 151 |
 | 5 | Three-deep nested conditional | 146 |
+
+---
+
+## 2026-08-26 — Mapping the five references onto the Phase-1 surface
+
+Phase 3 records an action sequence for each reference program
+(`bench/fixtures/<name>.actions`, replayed by `nothing-bench` and by the
+REPL harness `cargo run -p nothing-action --bin repl`). Four of the five
+references use language features that Phase 1 deliberately does not have —
+recursion, lists, pattern matching, records, sum types — and the spec is
+explicit that they are not to be added early. So each fixture builds the
+**nearest well-typed Phase-1 program**, and this section records exactly
+what was substituted, so nobody later mistakes the fixture for the
+reference.
+
+The Neovim baseline above is **not** recalculated to match the
+approximations. It stays fixed forever, as declared. That makes the Phase 3
+ratios flattering in a way that must not be read as progress; see
+`bench/RESULTS.md` for the full caveat.
+
+| # | Program | Fixture builds | Exact? |
+|---|---------|----------------|--------|
+| 1 | Factorial | `λn:Num. if n == 0 then 1 else n * ⦇⦈` | no |
+| 2 | List map | `λf:Num -> Num. λxs:Num * Num. (f (fst xs), f (snd xs))` | no |
+| 3 | Record ctor + accessor | `let mkPoint = λx:Num. λy:Num. (x, y) in λp:Num * Num. fst p` | no |
+| 4 | State machine | `λs:Num. if s == 0 then 1 else if s == 1 then 2 else 0` | no |
+| 5 | Nested conditional | `λx:Num. if 0 < x then (if 10 < x then (if 100 < x then 3 else 2) else 1) else 0` | yes* |
+
+Variables render as `x0`, `x1`, … because Phase 5 (names as identity, with a
+separate name table) has not happened yet. The names in this table are the
+binders' intended meanings, not something the renderer knows.
+
+### 1. Factorial — the recursive call is a hole
+
+`n * factorial(n - 1)` becomes `n * ⦇⦈`. Phase 1 has no recursion; it
+arrives in Phase 6 ("Add recursion. Either a `letrec` form or a fixpoint
+combinator"). An **empty hole** is precisely the right encoding: it is the
+language's own way of writing "an expression belongs here and has not been
+written", the program remains well-typed with it in place, and Phase 6's
+first act can be to fill it. Nothing is faked. `n == 0` is kept from the
+reference verbatim.
+
+*What is lost:* the actual recursion, and therefore the ability to
+evaluate. This is the only fixture that still contains a hole, and there is
+a test asserting that no other one does.
+
+### 2. List map — a pair is the list
+
+Phase 1 has no lists and no pattern matching, and the spec forbids adding
+them ("You will want to add records, lists, strings, and polymorphism during
+Phase 1. Do not."). A product type is the longest fixed-length sequence the
+type grammar can express, so `map` becomes map over a two-element list
+encoded as `Num * Num`: take a function, take the container, rebuild the
+container with the function applied to each element. The *shape* of the
+reference — the thing that makes `map` worth benchmarking — survives; the
+recursion over a cons-list does not.
+
+*What is lost:* arbitrary length, and with it the `match`/recursion that
+makes the reference 114 keystrokes. The fixture is genuinely a smaller
+program.
+
+### 3. Record constructor + accessor — pairs, positionally
+
+`type Point = { x: Num, y: Num }` becomes the structural product
+`Num * Num`; the constructor becomes the curried `λx:Num. λy:Num. (x, y)`;
+the accessor `p.x` becomes `fst p`. There is no nominal type declaration in
+Phase 1 to encode, so the fixture defines the constructor with a `let` and
+returns the accessor as the program's value — matching the reference, which
+also defines both and calls neither.
+
+*What is lost:* the field **names**. A product's components are positional,
+so `getX` and `getY` are `fst` and `snd`, and nothing in the program records
+that component 0 is called `x`. This is the substitution that gives up the
+most.
+
+### 4. State machine — numeric codes and a chain of `if`
+
+No sum types, no `match`. `Idle`/`Running`/`Stopped` are encoded as the
+codes `0`/`1`/`2` and the match becomes nested equality tests, with the
+final `else` acting as the `Stopped` case.
+
+*What is lost:* exhaustiveness. The reference's `match` can be checked for a
+missing case; a chain of `if`s with a catch-all `else` cannot. Also the
+distinction between a state and any other number — `transition(7)` is
+well-typed here and was not in the reference.
+
+### 5. Nested conditional — direct, modulo one operator
+
+This one fits the surface. The single change is that `x > 0` is written
+`0 < x`: Phase 1's operator set is `Add`/`Sub`/`Mul`/`Lt`/`Eq`, with no `>`,
+so the operands are swapped. The three-level nesting — the entire point of
+this reference — is reproduced exactly, which is why it is marked "yes*":
+the program means what the reference means, with only the operator spelling
+differing.

@@ -1,0 +1,56 @@
+# 5. Function with a conditional nested three levels deep
+#    (bench/references.md §5). This one fits the Phase-1 surface directly.
+#
+#   λx:Num. if 0 < x then (if 10 < x then (if 100 < x then 3 else 2) else 1) else 0
+#
+# The only change from the reference is that `x > 0` is written `0 < x`:
+# Phase 1's operator set is Add/Sub/Mul/Lt/Eq, with no `>`, so the operands
+# are swapped. The nesting — the actual subject of this reference program —
+# is reproduced exactly.
+
+# λx:Num. ⦇⦈
+construct-lam
+move-parent
+set-binder-id 0
+set-ann Num
+move-child 0
+
+# if 0 < x then ⦇⦈ else ⦇⦈
+construct-if
+construct-binop lt
+construct-num 0
+move-next-sibling
+construct-var 0
+move-parent
+move-next-sibling
+
+# if 10 < x then ⦇⦈ else ⦇⦈
+construct-if
+construct-binop lt
+construct-num 10
+move-next-sibling
+construct-var 0
+move-parent
+move-next-sibling
+
+# if 100 < x then 3 else 2
+construct-if
+construct-binop lt
+construct-num 100
+move-next-sibling
+construct-var 0
+move-parent
+move-next-sibling
+construct-num 3
+move-next-sibling
+construct-num 2
+
+# ... else 1
+move-parent
+move-next-sibling
+construct-num 1
+
+# ... else 0
+move-parent
+move-next-sibling
+construct-num 0

@@ -1,0 +1,39 @@
+# 2. List map (bench/references.md §2), as the nearest Phase-1 program.
+#
+#   λf:Num -> Num. λxs:Num * Num. (f (fst xs), f (snd xs))
+#
+# Phase 1 has no lists and no pattern matching. A pair is the longest
+# fixed-length sequence the type grammar can express, so `map` becomes map
+# over a 2-element "list": apply f to both components. The shape of the
+# reference program — take a function, take a container, rebuild the
+# container with the function applied to each element — survives intact.
+
+# λf:Num -> Num. ⦇⦈
+construct-lam
+move-parent
+set-binder-id 0
+set-ann Num -> Num
+move-child 0
+
+# λxs:Num * Num. ⦇⦈
+construct-lam
+move-parent
+set-binder-id 1
+set-ann Num * Num
+move-child 0
+
+# (f (fst xs), ⦇⦈)
+construct-pair
+construct-var 0
+construct-ap
+construct-proj fst
+construct-var 1
+
+# (..., f (snd xs))
+move-parent
+move-parent
+move-next-sibling
+construct-var 0
+construct-ap
+construct-proj snd
+construct-var 1

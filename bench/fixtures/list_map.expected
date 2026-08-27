@@ -1,0 +1,1 @@
+λx0:Num -> Num. λx1:Num * Num. (x0 (fst x1), x0 (snd x1))

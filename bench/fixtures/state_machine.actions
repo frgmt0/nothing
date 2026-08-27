@@ -1,0 +1,40 @@
+# 4. Three-case state machine (bench/references.md §4), as the nearest
+#    Phase-1 program.
+#
+#   λs:Num. if s == 0 then 1 else if s == 1 then 2 else 0
+#
+# Phase 1 has no sum types and no `match`. The three states are encoded as
+# the numeric codes Idle = 0, Running = 1, Stopped = 2, and the match
+# becomes a chain of equality tests. What is lost is exhaustiveness: the
+# nested `else` is a catch-all, so the compiler can no longer tell you a
+# case is missing.
+
+# λs:Num. ⦇⦈
+construct-lam
+move-parent
+set-binder-id 0
+set-ann Num
+move-child 0
+
+# if s == 0 then 1 else ⦇⦈    -- Idle -> Running
+construct-if
+construct-binop eq
+construct-var 0
+move-next-sibling
+construct-num 0
+move-parent
+move-next-sibling
+construct-num 1
+move-next-sibling
+
+# if s == 1 then 2 else 0     -- Running -> Stopped, Stopped -> Idle
+construct-if
+construct-binop eq
+construct-var 0
+move-next-sibling
+construct-num 1
+move-parent
+move-next-sibling
+construct-num 2
+move-next-sibling
+construct-num 0

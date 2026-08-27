@@ -1,0 +1,1 @@
+let x0 = (λx1:Num. λx2:Num. (x1, x2)) in λx3:Num * Num. fst x3
