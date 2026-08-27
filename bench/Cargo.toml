@@ -1,0 +1,11 @@
+[package]
+name = "nothing-bench"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "nothing-bench"
+path = "src/main.rs"
+
+[dependencies]
+nothing-core = { path = "../core" }

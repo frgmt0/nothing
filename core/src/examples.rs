@@ -1,0 +1,199 @@
+//! Hand-written example programs (Phase 1). Stubbed in Phase 0 so later
+//! agents do not need to touch `lib.rs` concurrently.
+//!
+//! Ten small programs built directly with the constructor functions from
+//! [`crate::exp`], covering the whole Phase 1 surface: lambdas, application,
+//! `let`, `if`, binary ops, pairs, and projections. At least two contain an
+//! empty hole; at least one contains a non-empty hole whose contents are
+//! well-typed on their own but inconsistent with the context they sit in.
+//! No recursion, strings, or lists — none of that exists in Phase 1.
+
+use crate::exp::{Exp, HoleId, Id, Op, Side};
+use crate::ty::Ty;
+
+/// `let x = 1 in x` — the simplest possible `let`.
+pub fn let_identity() -> Exp {
+    let x = Id::new(0);
+    Exp::let_(x, Exp::num(1), Exp::var(x))
+}
+
+/// `(λx:Num. x + 1) 41` — a lambda applied to a number.
+pub fn increment_applied() -> Exp {
+    let x = Id::new(0);
+    Exp::ap(
+        Exp::lam(x, Ty::Num, Exp::bin_op(Op::Add, Exp::var(x), Exp::num(1))),
+        Exp::num(41),
+    )
+}
+
+/// `λn:Num. if n < 1 then 1 else n` — a lambda with a conditional body,
+/// exercising `If`'s synthesis-via-branch-join.
+pub fn clamp_to_one() -> Exp {
+    let n = Id::new(0);
+    Exp::lam(
+        n,
+        Ty::Num,
+        Exp::if_(
+            Exp::bin_op(Op::Lt, Exp::var(n), Exp::num(1)),
+            Exp::num(1),
+            Exp::var(n),
+        ),
+    )
+}
+
+/// `let p = (1, true) in fst p` — a pair built and then projected.
+pub fn pair_and_project() -> Exp {
+    let p = Id::new(0);
+    Exp::let_(
+        p,
+        Exp::pair(Exp::num(1), Exp::bool_(true)),
+        Exp::proj(Side::L, Exp::var(p)),
+    )
+}
+
+/// `(⦇⦈, 2)` — a pair whose first component is an empty hole. One of the
+/// two required empty-hole examples.
+pub fn pair_with_empty_hole() -> Exp {
+    Exp::pair(Exp::empty_hole(HoleId::new(0)), Exp::num(2))
+}
+
+/// `1 + ⦇⦈` — an empty hole standing in for an unwritten operand. The other
+/// required empty-hole example.
+pub fn add_with_empty_hole() -> Exp {
+    Exp::bin_op(Op::Add, Exp::num(1), Exp::empty_hole(HoleId::new(0)))
+}
+
+/// `let f = λx:Num. x * x in f 5 == 25` — `let`-bound function, applied,
+/// compared with `Eq`.
+pub fn square_and_compare() -> Exp {
+    let f = Id::new(0);
+    let x = Id::new(1);
+    Exp::let_(
+        f,
+        Exp::lam(x, Ty::Num, Exp::bin_op(Op::Mul, Exp::var(x), Exp::var(x))),
+        Exp::bin_op(Op::Eq, Exp::ap(Exp::var(f), Exp::num(5)), Exp::num(25)),
+    )
+}
+
+/// `λx:?. x` — a lambda with a hole annotation, applied to `true`. Exercises
+/// gradual typing: the parameter's type is unknown at the binder but gets
+/// pinned down by the argument at the call site.
+pub fn identity_hole_annotated_applied() -> Exp {
+    let x = Id::new(0);
+    Exp::ap(Exp::lam(x, Ty::Hole, Exp::var(x)), Exp::bool_(true))
+}
+
+/// `1 + ⦇true⦈` — a non-empty hole quarantining a `Bool` where the `Add`
+/// operand expects (is analysed against) `Num`. `true` typechecks fine on
+/// its own (`syn` gives `Bool`), it just doesn't fit here — exactly the
+/// case a non-empty hole exists for. The required non-empty-hole example.
+pub fn add_with_non_empty_hole() -> Exp {
+    Exp::bin_op(
+        Op::Add,
+        Exp::num(1),
+        Exp::non_empty_hole(HoleId::new(0), Exp::bool_(true)),
+    )
+}
+
+/// `if true then (1, 2) else (⦇⦈, 4)` — an `if` over pairs, one branch
+/// containing an empty hole, exercising the branch-join synthesis for `If`
+/// together with `Pair`.
+pub fn if_over_pairs_with_hole() -> Exp {
+    Exp::if_(
+        Exp::bool_(true),
+        Exp::pair(Exp::num(1), Exp::num(2)),
+        Exp::pair(Exp::empty_hole(HoleId::new(0)), Exp::num(4)),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::typing::is_well_typed;
+
+    #[test]
+    fn all_ten_examples_are_well_typed() {
+        let examples: Vec<(&str, Exp)> = vec![
+            ("let_identity", let_identity()),
+            ("increment_applied", increment_applied()),
+            ("clamp_to_one", clamp_to_one()),
+            ("pair_and_project", pair_and_project()),
+            ("pair_with_empty_hole", pair_with_empty_hole()),
+            ("add_with_empty_hole", add_with_empty_hole()),
+            ("square_and_compare", square_and_compare()),
+            (
+                "identity_hole_annotated_applied",
+                identity_hole_annotated_applied(),
+            ),
+            ("add_with_non_empty_hole", add_with_non_empty_hole()),
+            ("if_over_pairs_with_hole", if_over_pairs_with_hole()),
+        ];
+
+        // Guard against a copy-paste slip: exactly ten example programs
+        // must be checked here.
+        assert_eq!(examples.len(), 10, "expected exactly ten example programs");
+
+        for (name, exp) in &examples {
+            assert!(is_well_typed(exp), "expected `{name}` to be well-typed: {exp:?}");
+        }
+    }
+
+    #[test]
+    fn at_least_two_examples_contain_an_empty_hole() {
+        fn contains_empty_hole(e: &Exp) -> bool {
+            match e {
+                Exp::EmptyHole(_) => true,
+                Exp::NonEmptyHole(_, inner) => contains_empty_hole(inner),
+                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => false,
+                Exp::Lam(_, _, body) => contains_empty_hole(body),
+                Exp::Ap(f, a) => contains_empty_hole(f) || contains_empty_hole(a),
+                Exp::BinOp(_, l, r) => contains_empty_hole(l) || contains_empty_hole(r),
+                Exp::If(c, t, e) => {
+                    contains_empty_hole(c) || contains_empty_hole(t) || contains_empty_hole(e)
+                }
+                Exp::Let(_, bound, body) => {
+                    contains_empty_hole(bound) || contains_empty_hole(body)
+                }
+                Exp::Pair(l, r) => contains_empty_hole(l) || contains_empty_hole(r),
+                Exp::Proj(_, e) => contains_empty_hole(e),
+            }
+        }
+
+        let count = [
+            pair_with_empty_hole(),
+            add_with_empty_hole(),
+            if_over_pairs_with_hole(),
+        ]
+        .iter()
+        .filter(|e| contains_empty_hole(e))
+        .count();
+
+        assert!(count >= 2, "expected at least two examples with an empty hole");
+    }
+
+    #[test]
+    fn at_least_one_example_contains_a_non_empty_hole() {
+        fn contains_non_empty_hole(e: &Exp) -> bool {
+            match e {
+                Exp::NonEmptyHole(_, _) => true,
+                Exp::EmptyHole(_) => false,
+                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => false,
+                Exp::Lam(_, _, body) => contains_non_empty_hole(body),
+                Exp::Ap(f, a) => contains_non_empty_hole(f) || contains_non_empty_hole(a),
+                Exp::BinOp(_, l, r) => contains_non_empty_hole(l) || contains_non_empty_hole(r),
+                Exp::If(c, t, e) => {
+                    contains_non_empty_hole(c)
+                        || contains_non_empty_hole(t)
+                        || contains_non_empty_hole(e)
+                }
+                Exp::Let(_, bound, body) => {
+                    contains_non_empty_hole(bound) || contains_non_empty_hole(body)
+                }
+                Exp::Pair(l, r) => contains_non_empty_hole(l) || contains_non_empty_hole(r),
+                Exp::Proj(_, e) => contains_non_empty_hole(e),
+            }
+        }
+
+        assert!(contains_non_empty_hole(&add_with_non_empty_hole()));
+    }
+}

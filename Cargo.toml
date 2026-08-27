@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = [
+    "core",
+    "action",
+    "eval",
+    "store",
+    "tui",
+    "bench",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"

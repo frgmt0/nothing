@@ -1,0 +1,10 @@
+[package]
+name = "nothing-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+im = "15"
+
+[dev-dependencies]
+proptest = "1"

@@ -1,0 +1,7 @@
+[package]
+name = "nothing-eval"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nothing-core = { path = "../core" }
