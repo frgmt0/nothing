@@ -1,0 +1,31 @@
+# 1. Factorial — bench/references.md §1, Phase-1 surface:
+#
+#   λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈
+#
+# The same program bench/fixtures/factorial.actions builds, typed instead of
+# scripted. One keystroke per line; `#` starts a comment. The line count that
+# is not blank or a comment IS the keystroke count.
+
+# λ⦇⦈:?. ⦇⦈, cursor in the binder-name slot
+\
+x
+0          # the digits of the name are the binder's identity (pre-Phase-5)
+:          # → the annotation slot
+n          # SetAnn Num
+.          # → the body
+
+# if x0 == 0 then ⦇⦈ else ⦇⦈
+x
+0          # commit-live: the sole in-scope name
+=          # ends the run, then wraps: x0 == ⦇⦈
+0
+?          # climbs out of the `==`, then wraps it as the scrutinee
+
+# then 1
+1
+tab        # → the else branch, the next empty hole
+
+# else x0 * ⦇⦈ — the recursive call Phase 1 cannot write
+x
+0
+*

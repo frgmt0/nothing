@@ -1,0 +1,45 @@
+# 5. Conditional nested three levels deep — bench/references.md §5:
+#
+#   λx0:Num. if 0 < x0 then (if 10 < x0 then (if 100 < x0 then 3 else 2)
+#                            else 1)
+#            else 0
+
+\
+x
+0
+:
+n
+.
+
+# if 0 < x0 then …
+0
+<
+x
+0
+?
+
+# if 10 < x0 then …   (digits append: `1` then `0` is ten)
+1
+0
+<
+x
+0
+?
+
+# if 100 < x0 then 3 …
+1
+0
+0
+<
+x
+0
+?
+3
+
+# … else 2, else 1, else 0 — each Tab is the next empty hole outwards
+tab
+2
+tab
+1
+tab
+0

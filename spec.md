@@ -99,15 +99,15 @@ The hard part. Not the compiler — this. Everything above is tractable computer
 
 Read before starting: Vim's verb-object grammar, Kakoune's object-verb inversion, and Ryan Fleury's Dion Systems talks on structural editing ergonomics.
 
-- [ ] **Write `KEYS.md` before writing any code.** Design the full grammar on paper first: modes (if any), verbs, objects, and the mapping from single keypresses to actions. Constrain yourself to what fits on one screen. If it does not fit on one screen it is too complicated. **Done when** the document specifies a binding for every action in Phase 2 and you have talked yourself out of at least three of them.
-- [ ] **Design the literal-entry path specifically.** Typing digits should construct a number and keep accepting digits. Typing an identifier character should start variable/binder entry with live filtering over in-scope names. This path handles 80% of real keystrokes; design it first and design it well. **Done when** `KEYS.md` specifies exactly what happens on every printable character in every context.
-- [ ] **Build the minimal `ratatui` shell.** Renders the text projection, handles a quit key, nothing else. **Done when** it opens, renders the factorial example, and exits cleanly without corrupting the terminal.
-- [ ] **Wire movement keys.** **Done when** you can navigate every node of every example program using only the keyboard, with the focus visibly updating.
-- [ ] **Wire construction keys.** **Done when** you can build all five reference programs in the TUI without touching the REPL harness.
-- [ ] **Implement in-scope name completion at variable holes.** The context is already threaded through typing; surface it. Filter by typed prefix, and — critically — rank by type consistency with the expected type at the cursor. This is the payoff of bidirectional typing. **Done when** at a hole expecting `Num → Num`, a function of that type ranks above an unrelated `Bool`.
-- [ ] **Re-run the keystroke benchmark and write dated ratios into `RESULTS.md`.** **Done when** the numbers are recorded. If any ratio exceeds 3×, stop and fix the grammar before continuing. This is the guard from Phase 0; honour it.
-- [ ] **Use the editor to build something real, for at least two hours, without fixing it.** Note every friction point in a file as you go. Do not fix anything during the session. **Done when** you have a list of at least fifteen friction points.
-- [ ] **Fix the top five friction points.** **Done when** all five are resolved and the benchmark has not regressed.
+- [x] **Write `KEYS.md` before writing any code.** Design the full grammar on paper first: modes (if any), verbs, objects, and the mapping from single keypresses to actions. Constrain yourself to what fits on one screen. If it does not fit on one screen it is too complicated. **Done when** the document specifies a binding for every action in Phase 2 and you have talked yourself out of at least three of them.
+- [x] **Design the literal-entry path specifically.** Typing digits should construct a number and keep accepting digits. Typing an identifier character should start variable/binder entry with live filtering over in-scope names. This path handles 80% of real keystrokes; design it first and design it well. **Done when** `KEYS.md` specifies exactly what happens on every printable character in every context.
+- [x] **Build the minimal `ratatui` shell.** Renders the text projection, handles a quit key, nothing else. **Done when** it opens, renders the factorial example, and exits cleanly without corrupting the terminal.
+- [x] **Wire movement keys.** **Done when** you can navigate every node of every example program using only the keyboard, with the focus visibly updating.
+- [x] **Wire construction keys.** **Done when** you can build all five reference programs in the TUI without touching the REPL harness.
+- [x] **Implement in-scope name completion at variable holes.** The context is already threaded through typing; surface it. Filter by typed prefix, and — critically — rank by type consistency with the expected type at the cursor. This is the payoff of bidirectional typing. **Done when** at a hole expecting `Num → Num`, a function of that type ranks above an unrelated `Bool`.
+- [x] **Re-run the keystroke benchmark and write dated ratios into `RESULTS.md`.** **Done when** the numbers are recorded. If any ratio exceeds 3×, stop and fix the grammar before continuing. This is the guard from Phase 0; honour it.
+- [x] **Use the editor to build something real, for at least two hours, without fixing it.** Note every friction point in a file as you go. Do not fix anything during the session. **Done when** you have a list of at least fifteen friction points.
+- [x] **Fix the top five friction points.** **Done when** all five are resolved and the benchmark has not regressed.
 
 ---
 

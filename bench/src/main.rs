@@ -10,6 +10,18 @@
 //! (`cargo run -p nothing-action --bin repl`). They are replayed through
 //! the real action calculus — this harness never contains a hand-written
 //! count, it always replays and counts what actually applied.
+//!
+//! Phase 4 adds a second, more honest denominator on the `nothing` side:
+//! the `.keys` fixtures in `tui/tests/keys/<name>.keys` record what a
+//! *person at the keyboard* presses — one keystroke per line, exactly the
+//! format `nothing-tui`'s own `keyscript` module reads and replays through
+//! the pure key handler (see `tui/tests/references.rs`, which is the test
+//! that keeps these fixtures honest against the actual TUI). The old
+//! action-count mode (`count`/`table`, against `bench/fixtures/*.actions`)
+//! stays exactly as it was — it measures primitive actions, which is a
+//! different and still-useful number — and the new `keystrokes`/`keytable`
+//! commands measure keystrokes, which is the number Phase 0's 3× guard is
+//! actually stated in terms of.
 
 use std::path::PathBuf;
 
@@ -27,6 +39,10 @@ struct ReferenceProgram {
     /// The reference-program number in `bench/references.md`.
     reference: usize,
     fixture: &'static str,
+    /// The `.keys` fixture in `tui/tests/keys` that builds this program one
+    /// keystroke at a time through the real TUI key handler. `None` would
+    /// mean no keyboard fixture exists yet; all five references have one.
+    keys_fixture: &'static str,
     neovim_keystrokes: usize,
     /// Whether the fixture is an exact rendering of the reference program
     /// or an approximation forced by the Phase-1 surface. See
@@ -43,6 +59,7 @@ fn reference_programs() -> Vec<ReferenceProgram> {
             name: "factorial",
             reference: 1,
             fixture: "factorial.actions",
+            keys_fixture: "factorial.keys",
             neovim_keystrokes: 84,
             approximate: true,
         },
@@ -50,6 +67,7 @@ fn reference_programs() -> Vec<ReferenceProgram> {
             name: "list_map",
             reference: 2,
             fixture: "list_map.actions",
+            keys_fixture: "list_map.keys",
             neovim_keystrokes: 114,
             approximate: true,
         },
@@ -57,6 +75,7 @@ fn reference_programs() -> Vec<ReferenceProgram> {
             name: "record",
             reference: 3,
             fixture: "record.actions",
+            keys_fixture: "record.keys",
             neovim_keystrokes: 65,
             approximate: true,
         },
@@ -64,6 +83,7 @@ fn reference_programs() -> Vec<ReferenceProgram> {
             name: "state_machine",
             reference: 4,
             fixture: "state_machine.actions",
+            keys_fixture: "state_machine.keys",
             neovim_keystrokes: 151,
             approximate: true,
         },
@@ -71,6 +91,7 @@ fn reference_programs() -> Vec<ReferenceProgram> {
             name: "nested_conditional",
             reference: 5,
             fixture: "nested_conditional.actions",
+            keys_fixture: "nested_conditional.keys",
             neovim_keystrokes: 146,
             approximate: false,
         },
@@ -85,6 +106,19 @@ fn fixture_dir() -> PathBuf {
     match std::env::var_os("NOTHING_BENCH_FIXTURES") {
         Some(dir) => PathBuf::from(dir),
         None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures"),
+    }
+}
+
+/// The directory holding the recorded `.keys` keyboard fixtures.
+///
+/// These belong to `nothing-tui` (they are also its own acceptance test,
+/// `tui/tests/references.rs`), not to `bench`; `bench` only reads them.
+/// Defaults to `../tui/tests/keys` next to this crate's manifest; override
+/// with `NOTHING_BENCH_KEYS` when running the binary from somewhere else.
+fn keys_dir() -> PathBuf {
+    match std::env::var_os("NOTHING_BENCH_KEYS") {
+        Some(dir) => PathBuf::from(dir),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tui/tests/keys"),
     }
 }
 
@@ -129,16 +163,48 @@ impl ReferenceProgram {
     fn ratio(&self, actions: usize) -> f64 {
         actions as f64 / self.neovim_keystrokes as f64
     }
+
+    fn keys_path(&self) -> PathBuf {
+        keys_dir().join(self.keys_fixture)
+    }
+
+    /// The number of keystrokes in the `.keys` fixture: one non-blank,
+    /// non-comment line is one keystroke, by construction of the format
+    /// (`tui/src/keyscript.rs`). This is deliberately a plain line count,
+    /// not a call into `nothing-tui`'s parser: the number the 3× guard is
+    /// stated in terms of has to be legible by inspection of the fixture
+    /// file, the same way the Neovim baselines in `references.md` are.
+    /// `nothing-tui`'s own `tui/tests/references.rs` is what proves this
+    /// count agrees with `keyscript::parse_keys` and with the pure key
+    /// handler actually accepting the fixture.
+    fn keystroke_count(&self) -> Result<usize, String> {
+        let path = self.keys_path();
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        Ok(text
+            .lines()
+            .filter(|line| {
+                let line = line.trim();
+                !line.is_empty() && !line.starts_with('#')
+            })
+            .count())
+    }
+
+    fn keystroke_ratio(&self, keystrokes: usize) -> f64 {
+        keystrokes as f64 / self.neovim_keystrokes as f64
+    }
 }
 
 fn print_usage() {
     println!("nothing-bench: keystroke benchmark harness");
     println!();
     println!("USAGE:");
-    println!("    nothing-bench list         list the reference programs and their fixtures");
-    println!("    nothing-bench count NAME   print the action count for NAME");
-    println!("    nothing-bench run NAME     replay NAME's fixture and print the program");
-    println!("    nothing-bench table        print the RESULTS.md ratio table (markdown)");
+    println!("    nothing-bench list             list the reference programs and their fixtures");
+    println!("    nothing-bench count NAME       print the action count for NAME");
+    println!("    nothing-bench run NAME         replay NAME's fixture and print the program");
+    println!("    nothing-bench table            print the action-count ratio table (markdown)");
+    println!("    nothing-bench keystrokes NAME  print the keystroke count for NAME");
+    println!("    nothing-bench keytable         print the keystroke ratio table (markdown)");
 }
 
 fn find(name: &str) -> ReferenceProgram {
@@ -227,6 +293,30 @@ fn main() {
                     program.neovim_keystrokes,
                     actions,
                     program.ratio(actions),
+                );
+            }
+        }
+        Some("keystrokes") => {
+            let Some(name) = args.get(2) else {
+                eprintln!("error: `keystrokes` requires a reference program name");
+                print_usage();
+                std::process::exit(2);
+            };
+            println!("{}", unwrap_or_exit(find(name).keystroke_count()));
+        }
+        Some("keytable") => {
+            println!("| # | Program | Neovim keystrokes | `nothing` keystrokes | Ratio |");
+            println!("|---|---------|------------------:|----------------------:|------:|");
+            for program in reference_programs() {
+                let keystrokes = unwrap_or_exit(program.keystroke_count());
+                println!(
+                    "| {} | {}{} | {} | {} | {:.2}x |",
+                    program.reference,
+                    program.name,
+                    if program.approximate { " *" } else { "" },
+                    program.neovim_keystrokes,
+                    keystrokes,
+                    program.keystroke_ratio(keystrokes),
                 );
             }
         }
@@ -331,6 +421,63 @@ mod tests {
         assert!(
             text.to_lowercase().contains("pre-keybinding"),
             "RESULTS.md is missing the note that these are pre-keybinding counts"
+        );
+    }
+
+    /// Every reference program has a `.keys` fixture and it is not a stub.
+    #[test]
+    fn every_keys_fixture_exists_and_is_nontrivial() {
+        for program in reference_programs() {
+            let count = program
+                .keystroke_count()
+                .unwrap_or_else(|e| panic!("{}: {e}", program.name));
+            assert!(
+                count >= 10,
+                "{} is only {count} keystrokes — that is not a reference program",
+                program.name
+            );
+        }
+    }
+
+    /// Phase 0's guard, stated in the unit it was actually stated in:
+    /// keystrokes, not actions. This is the tripwire `nothing-bench` itself
+    /// carries; `tui/tests/references.rs` carries the same tripwire against
+    /// the live key handler, so a regression trips in two places.
+    #[test]
+    fn no_keystroke_ratio_exceeds_the_three_times_guard() {
+        for program in reference_programs() {
+            let keystrokes = program.keystroke_count().unwrap();
+            let ratio = program.keystroke_ratio(keystrokes);
+            assert!(
+                ratio <= 3.0,
+                "{}: {keystrokes} keystrokes against a baseline of {} is {ratio:.2}x — Phase 0's \
+                 guard is breached, stop and fix the grammar",
+                program.name,
+                program.neovim_keystrokes
+            );
+        }
+    }
+
+    /// Phase 4's re-run of the benchmark: the dated keystroke ratios have to
+    /// actually be written into `RESULTS.md`, in the units the guard is
+    /// stated in.
+    #[test]
+    fn every_keystroke_ratio_is_recorded_in_results_md() {
+        let results = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("RESULTS.md");
+        let text = std::fs::read_to_string(&results)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", results.display()));
+        for program in reference_programs() {
+            let keystrokes = program.keystroke_count().unwrap();
+            let ratio = format!("{:.2}x", program.keystroke_ratio(keystrokes));
+            assert!(
+                text.contains(&ratio),
+                "RESULTS.md does not record {}'s keystroke ratio of {ratio}",
+                program.name
+            );
+        }
+        assert!(
+            text.contains("2026-08-27"),
+            "RESULTS.md is not dated with the Phase 4 keystroke run date"
         );
     }
 }

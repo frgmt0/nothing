@@ -6,3 +6,16 @@ edition.workspace = true
 [dependencies]
 nothing-core = { path = "../core" }
 nothing-action = { path = "../action" }
+ratatui = "0.30.2"
+# Must stay on the version `ratatui` itself re-exports (its default
+# `crossterm` feature selects crossterm 0.29), or the `KeyEvent` the pure key
+# handler matches on would be a different type from the one the backend
+# produces.
+crossterm = "0.29.0"
+
+# The editor. `src/bin/nothing.rs` is a shim: everything it does beyond
+# choosing the start-up program lives in the library, where it is tested
+# without a terminal.
+[[bin]]
+name = "nothing"
+path = "src/bin/nothing.rs"
