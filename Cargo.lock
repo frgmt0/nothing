@@ -796,9 +796,21 @@ dependencies = [
 name = "nothing-eval"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "im",
  "nothing-action",
  "nothing-core",
+ "nothing-store",
+ "proptest",
+]
+
+[[package]]
+name = "nothing-merge"
+version = "0.1.0"
+dependencies = [
+ "nothing-action",
+ "nothing-core",
+ "nothing-store",
  "proptest",
 ]
 

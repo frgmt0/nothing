@@ -9,6 +9,7 @@ use nothing_core::render::{PREC_APP, Prec, op_prec};
 use nothing_core::ty::Ty;
 
 use crate::history::{History, Typing};
+use crate::live::EngineHandle;
 
 const FACTORIAL_FIXTURE: &str = include_str!("../../bench/fixtures/factorial.actions");
 
@@ -38,6 +39,7 @@ pub struct AppState {
     pub entry_committed: bool,
     pub hint: Option<String>,
     pub quit: bool,
+    pub engine: EngineHandle,
     base: EditState,
     history: History,
 }
@@ -64,6 +66,7 @@ impl AppState {
             entry_committed: false,
             hint: None,
             quit: false,
+            engine: EngineHandle::new(),
             history: History::new(),
         }
     }

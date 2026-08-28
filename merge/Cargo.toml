@@ -1,14 +1,16 @@
 [package]
-name = "nothing-eval"
+name = "nothing-merge"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "merge-bench"
+path = "src/bin/merge_bench.rs"
+
 [dependencies]
 nothing-core = { path = "../core" }
+nothing-action = { path = "../action" }
 nothing-store = { path = "../store" }
-im = "15"
-blake3 = "1"
 
 [dev-dependencies]
-nothing-action = { path = "../action" }
 proptest = "1"

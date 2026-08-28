@@ -145,9 +145,9 @@ A language you cannot run is a diagram. This phase makes it a language.
 
 ## Phase 8 — Incremental evaluation
 
-- [ ] **Add a dependency graph over the AST keyed by node hash.** **Done when** you can query which nodes depend on a given node.
-- [ ] **Implement invalidation on edit.** An action dirties its node and everything transitively depending on it, and nothing else. **Done when** editing a leaf in a hundred-node program re-evaluates fewer than ten nodes, verified by a counter.
-- [ ] **Cache evaluation results by node hash.** Because names are excluded from the hash, a rename invalidates nothing. **Done when** renaming a variable causes zero re-evaluation, verified by the counter.
+- [x] **Add a dependency graph over the AST keyed by node hash.** **Done when** you can query which nodes depend on a given node.
+- [x] **Implement invalidation on edit.** An action dirties its node and everything transitively depending on it, and nothing else. **Done when** editing a leaf in a hundred-node program re-evaluates fewer than ten nodes, verified by a counter.
+- [x] **Cache evaluation results by node hash.** Because names are excluded from the hash, a rename invalidates nothing. **Done when** renaming a variable causes zero re-evaluation, verified by the counter.
 
 ---
 
@@ -155,12 +155,12 @@ A language you cannot run is a diagram. This phase makes it a language.
 
 This is where the project starts being a product. Everything here is enabled by the action log and content addressing.
 
-- [ ] **Implement a structural diff between two program versions.** Output is a list of typed operations, not lines. **Done when** a diff of a program against itself-with-one-renamed-variable is a single rename operation.
-- [ ] **Implement move detection.** A subtree that appears at a new path with an unchanged hash is a move, not a delete plus insert. **Done when** moving a function to a different position in the file produces a one-operation diff.
-- [ ] **Implement three-way merge over operations.** Two edit sets against a common ancestor. **Done when** two branches that edit different fields of the same record merge with zero conflicts.
-- [ ] **Implement conflict detection with typed explanations.** A conflict is two operations on overlapping nodes that cannot commute. The report says what and why, in terms of the program. **Done when** two branches changing the same expression to different values produce exactly one conflict with both alternatives shown.
-- [ ] **Prove the merge preserves well-typedness, by test.** Any successful merge of two well-typed branches is well-typed. **Done when** a proptest over 5,000 random branch pairs passes.
-- [ ] **Write the benchmark that justifies the product.** Generate scenarios that a line-based merge fails on but yours does not: reordering, renaming, reformatting, moving. Count. **Done when** `bench/MERGE.md` has a table with real numbers against `git merge` on equivalent text.
+- [x] **Implement a structural diff between two program versions.** Output is a list of typed operations, not lines. **Done when** a diff of a program against itself-with-one-renamed-variable is a single rename operation.
+- [x] **Implement move detection.** A subtree that appears at a new path with an unchanged hash is a move, not a delete plus insert. **Done when** moving a function to a different position in the file produces a one-operation diff.
+- [x] **Implement three-way merge over operations.** Two edit sets against a common ancestor. **Done when** two branches that edit different fields of the same record merge with zero conflicts.
+- [x] **Implement conflict detection with typed explanations.** A conflict is two operations on overlapping nodes that cannot commute. The report says what and why, in terms of the program. **Done when** two branches changing the same expression to different values produce exactly one conflict with both alternatives shown.
+- [x] **Prove the merge preserves well-typedness, by test.** Any successful merge of two well-typed branches is well-typed. **Done when** a proptest over 5,000 random branch pairs passes.
+- [x] **Write the benchmark that justifies the product.** Generate scenarios that a line-based merge fails on but yours does not: reordering, renaming, reformatting, moving. Count. **Done when** `bench/MERGE.md` has a table with real numbers against `git merge` on equivalent text.
 
 ---
 

@@ -1,13 +1,53 @@
 
+use std::cell::RefCell;
+use std::fmt;
+use std::rc::Rc;
+
 use nothing_core::exp::Exp;
 use nothing_core::names::NameTable;
 use nothing_core::typing::is_well_typed;
 use nothing_eval::dynamic;
-use nothing_eval::step::{Blocked, HoleKind, Outcome, eval_with_fuel};
+use nothing_eval::incr::IncrEngine;
+use nothing_eval::step::{Blocked, HoleKind, Outcome};
 
 use crate::app::AppState;
 
 pub const LIVE_FUEL: usize = 4_000;
+
+#[derive(Clone)]
+pub struct EngineHandle(Rc<RefCell<IncrEngine>>);
+
+impl EngineHandle {
+    pub fn new() -> EngineHandle {
+        EngineHandle(Rc::new(RefCell::new(IncrEngine::new())))
+    }
+
+    pub fn eval(&self, exp: &Exp, fuel: usize) -> Outcome {
+        self.0.borrow_mut().eval_with_fuel(exp, fuel)
+    }
+
+    pub fn node_evals(&self) -> usize {
+        self.0.borrow().node_evals
+    }
+}
+
+impl Default for EngineHandle {
+    fn default() -> EngineHandle {
+        EngineHandle::new()
+    }
+}
+
+impl PartialEq for EngineHandle {
+    fn eq(&self, _other: &EngineHandle) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for EngineHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "EngineHandle(node_evals={})", self.node_evals())
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Subject {
@@ -25,7 +65,7 @@ pub fn live(state: &AppState) -> Live {
     let (subject, exp) = subject_of(state);
     Live {
         subject,
-        outcome: eval_with_fuel(&exp, LIVE_FUEL),
+        outcome: state.engine.eval(&exp, LIVE_FUEL),
     }
 }
 
