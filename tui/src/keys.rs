@@ -1,7 +1,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nothing_action::act::Action;
-use nothing_core::exp::{Exp, Id, Op, Side};
+use nothing_core::exp::{Exp, Op, Side};
 use nothing_core::render::{PREC_APP, PREC_ATOM, PREC_BINDER, Prec, op_prec};
 
 use crate::annot::{self, Accept};
@@ -260,42 +260,17 @@ fn name_binder(text: String, state: AppState, append: bool) -> AppState {
     };
     buffer.push_str(&text);
 
-    let digits: String = buffer.chars().filter(char::is_ascii_digit).collect();
-    let Ok(id) = digits.parse::<u64>() else {
-        let mut next = state;
-        next.slot = Slot::BinderName;
-        next.entry = buffer;
-        next.entry_committed = false;
-        return next
-            .with_hint("pre-Phase-5 a binder is identified by the digits in its name, as in `x0`");
+    let Some(id) = state.focus_binder_id() else {
+        return state.with_hint("the cursor is not on a binder");
     };
 
-
-    if let Some(conflict) = state.rename_conflict(Id::new(id)) {
-        let mut next = state;
-        next.slot = Slot::BinderName;
-        next.entry = buffer;
-        next.entry_committed = false;
-        return next.with_hint(conflict.explain());
-    }
-
-    match state.apply_actions(&[Action::SetBinderId(Id::new(id))]) {
-        Some(mut next) => {
-            next.slot = Slot::BinderName;
-            next.entry = buffer;
-            next.entry_committed = true;
-            next
-        }
-
-
-        None => {
-            let mut next = state;
-            next.slot = Slot::BinderName;
-            next.entry = buffer;
-            next.entry_committed = false;
-            next.with_hint(format!("x{id} would leave a reference unbound here"))
-        }
-    }
+    let mut next = state
+        .apply_actions(&[Action::Rename(id, buffer.clone())])
+        .expect("a rename is a name-table write: it cannot fail");
+    next.slot = Slot::BinderName;
+    next.entry = buffer;
+    next.entry_committed = true;
+    next
 }
 
 fn set_ann(buffer: String, state: AppState) -> AppState {
@@ -382,6 +357,9 @@ fn backspace(state: AppState) -> AppState {
         Slot::BinderName => {
             let mut buffer = state.entry.clone();
             buffer.pop();
+            if !buffer.is_empty() {
+                return name_binder(buffer, state, false);
+            }
             let mut next = state;
             next.entry = buffer;
             next.entry_committed = false;
@@ -525,7 +503,6 @@ mod tests {
     use super::*;
     use crate::app::index_path;
     use nothing_core::examples;
-    use nothing_core::render::render;
 
     fn type_chars(text: &str, state: AppState) -> AppState {
         text.chars()
@@ -533,14 +510,14 @@ mod tests {
     }
 
     fn typed(text: &str) -> String {
-        render(&type_chars(text, AppState::empty()).program())
+        type_chars(text, AppState::empty()).text()
     }
 
 
     #[test]
     fn one_plus_two_is_three_keystrokes() {
         let state = type_chars("1+2", AppState::empty());
-        assert_eq!(render(&state.program()), "1 + 2");
+        assert_eq!(state.text(), "1 + 2");
         assert_eq!(state.keystrokes(), 3);
         assert_eq!(state.actions().len(), 3, "no hidden actions");
     }
@@ -554,7 +531,7 @@ mod tests {
 
         let state = type_chars("1+2", AppState::empty());
         let state = handle_key(key(KeyCode::Up), state);
-        assert_eq!(render(&type_chars("9", state).program()), "9");
+        assert_eq!(type_chars("9", state).text(), "9");
 
 
         assert_eq!(typed("1+2 3"), "1 + ⦇2⦈ 3");
@@ -565,7 +542,7 @@ mod tests {
 
         let state = type_chars("42", AppState::empty());
         let state = handle_key(key(KeyCode::Esc), state);
-        assert_eq!(render(&type_chars("7", state).program()), "427");
+        assert_eq!(type_chars("7", state).text(), "427");
     }
 
     #[test]
@@ -579,11 +556,11 @@ mod tests {
     fn backspace_drops_one_digit_then_deletes() {
         let state = type_chars("427", AppState::empty());
         let state = handle_key(key(KeyCode::Backspace), state);
-        assert_eq!(render(&state.program()), "42");
+        assert_eq!(state.text(), "42");
         let state = handle_key(key(KeyCode::Backspace), state);
-        assert_eq!(render(&state.program()), "4");
+        assert_eq!(state.text(), "4");
         let state = handle_key(key(KeyCode::Backspace), state);
-        assert_eq!(render(&state.program()), "⦇⦈");
+        assert_eq!(state.text(), "⦇⦈");
     }
 
     #[test]
@@ -592,30 +569,30 @@ mod tests {
         let state = type_chars("1+", AppState::empty());
         assert!(matches!(state.focus(), Exp::EmptyHole(_)));
         let up = handle_key(key(KeyCode::Backspace), state);
-        assert_eq!(render(&up.program()), "1 + ⦇⦈", "nothing destroyed yet");
+        assert_eq!(up.text(), "1 + ⦇⦈", "nothing destroyed yet");
         assert!(
             matches!(up.focus(), Exp::BinOp(..)),
             "the whole `+` is now selected"
         );
         let gone = handle_key(key(KeyCode::Backspace), up);
-        assert_eq!(render(&gone.program()), "⦇⦈");
+        assert_eq!(gone.text(), "⦇⦈");
     }
 
     #[test]
     fn backspace_un_types_a_name_one_character_at_a_time() {
         let state = type_chars("\\x0:n.x0", AppState::empty());
-        assert_eq!(render(&state.program()), "λx0:Num. x0");
+        assert_eq!(state.text(), "λx0:Num. x0");
         let state = handle_key(key(KeyCode::Backspace), state);
         assert_eq!(state.entry, "x", "one character of the run is gone");
         assert_eq!(
-            render(&state.program()),
+            state.text(),
             "λx0:Num. x0",
             "and `x` still names x0"
         );
         let state = handle_key(key(KeyCode::Backspace), state);
         assert!(state.entry.is_empty());
         assert_eq!(
-            render(&state.program()),
+            state.text(),
             "λx0:Num. ⦇⦈",
             "the run wrote nothing"
         );
@@ -624,11 +601,11 @@ mod tests {
     #[test]
     fn backspace_in_the_annotation_slot_drops_a_token() {
         let state = type_chars("\\x0:n>n", AppState::empty());
-        assert_eq!(render(&state.program()), "λx0:Num -> Num. ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num -> Num. ⦇⦈");
         let state = handle_key(key(KeyCode::Backspace), state);
-        assert_eq!(render(&state.program()), "λx0:Num -> ?. ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num -> ?. ⦇⦈");
         let state = handle_key(key(KeyCode::Backspace), state);
-        assert_eq!(render(&state.program()), "λx0:Num. ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num. ⦇⦈");
         assert_eq!(state.slot, Slot::Annotation, "still annotating");
     }
 
@@ -636,10 +613,10 @@ mod tests {
     fn delete_replaces_the_focus_with_a_hole() {
         let state = type_chars("1+2", AppState::empty());
         let state = handle_key(key(KeyCode::Delete), state);
-        assert_eq!(render(&state.program()), "1 + ⦇⦈");
+        assert_eq!(state.text(), "1 + ⦇⦈");
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Delete), state);
-        assert_eq!(render(&state.program()), "⦇⦈");
+        assert_eq!(state.text(), "⦇⦈");
     }
 
     #[test]
@@ -663,7 +640,7 @@ mod tests {
         );
         let after_x1 = type_chars("1", after_x);
         assert_eq!(
-            render(&after_x1.program()),
+            after_x1.text(),
             "λx0:Num. λx1:Num. x1",
             "the second keystroke re-derived the commit"
         );
@@ -686,7 +663,7 @@ mod tests {
 
 
         let state = type_chars("total7;", AppState::empty());
-        assert_eq!(render(&state.program()), "let x7 = ⦇⦈ in ⦇⦈");
+        assert_eq!(state.text(), "let total7 = ⦇⦈ in ⦇⦈");
         assert_eq!(state.slot, Slot::BinderName);
         assert_eq!(state.entry, "total7");
     }
@@ -715,7 +692,7 @@ mod tests {
         let state = type_chars("?t", AppState::empty());
         let state = handle_key(key(KeyCode::Tab), state);
         assert_eq!(
-            render(&type_chars("1+2", state).program()),
+            type_chars("1+2", state).text(),
             "if true then 1 + 2 else ⦇⦈"
         );
         assert_eq!(typed("\\x0:n.1+2"), "λx0:Num. 1 + 2");
@@ -732,7 +709,7 @@ mod tests {
     fn application_climbs_left_associatively() {
 
         let state = type_chars("\\x0:n>n>n.x0 1 2", AppState::empty());
-        assert_eq!(render(&state.program()), "λx0:Num -> Num -> Num. x0 1 2");
+        assert_eq!(state.text(), "λx0:Num -> Num -> Num. x0 1 2");
     }
 
     #[test]
@@ -758,7 +735,7 @@ mod tests {
         let state = type_chars(":", state);
         assert_eq!(state.slot, Slot::Annotation);
         let state = type_chars("n>n", state);
-        assert_eq!(render(&state.program()), "λx0:Num -> Num. ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num -> Num. ⦇⦈");
         let state = type_chars(".", state);
         assert_eq!(state.slot, Slot::Node);
         assert!(matches!(state.focus(), Exp::EmptyHole(_)));
@@ -767,11 +744,11 @@ mod tests {
     #[test]
     fn the_annotation_slot_commits_on_every_keystroke() {
         let state = type_chars("\\x0:n", AppState::empty());
-        assert_eq!(render(&state.program()), "λx0:Num. ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num. ⦇⦈");
         let state = type_chars(">", state);
-        assert_eq!(render(&state.program()), "λx0:Num -> ?. ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num -> ?. ⦇⦈");
         let state = type_chars("n", state);
-        assert_eq!(render(&state.program()), "λx0:Num -> Num. ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num -> Num. ⦇⦈");
     }
 
     #[test]
@@ -779,12 +756,12 @@ mod tests {
 
 
         let state = type_chars("\\x0:.x0+1", AppState::empty());
-        assert_eq!(render(&state.program()), "λx0:?. x0 + 1");
+        assert_eq!(state.text(), "λx0:?. x0 + 1");
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Up), state);
         let state = type_chars(":b", state);
         assert_eq!(
-            render(&state.program()),
+            state.text(),
             "λx0:?. x0 + 1",
             "the program is untouched"
         );
@@ -795,7 +772,7 @@ mod tests {
     #[test]
     fn a_let_names_then_binds_then_bodies() {
         let state = type_chars(";x0=1", AppState::empty());
-        assert_eq!(render(&state.program()), "let x0 = 1 in ⦇⦈");
+        assert_eq!(state.text(), "let x0 = 1 in ⦇⦈");
 
         assert_eq!(index_path(state.zipper()), vec![0]);
     }
@@ -808,7 +785,7 @@ mod tests {
         let state = handle_key(key(KeyCode::Up), state);
         let state = type_chars(":", state);
         let state = type_chars("+", state);
-        assert_eq!(render(&state.program()), "λx0:Num. 1 + ⦇⦈");
+        assert_eq!(state.text(), "λx0:Num. 1 + ⦇⦈");
     }
 
 
@@ -822,20 +799,20 @@ mod tests {
     #[test]
     fn a_non_empty_hole_is_transparent_to_typing() {
         let state = type_chars("1!", AppState::empty());
-        assert_eq!(render(&state.program()), "⦇1⦈");
+        assert_eq!(state.text(), "⦇1⦈");
 
 
         let state = type_chars("2", state);
-        assert_eq!(render(&state.program()), "⦇12⦈");
+        assert_eq!(state.text(), "⦇12⦈");
 
         let state = type_chars("!", state);
-        assert_eq!(render(&state.program()), "⦇⦇12⦈⦈");
+        assert_eq!(state.text(), "⦇⦇12⦈⦈");
     }
 
     #[test]
     fn enter_finishes_a_quarantined_expression_that_now_fits() {
 
-        let state = AppState::new(examples::add_with_non_empty_hole());
+        let state = AppState::with_names(examples::add_with_non_empty_hole(), examples::names());
 
 
         let state = handle_key(key(KeyCode::Tab), state);
@@ -851,21 +828,21 @@ mod tests {
         let state = type_chars("2", state);
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Enter), state);
-        assert_eq!(render(&state.program()), "1 + 2");
+        assert_eq!(state.text(), "1 + 2");
     }
 
     #[test]
     fn enter_finishes_the_quarantine_the_cursor_is_inside() {
 
 
-        let state = AppState::new(examples::add_with_non_empty_hole());
+        let state = AppState::with_names(examples::add_with_non_empty_hole(), examples::names());
         let state = handle_key(key(KeyCode::Tab), state);
         let state = type_chars("2", state);
-        assert_eq!(render(&state.program()), "1 + ⦇2⦈");
+        assert_eq!(state.text(), "1 + ⦇2⦈");
         assert!(matches!(state.focus(), Exp::Num(2)), "inside the wrapper");
 
         let finished = handle_key(key(KeyCode::Enter), state.clone());
-        assert_eq!(render(&finished.program()), "1 + 2", "one key, not three");
+        assert_eq!(finished.text(), "1 + 2", "one key, not three");
         assert!(matches!(finished.focus(), Exp::Num(2)), "cursor kept");
 
 
@@ -873,7 +850,7 @@ mod tests {
             key(KeyCode::Enter),
             handle_key(key(KeyCode::Up), state.clone()),
         );
-        assert_eq!(render(&walked.program()), render(&finished.program()));
+        assert_eq!(walked.text(), finished.text());
         assert_eq!(finished.keystrokes() + 1, walked.keystrokes());
     }
 
@@ -904,7 +881,7 @@ mod tests {
     fn tab_walks_quarantines_too_and_says_when_nothing_is_left() {
 
 
-        let state = AppState::new(examples::add_with_non_empty_hole());
+        let state = AppState::with_names(examples::add_with_non_empty_hole(), examples::names());
         let tabbed = handle_key(key(KeyCode::Tab), state);
         assert!(
             matches!(tabbed.focus(), Exp::NonEmptyHole(..)),
@@ -913,7 +890,7 @@ mod tests {
         assert_eq!(tabbed.hint, None);
 
 
-        let done = AppState::new(examples::increment_applied());
+        let done = AppState::with_names(examples::increment_applied(), examples::names());
         let stuck = handle_key(key(KeyCode::Tab), done.clone());
         assert_eq!(stuck.program(), done.program());
         assert_eq!(stuck.hint.as_deref(), Some(NOTHING_UNFINISHED));
@@ -921,11 +898,12 @@ mod tests {
 
 
     #[test]
-    fn renaming_a_binder_onto_an_id_already_in_scope_is_declined() {
+    fn two_binders_may_wear_the_same_display_name_without_capture() {
 
 
         let state = type_chars("\\x0:n.\\x1:.x0+1", AppState::empty());
-        assert_eq!(render(&state.program()), "λx0:Num. λx1:?. x0 + 1");
+        assert_eq!(state.text(), "λx0:Num. λx1:?. x0 + 1");
+        let before = state.program();
 
 
         let state = handle_key(key(KeyCode::Up), state);
@@ -934,16 +912,35 @@ mod tests {
         let state = handle_key(key(KeyCode::Down), state);
         assert_eq!(state.slot, Slot::BinderName);
 
-        let after = type_chars("x0", state.clone());
+        let after = type_chars("x0", state);
         assert_eq!(
-            render(&after.program()),
-            "λx0:Num. λx1:?. x0 + 1",
-            "the program must be untouched"
+            after.text(),
+            "λx0:Num. λx0:?. x0 + 1",
+            "both binders are shown as x0"
         );
-        assert_eq!(after.slot, Slot::BinderName, "the slot stays open");
-        let hint = after.hint.expect("the warning is live, not silent");
-        assert!(hint.contains("capture"), "{hint}");
-        assert!(hint.contains("x0"), "{hint}");
+        assert_eq!(after.hint, None, "a rename is never refused");
+        assert_eq!(
+            after.program(),
+            before,
+            "renaming is a name-table write: the tree is untouched"
+        );
+
+
+        let (outer, inner, used) = match before {
+            Exp::Lam(outer, _, body) => match *body {
+                Exp::Lam(inner, _, body) => match *body {
+                    Exp::BinOp(_, lhs, _) => match *lhs {
+                        Exp::Var(used) => (outer, inner, used),
+                        other => panic!("expected a variable, got {other:?}"),
+                    },
+                    other => panic!("expected an addition, got {other:?}"),
+                },
+                other => panic!("expected a lambda, got {other:?}"),
+            },
+            other => panic!("expected a lambda, got {other:?}"),
+        };
+        assert_ne!(outer, inner, "two bindings, two identities");
+        assert_eq!(used, outer, "the body still refers to the outer binder");
     }
 
     #[test]
@@ -956,27 +953,30 @@ mod tests {
         let state = handle_key(key(KeyCode::Down), state);
 
         let same = type_chars("x1", state.clone());
-        assert_eq!(render(&same.program()), "λx0:Num. λx1:?. x0 + 1");
+        assert_eq!(same.text(), "λx0:Num. λx1:?. x0 + 1");
         assert_eq!(same.hint, None, "renaming x1 to x1 changes nothing");
 
         let fresh = type_chars("x7", state);
         assert_eq!(
-            render(&fresh.program()),
+            fresh.text(),
             "λx0:Num. λx7:?. x0 + 1",
             "an id nothing refers to is free to take"
         );
     }
 
     #[test]
-    fn a_binder_whose_reference_would_be_orphaned_still_declines() {
+    fn renaming_a_binder_renames_every_reference_to_it_at_once() {
 
 
         let state = type_chars("\\x1:n.x1", AppState::empty());
+        let before = state.program();
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Down), state);
+
         let after = type_chars("x2", state);
-        assert_eq!(render(&after.program()), "λx1:Num. x1");
-        assert!(after.hint.unwrap().contains("unbound"));
+        assert_eq!(after.text(), "λx2:Num. x2", "the use follows the binder");
+        assert_eq!(after.hint, None, "a rename cannot fail");
+        assert_eq!(after.program(), before, "and it does not touch the tree");
     }
 
 
@@ -987,7 +987,7 @@ mod tests {
         let state = type_chars("1<2", AppState::empty());
         let before = state.program();
         let with_if = type_chars("?", state);
-        assert_eq!(render(&with_if.program()), "if 1 < 2 then ⦇⦈ else ⦇⦈");
+        assert_eq!(with_if.text(), "if 1 < 2 then ⦇⦈ else ⦇⦈");
 
         let undone = handle_key(ctrl(KeyCode::Char('z')), with_if.clone());
         assert_eq!(undone.program(), before, "one C-z, one keystroke");
@@ -1014,9 +1014,9 @@ mod tests {
         let state = type_chars("1+2", AppState::empty());
         let state = handle_key(ctrl(KeyCode::Char('z')), state);
         let state = type_chars("3", state);
-        assert_eq!(render(&state.program()), "1 + 3");
+        assert_eq!(state.text(), "1 + 3");
         let state = handle_key(ctrl(KeyCode::Char('r')), state);
-        assert_eq!(render(&state.program()), "1 + 3", "nothing to redo");
+        assert_eq!(state.text(), "1 + 3", "nothing to redo");
     }
 
     #[test]
@@ -1037,7 +1037,7 @@ mod tests {
         for start in [
             AppState::empty(),
             AppState::factorial(),
-            AppState::new(examples::pair_and_project()),
+            AppState::with_names(examples::pair_and_project(), examples::names()),
         ] {
             for &c in &alphabet {
                 let after = handle_key(key(KeyCode::Char(c)), start.clone());
@@ -1113,7 +1113,7 @@ mod tests {
 
     #[test]
     fn tab_reaches_the_hole_and_shift_tab_comes_back() {
-        let state = AppState::new(examples::add_with_empty_hole());
+        let state = AppState::with_names(examples::add_with_empty_hole(), examples::names());
         let hole = handle_key(key(KeyCode::Tab), state.clone());
         assert_eq!(index_path(hole.zipper()), vec![1]);
         let same = handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), hole);

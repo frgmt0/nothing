@@ -141,9 +141,12 @@ ratios flattering in a way that must not be read as progress; see
 | 4 | State machine | `λs:Num. if s == 0 then 1 else if s == 1 then 2 else 0` | no |
 | 5 | Nested conditional | `λx:Num. if 0 < x then (if 10 < x then (if 100 < x then 3 else 2) else 1) else 0` | yes* |
 
-Variables render as `x0`, `x1`, … because Phase 5 (names as identity, with a
-separate name table) has not happened yet. The names in this table are the
-binders' intended meanings, not something the renderer knows.
+Variables render as `x0`, `x1`, … because the fixtures rename each binder to
+the default name Phase 5's name table hands a freshly constructed one (`x`
+and the first unused index), and `construct-var` then refers to it by that
+name. The names in this table are the binders' intended meanings; writing
+them instead would change the rendered programs but not one action count, a
+rename being one action whatever the name.
 
 ### 1. Factorial — the recursive call is a hole
 

@@ -30,11 +30,12 @@ fn variant_name(action: &Action) -> &'static str {
         Action::ConstructNonEmptyHole => "ConstructNonEmptyHole",
         Action::SetAnn(_) => "SetAnn",
         Action::SetBinderId(_) => "SetBinderId",
+        Action::Rename(..) => "Rename",
         Action::Finish => "Finish",
     }
 }
 
-const ALL_VARIANTS: [&str; 19] = [
+const ALL_VARIANTS: [&str; 20] = [
     "MoveChild",
     "MoveParent",
     "MoveNextSibling",
@@ -53,6 +54,7 @@ const ALL_VARIANTS: [&str; 19] = [
     "ConstructNonEmptyHole",
     "SetAnn",
     "SetBinderId",
+    "Rename",
     "Finish",
 ];
 
@@ -75,7 +77,16 @@ fn arb_ty() -> impl Strategy<Value = Ty> {
 }
 
 fn arb_id() -> impl Strategy<Value = Id> {
-    (0u64..8).prop_map(Id::new)
+    (0u128..8).prop_map(Id::from_u128)
+}
+
+fn arb_name() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just("x".to_string()),
+        Just("xs".to_string()),
+        Just("items".to_string()),
+        Just(String::new()),
+    ]
 }
 
 pub fn arb_action() -> impl Strategy<Value = Action> {
@@ -101,11 +112,19 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
         Just(Action::ConstructNonEmptyHole).boxed(),
         arb_ty().prop_map(Action::SetAnn).boxed(),
         arb_id().prop_map(Action::SetBinderId).boxed(),
+        (arb_id(), arb_name())
+            .prop_map(|(id, name)| Action::Rename(id, name))
+            .boxed(),
         Just(Action::Finish).boxed(),
     ])
 }
 
 fn one_of_every_action() -> Vec<Action> {
+    one_of_every_action_in(&[])
+}
+
+
+fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
     let mut actions = vec![
         Action::MoveChild(0),
         Action::MoveChild(1),
@@ -117,8 +136,8 @@ fn one_of_every_action() -> Vec<Action> {
         Action::Delete,
         Action::ConstructNum(7),
         Action::ConstructBool(true),
-        Action::ConstructVar(Id::new(0)),
-        Action::ConstructVar(Id::new(1)),
+        Action::ConstructVar(Id::from_u128(0)),
+        Action::ConstructVar(Id::from_u128(1)),
         Action::ConstructLam,
         Action::ConstructAp,
         Action::ConstructBinOp(Op::Add),
@@ -132,10 +151,13 @@ fn one_of_every_action() -> Vec<Action> {
         Action::SetAnn(Ty::Num),
         Action::SetAnn(Ty::Hole),
         Action::SetAnn(Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool))),
-        Action::SetBinderId(Id::new(0)),
-        Action::SetBinderId(Id::new(9)),
+        Action::SetBinderId(Id::from_u128(0)),
+        Action::SetBinderId(Id::from_u128(9)),
+        Action::Rename(Id::from_u128(0), "x".to_string()),
+        Action::Rename(Id::from_u128(9), "items".to_string()),
         Action::Finish,
     ];
+    actions.extend(scope.iter().copied().map(Action::ConstructVar));
     actions.sort_by_key(|a| variant_name(a));
     actions
 }
@@ -296,7 +318,7 @@ fn every_action_succeeds_somewhere_in_the_search_space() {
         let program = generate::well_typed_exp(seed);
         assert!(is_well_typed(&program));
         for cursor in all_positions(&program) {
-            for action in one_of_every_action() {
+            for action in one_of_every_action_in(&cursor.binders()) {
                 total_applications += 1;
                 let name = variant_name(&action);
                 if let Some(after) = apply(cursor.clone(), action.clone()) {
@@ -334,7 +356,7 @@ fn actions_that_do_not_apply_leave_the_program_untouched() {
     for seed in 0..200u64 {
         let program = generate::well_typed_exp(seed);
         for cursor in all_positions(&program) {
-            for action in one_of_every_action() {
+            for action in one_of_every_action_in(&cursor.binders()) {
                 let before = cursor.to_exp();
                 if apply(cursor.clone(), action.clone()).is_none() {
                     refusals += 1;
@@ -361,7 +383,7 @@ fn the_check_would_catch_an_unsound_action() {
     let cursor = Zipper::new(Exp::bin_op(
         Op::Add,
         Exp::num(1),
-        Exp::empty_hole(nothing_core::exp::HoleId::new(0)),
+        Exp::empty_hole(nothing_core::exp::HoleId::from_u128(0)),
     ))
     .move_child(1)
     .expect("the right operand exists");

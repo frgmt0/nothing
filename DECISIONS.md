@@ -82,3 +82,13 @@ dependencies use the `nothing-` prefix. `cargo run -p nothing-bench` (not
 
 <what was decided, what evidence prompted it, and what changes as a result>
 -->
+
+### 2026-08-28 — `nothing` is the real name, not a placeholder
+
+The spec's header calls `nothing` a working name to replace before the
+name reaches serialised files. Decision (made explicitly, with the
+serialisation phase about to start): keep it. The name has become the
+identity — no parser, no text file, no syntax error, nothing between you
+and the tree — and a rename now would churn every crate name, fixture,
+and doc for zero technical gain. Version bytes in the on-disk format will
+carry the name `nothing` deliberately.

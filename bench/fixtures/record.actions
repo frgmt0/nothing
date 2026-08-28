@@ -12,28 +12,28 @@
 # let mkPoint = ⦇⦈ in ⦇⦈
 construct-let
 move-parent
-set-binder-id 0
+rename x0
 move-child 0
 
 # λx:Num. ⦇⦈
 construct-lam
 move-parent
-set-binder-id 1
+rename x1
 set-ann Num
 move-child 0
 
 # λy:Num. ⦇⦈
 construct-lam
 move-parent
-set-binder-id 2
+rename x2
 set-ann Num
 move-child 0
 
 # (x, y)
 construct-pair
-construct-var 1
+construct-var x1
 move-next-sibling
-construct-var 2
+construct-var x2
 
 # in λp:Num * Num. fst p
 move-parent
@@ -43,8 +43,8 @@ move-parent
 move-child 1
 construct-lam
 move-parent
-set-binder-id 3
+rename x3
 set-ann Num * Num
 move-child 0
 construct-proj fst
-construct-var 3
+construct-var x3

@@ -11,7 +11,7 @@
 # λx:Num. ⦇⦈
 construct-lam
 move-parent
-set-binder-id 0
+rename x0
 set-ann Num
 move-child 0
 
@@ -20,7 +20,7 @@ construct-if
 construct-binop lt
 construct-num 0
 move-next-sibling
-construct-var 0
+construct-var x0
 move-parent
 move-next-sibling
 
@@ -29,7 +29,7 @@ construct-if
 construct-binop lt
 construct-num 10
 move-next-sibling
-construct-var 0
+construct-var x0
 move-parent
 move-next-sibling
 
@@ -38,7 +38,7 @@ construct-if
 construct-binop lt
 construct-num 100
 move-next-sibling
-construct-var 0
+construct-var x0
 move-parent
 move-next-sibling
 construct-num 3

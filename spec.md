@@ -115,10 +115,10 @@ Read before starting: Vim's verb-object grammar, Kakoune's object-verb inversion
 
 Small phase, large consequences. Do it before serialisation, because it changes the file format.
 
-- [ ] **Replace `Id` with a UUID-backed opaque type and add a separate name table.** The AST stores IDs; the name table maps ID to display string. **Done when** the AST no longer contains any user-visible string and the projection reads names from the table.
-- [ ] **Implement rename as a name-table write.** **Done when** renaming a binder used in forty places is a single operation, produces one action-log entry, and cannot fail.
-- [ ] **Allow shadowing and duplicate display names without error.** Two distinct bindings may render identically; the editor disambiguates visually, but the program is unambiguous because identity is the ID. **Done when** a program with two bindings both displayed as `x` typechecks and evaluates correctly.
-- [ ] **Add a per-user name overlay.** The name table can be layered, so one user's `xs` is another's `items` in the same program. **Done when** two overlays render the same AST with different names and both round-trip.
+- [x] **Replace `Id` with a UUID-backed opaque type and add a separate name table.** The AST stores IDs; the name table maps ID to display string. **Done when** the AST no longer contains any user-visible string and the projection reads names from the table.
+- [x] **Implement rename as a name-table write.** **Done when** renaming a binder used in forty places is a single operation, produces one action-log entry, and cannot fail.
+- [x] **Allow shadowing and duplicate display names without error.** Two distinct bindings may render identically; the editor disambiguates visually, but the program is unambiguous because identity is the ID. **Done when** a program with two bindings both displayed as `x` typechecks and evaluates correctly.
+- [x] **Add a per-user name overlay.** The name table can be layered, so one user's `xs` is another's `items` in the same program. **Done when** two overlays render the same AST with different names and both round-trip.
 
 ---
 

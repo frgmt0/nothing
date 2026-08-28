@@ -9,7 +9,7 @@
 # λ⦇⦈:?. ⦇⦈, cursor in the binder-name slot
 \
 x
-0          # the digits of the name are the binder's identity (pre-Phase-5)
+0          # the name is free text; the binder's identity is its uuid
 :          # → the annotation slot
 n          # SetAnn Num
 .          # → the body

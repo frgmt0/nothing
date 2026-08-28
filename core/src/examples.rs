@@ -1,14 +1,33 @@
 
 use crate::exp::{Exp, HoleId, Id, Op, Side};
+use crate::names::NameTable;
 use crate::ty::Ty;
 
+const EXAMPLE_ID: u128 = 0x6578_616d_706c_6500_0000_0000_0000_0000;
+
+pub const fn binder(n: u128) -> Id {
+    Id::from_u128(EXAMPLE_ID | n)
+}
+
+pub const fn hole(n: u128) -> HoleId {
+    HoleId::from_u128(EXAMPLE_ID | 0xffff_0000 | n)
+}
+
+pub fn names() -> NameTable {
+    let mut names = NameTable::new();
+    for n in 0..4u128 {
+        names.set(binder(n), format!("x{n}"));
+    }
+    names
+}
+
 pub fn let_identity() -> Exp {
-    let x = Id::new(0);
+    let x = binder(0);
     Exp::let_(x, Exp::num(1), Exp::var(x))
 }
 
 pub fn increment_applied() -> Exp {
-    let x = Id::new(0);
+    let x = binder(0);
     Exp::ap(
         Exp::lam(x, Ty::Num, Exp::bin_op(Op::Add, Exp::var(x), Exp::num(1))),
         Exp::num(41),
@@ -16,7 +35,7 @@ pub fn increment_applied() -> Exp {
 }
 
 pub fn clamp_to_one() -> Exp {
-    let n = Id::new(0);
+    let n = binder(0);
     Exp::lam(
         n,
         Ty::Num,
@@ -29,7 +48,7 @@ pub fn clamp_to_one() -> Exp {
 }
 
 pub fn pair_and_project() -> Exp {
-    let p = Id::new(0);
+    let p = binder(0);
     Exp::let_(
         p,
         Exp::pair(Exp::num(1), Exp::bool_(true)),
@@ -38,16 +57,16 @@ pub fn pair_and_project() -> Exp {
 }
 
 pub fn pair_with_empty_hole() -> Exp {
-    Exp::pair(Exp::empty_hole(HoleId::new(0)), Exp::num(2))
+    Exp::pair(Exp::empty_hole(hole(0)), Exp::num(2))
 }
 
 pub fn add_with_empty_hole() -> Exp {
-    Exp::bin_op(Op::Add, Exp::num(1), Exp::empty_hole(HoleId::new(0)))
+    Exp::bin_op(Op::Add, Exp::num(1), Exp::empty_hole(hole(0)))
 }
 
 pub fn square_and_compare() -> Exp {
-    let f = Id::new(0);
-    let x = Id::new(1);
+    let f = binder(0);
+    let x = binder(1);
     Exp::let_(
         f,
         Exp::lam(x, Ty::Num, Exp::bin_op(Op::Mul, Exp::var(x), Exp::var(x))),
@@ -56,7 +75,7 @@ pub fn square_and_compare() -> Exp {
 }
 
 pub fn identity_hole_annotated_applied() -> Exp {
-    let x = Id::new(0);
+    let x = binder(0);
     Exp::ap(Exp::lam(x, Ty::Hole, Exp::var(x)), Exp::bool_(true))
 }
 
@@ -64,7 +83,7 @@ pub fn add_with_non_empty_hole() -> Exp {
     Exp::bin_op(
         Op::Add,
         Exp::num(1),
-        Exp::non_empty_hole(HoleId::new(0), Exp::bool_(true)),
+        Exp::non_empty_hole(hole(0), Exp::bool_(true)),
     )
 }
 
@@ -72,7 +91,7 @@ pub fn if_over_pairs_with_hole() -> Exp {
     Exp::if_(
         Exp::bool_(true),
         Exp::pair(Exp::num(1), Exp::num(2)),
-        Exp::pair(Exp::empty_hole(HoleId::new(0)), Exp::num(4)),
+        Exp::pair(Exp::empty_hole(hole(0)), Exp::num(4)),
     )
 }
 

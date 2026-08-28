@@ -221,6 +221,26 @@ impl Zipper {
             .move_child(target)
     }
 
+    pub fn binders(&self) -> Vec<Id> {
+        let ctx = self.ctx();
+        self.path
+            .iter()
+            .filter_map(|frame| match frame {
+                Frame::LamBody(id, _) => Some(*id),
+                Frame::LetBody(id, _) => Some(*id),
+                _ => None,
+            })
+            .filter(|id| ctx.lookup(id).is_some())
+            .collect()
+    }
+
+    pub fn binder_id(&self) -> Option<Id> {
+        match &self.focus {
+            Exp::Lam(id, _, _) | Exp::Let(id, _, _) => Some(*id),
+            _ => None,
+        }
+    }
+
     pub fn ctx(&self) -> Ctx {
         let mut ctx = Ctx::empty();
         for frame in &self.path {
@@ -385,14 +405,14 @@ mod tests {
     fn ctx_at_a_lambda_body_sees_the_parameter() {
 
         let z = unzip(examples::clamp_to_one()).move_child(0).unwrap();
-        assert_eq!(z.ctx().lookup(&Id::new(0)), Some(Ty::Num));
+        assert_eq!(z.ctx().lookup(&examples::binder(0)), Some(Ty::Num));
     }
 
     #[test]
     fn ctx_at_a_let_body_sees_the_binding_but_the_bound_expression_does_not() {
 
         let root = unzip(examples::pair_and_project());
-        let p = Id::new(0);
+        let p = examples::binder(0);
 
         let bound = root.clone().move_child(0).unwrap();
         assert_eq!(bound.ctx().lookup(&p), None, "a let does not bind its own RHS");

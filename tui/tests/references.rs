@@ -1,7 +1,6 @@
 
 use nothing_action::script::replay_script;
-use nothing_core::exp::{Exp, HoleId};
-use nothing_core::render::render;
+use nothing_core::exp::{Exp, HoleId, Id};
 use nothing_core::typing::is_well_typed;
 use nothing_tui::AppState;
 use nothing_tui::keyscript::{parse_keys, replay_keys};
@@ -55,46 +54,63 @@ fn references() -> Vec<Reference> {
 }
 
 fn normalize(exp: &Exp) -> Exp {
-    fn go(exp: &Exp, next: &mut u64) -> Exp {
+    fn canonical(id: Id, seen: &mut Vec<Id>) -> Id {
+        let position = match seen.iter().position(|known| *known == id) {
+            Some(i) => i,
+            None => {
+                seen.push(id);
+                seen.len() - 1
+            }
+        };
+        Id::from_u128(position as u128)
+    }
+
+    fn go(exp: &Exp, next: &mut u128, seen: &mut Vec<Id>) -> Exp {
         let mut fresh = || {
-            let id = HoleId::new(*next);
+            let id = HoleId::from_u128(*next);
             *next += 1;
             id
         };
         match exp {
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => exp.clone(),
-            Exp::Lam(id, ty, body) => Exp::lam(*id, ty.clone(), go(body, next)),
+            Exp::Num(_) | Exp::Bool(_) => exp.clone(),
+            Exp::Var(id) => Exp::var(canonical(*id, seen)),
+            Exp::Lam(id, ty, body) => {
+                let id = canonical(*id, seen);
+                Exp::lam(id, ty.clone(), go(body, next, seen))
+            }
             Exp::Ap(f, a) => {
-                let f = go(f, next);
-                Exp::ap(f, go(a, next))
+                let f = go(f, next, seen);
+                Exp::ap(f, go(a, next, seen))
             }
             Exp::BinOp(op, l, r) => {
-                let l = go(l, next);
-                Exp::bin_op(*op, l, go(r, next))
+                let l = go(l, next, seen);
+                Exp::bin_op(*op, l, go(r, next, seen))
             }
             Exp::If(c, t, e) => {
-                let c = go(c, next);
-                let t = go(t, next);
-                Exp::if_(c, t, go(e, next))
+                let c = go(c, next, seen);
+                let t = go(t, next, seen);
+                Exp::if_(c, t, go(e, next, seen))
             }
             Exp::Let(id, bound, body) => {
-                let bound = go(bound, next);
-                Exp::let_(*id, bound, go(body, next))
+                let bound = go(bound, next, seen);
+                let id = canonical(*id, seen);
+                Exp::let_(id, bound, go(body, next, seen))
             }
             Exp::Pair(a, b) => {
-                let a = go(a, next);
-                Exp::pair(a, go(b, next))
+                let a = go(a, next, seen);
+                Exp::pair(a, go(b, next, seen))
             }
-            Exp::Proj(side, e) => Exp::proj(*side, go(e, next)),
+            Exp::Proj(side, e) => Exp::proj(*side, go(e, next, seen)),
             Exp::EmptyHole(_) => Exp::empty_hole(fresh()),
             Exp::NonEmptyHole(_, inner) => {
                 let id = fresh();
-                Exp::non_empty_hole(id, go(inner, next))
+                Exp::non_empty_hole(id, go(inner, next, seen))
             }
         }
     }
     let mut next = 0;
-    go(exp, &mut next)
+    let mut seen = Vec::new();
+    go(exp, &mut next, &mut seen)
 }
 
 #[test]
@@ -106,8 +122,8 @@ fn every_reference_program_is_buildable_from_the_keyboard() {
             replay_script(reference.actions).unwrap_or_else(|e| panic!("{}: {e}", reference.name));
 
         assert_eq!(
-            render(&typed.program()),
-            render(&scripted.exp()),
+            typed.text(),
+            scripted.render(),
             "{}: the keyboard built a different program than the action fixture",
             reference.name
         );
@@ -118,7 +134,7 @@ fn every_reference_program_is_buildable_from_the_keyboard() {
             reference.name
         );
         assert_eq!(
-            render(&typed.program()),
+            typed.text(),
             reference.expected.trim(),
             "{}: and neither matches the committed expected rendering",
             reference.name
@@ -194,7 +210,7 @@ fn undoing_every_keystroke_returns_to_the_empty_program() {
     for reference in references() {
         let keys = parse_keys(reference.keys).expect("the fixture parses");
         let mut state = replay_keys(reference.keys, AppState::empty()).expect("replays");
-        let built = state.program();
+        let built = state.text();
 
         for _ in 0..keys.len() {
             state = handle_key(ctrl(KeyCode::Char('z')), state);
@@ -203,7 +219,7 @@ fn undoing_every_keystroke_returns_to_the_empty_program() {
             matches!(state.program(), Exp::EmptyHole(_)),
             "{}: undoing everything left {}",
             reference.name,
-            render(&state.program())
+            state.text()
         );
         assert_eq!(state.keystrokes(), 0);
 
@@ -211,8 +227,8 @@ fn undoing_every_keystroke_returns_to_the_empty_program() {
             state = handle_key(ctrl(KeyCode::Char('r')), state);
         }
         assert_eq!(
-            render(&state.program()),
-            render(&built),
+            state.text(),
+            built,
             "{}: redoing everything did not rebuild it",
             reference.name
         );

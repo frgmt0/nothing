@@ -4,6 +4,7 @@ use nothing_action::script::replay_script;
 use nothing_action::zipper::{Frame, Zipper, all_positions};
 use nothing_core::ctx::Ctx;
 use nothing_core::exp::{Exp, Id};
+use nothing_core::names::NameTable;
 use nothing_core::render::{PREC_APP, Prec, op_prec};
 use nothing_core::ty::Ty;
 
@@ -46,6 +47,10 @@ impl AppState {
         AppState::from_edit(EditState::new(exp))
     }
 
+    pub fn with_names(exp: Exp, names: NameTable) -> AppState {
+        AppState::from_edit(EditState::with_names(exp, names))
+    }
+
     pub fn empty() -> AppState {
         AppState::from_edit(EditState::empty())
     }
@@ -66,22 +71,27 @@ impl AppState {
     pub fn factorial() -> AppState {
         let state = replay_script(FACTORIAL_FIXTURE)
             .expect("the embedded factorial fixture must replay cleanly");
-        AppState::new(state.exp())
+        AppState::from_edit(EditState::with_names(state.exp(), state.names.clone()))
     }
 
     pub fn binders_in_scope(&self) -> Vec<Id> {
-        let ctx = self.ctx();
-        self.edit
-            .zipper
-            .path
-            .iter()
-            .filter_map(|frame| match frame {
-                Frame::LamBody(id, _) => Some(*id),
-                Frame::LetBody(id, _) => Some(*id),
-                _ => None,
-            })
-            .filter(|id| ctx.lookup(id).is_some())
-            .collect()
+        self.edit.zipper.binders()
+    }
+
+    pub fn names(&self) -> &NameTable {
+        &self.edit.names
+    }
+
+    pub fn display_name(&self, id: Id) -> String {
+        self.edit.names.display(id)
+    }
+
+    pub fn focus_binder_id(&self) -> Option<Id> {
+        self.edit.zipper.binder_id()
+    }
+
+    pub fn text(&self) -> String {
+        nothing_core::render::render(&self.program(), self.names())
     }
 
     pub fn zipper(&self) -> &Zipper {
@@ -127,32 +137,6 @@ impl AppState {
             here + children(exp).iter().map(|c| count(c)).sum::<usize>()
         }
         count(&self.program())
-    }
-
-    pub fn rename_conflict(&self, new: Id) -> Option<RenameConflict> {
-        let (old, body) = match self.focus() {
-            Exp::Lam(id, _, body) => (*id, body.as_ref()),
-
-
-            Exp::Let(id, _, body) => (*id, body.as_ref()),
-            _ => return None,
-        };
-        if new == old {
-            return None;
-        }
-        match free_occurrences(body, new) {
-            0 => {}
-            captured => return Some(RenameConflict::Capture { id: new, captured }),
-        }
-
-
-        match free_occurrences(body, old) {
-            0 => None,
-            escaping if self.ctx().lookup(&old).is_some() => {
-                Some(RenameConflict::Escape { id: old, escaping })
-            }
-            _ => None,
-        }
     }
 
     pub fn expected_ty(&self) -> Ty {
@@ -409,32 +393,6 @@ enum BinderKind {
     Let,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum RenameConflict {
-    Capture { id: Id, captured: usize },
-    Escape { id: Id, escaping: usize },
-}
-
-impl RenameConflict {
-    pub fn explain(self) -> String {
-        let plural = |n: usize| if n == 1 { "reference" } else { "references" };
-        match self {
-            RenameConflict::Capture { id, captured } => format!(
-                "{} is already in scope here — naming this binder {} would capture {captured} {}",
-                nothing_core::render::render_id(id),
-                nothing_core::render::render_id(id),
-                plural(captured),
-            ),
-            RenameConflict::Escape { id, escaping } => format!(
-                "{escaping} {} to {} would re-bind to the outer {}",
-                plural(escaping),
-                nothing_core::render::render_id(id),
-                nothing_core::render::render_id(id),
-            ),
-        }
-    }
-}
-
 fn is_unfinished(exp: &Exp) -> bool {
     matches!(exp, Exp::EmptyHole(_) | Exp::NonEmptyHole(..))
 }
@@ -445,22 +403,6 @@ fn children(exp: &Exp) -> Vec<&Exp> {
         Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::NonEmptyHole(_, b) => vec![b],
         Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => vec![a, b],
         Exp::If(c, t, e) => vec![c, t, e],
-    }
-}
-
-fn free_occurrences(exp: &Exp, id: Id) -> usize {
-    match exp {
-        Exp::Var(v) => usize::from(*v == id),
-        Exp::Lam(binder, _, _) if *binder == id => 0,
-        Exp::Let(binder, bound, body) if *binder == id => {
-
-
-            free_occurrences(bound, id)
-        }
-        other => children(other)
-            .into_iter()
-            .map(|child| free_occurrences(child, id))
-            .sum(),
     }
 }
 
@@ -491,7 +433,6 @@ pub fn moves_between(from: &Zipper, to: &Zipper) -> Vec<Action> {
 mod tests {
     use super::*;
     use nothing_core::examples;
-    use nothing_core::render::render;
 
     fn at(state: &AppState) -> (Exp, Vec<usize>, Slot) {
         (state.program(), index_path(state.zipper()), state.slot)
@@ -501,7 +442,7 @@ mod tests {
     fn factorial_demo_renders_the_reference_program() {
         let state = AppState::factorial();
         assert_eq!(
-            render(&state.program()),
+            state.text(),
             "λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈"
         );
         assert!(state.edit.zipper.is_root());
@@ -597,8 +538,8 @@ mod tests {
     fn tab_wraps_and_shift_tab_reverses() {
 
         let program = Exp::pair(
-            Exp::empty_hole(nothing_core::exp::HoleId::new(0)),
-            Exp::empty_hole(nothing_core::exp::HoleId::new(1)),
+            Exp::empty_hole(nothing_core::exp::HoleId::from_u128(0)),
+            Exp::empty_hole(nothing_core::exp::HoleId::from_u128(1)),
         );
         let root = AppState::new(program);
 
@@ -647,6 +588,7 @@ mod tests {
         let arrived = AppState::from_edit(EditState {
             zipper: from.clone(),
             fresh: nothing_action::act::Fresh::from_program(&program),
+            names: examples::names(),
         })
         .apply_actions(&moves_between(from, to))
         .expect("the expansion applies");

@@ -107,7 +107,6 @@ pub fn replay_keys(text: &str, state: AppState) -> Result<AppState, KeyScriptErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nothing_core::render::render;
 
     #[test]
     fn a_single_character_is_itself() {
@@ -141,7 +140,7 @@ mod tests {
         let keys = parse_keys(script).unwrap();
         assert_eq!(keys.len(), 3, "three keystrokes, three lines that count");
         let state = replay_keys(script, AppState::empty()).unwrap();
-        assert_eq!(render(&state.program()), "1 + 2");
+        assert_eq!(state.text(), "1 + 2");
         assert_eq!(state.keystrokes(), 3);
     }
 

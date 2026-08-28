@@ -2,7 +2,6 @@
 use std::path::PathBuf;
 
 use nothing_action::script::{parse_script, replay_script};
-use nothing_core::render::render;
 use nothing_core::typing::is_well_typed;
 
 struct ReferenceProgram {
@@ -102,7 +101,7 @@ impl ReferenceProgram {
         if !is_well_typed(&exp) {
             return Err(format!("{}: replayed to an ill-typed program", self.name));
         }
-        Ok(render(&exp))
+        Ok(state.render())
     }
 
     fn ratio(&self, actions: usize) -> f64 {

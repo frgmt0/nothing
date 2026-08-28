@@ -1,6 +1,9 @@
 
 use nothing_core::exp::Side;
-use nothing_core::render::{PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, Prec, op_prec, op_str, render_id, render_prec};
+use nothing_core::names::NameTable;
+use nothing_core::render::{
+    PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, Prec, op_prec, op_str, render_id, render_prec,
+};
 
 use crate::zipper::{Frame, Zipper};
 
@@ -40,44 +43,44 @@ fn own_prec(frame: &Frame) -> Prec {
     }
 }
 
-fn assemble(frame: &Frame, child: &str) -> String {
+fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
     match frame {
-        Frame::LamBody(id, ty) => format!("λ{}:{}. {child}", render_id(*id), ty),
-        Frame::ApFun(arg) => format!("{child} {}", render_prec(arg, PREC_ATOM)),
-        Frame::ApArg(fun) => format!("{} {child}", render_prec(fun, PREC_APP)),
+        Frame::LamBody(id, ty) => format!("λ{}:{}. {child}", render_id(*id, names), ty),
+        Frame::ApFun(arg) => format!("{child} {}", render_prec(arg, PREC_ATOM, names)),
+        Frame::ApArg(fun) => format!("{} {child}", render_prec(fun, PREC_APP, names)),
         Frame::BinOpLeft(op, rhs) => {
-            format!("{child} {} {}", op_str(*op), render_prec(rhs, op_prec(*op) + 1))
+            format!("{child} {} {}", op_str(*op), render_prec(rhs, op_prec(*op) + 1, names))
         }
         Frame::BinOpRight(op, lhs) => {
-            format!("{} {} {child}", render_prec(lhs, op_prec(*op)), op_str(*op))
+            format!("{} {} {child}", render_prec(lhs, op_prec(*op), names), op_str(*op))
         }
         Frame::IfCond(then_, else_) => format!(
             "if {child} then {} else {}",
-            render_prec(then_, PREC_CMP),
-            render_prec(else_, PREC_BINDER)
+            render_prec(then_, PREC_CMP, names),
+            render_prec(else_, PREC_BINDER, names)
         ),
         Frame::IfThen(cond, else_) => format!(
             "if {} then {child} else {}",
-            render_prec(cond, PREC_CMP),
-            render_prec(else_, PREC_BINDER)
+            render_prec(cond, PREC_CMP, names),
+            render_prec(else_, PREC_BINDER, names)
         ),
         Frame::IfElse(cond, then_) => format!(
             "if {} then {} else {child}",
-            render_prec(cond, PREC_CMP),
-            render_prec(then_, PREC_CMP)
+            render_prec(cond, PREC_CMP, names),
+            render_prec(then_, PREC_CMP, names)
         ),
         Frame::LetBound(id, body) => format!(
             "let {} = {child} in {}",
-            render_id(*id),
-            render_prec(body, PREC_BINDER)
+            render_id(*id, names),
+            render_prec(body, PREC_BINDER, names)
         ),
         Frame::LetBody(id, bound) => format!(
             "let {} = {} in {child}",
-            render_id(*id),
-            render_prec(bound, PREC_CMP)
+            render_id(*id, names),
+            render_prec(bound, PREC_CMP, names)
         ),
-        Frame::PairFst(snd) => format!("({child}, {})", render_prec(snd, PREC_BINDER)),
-        Frame::PairSnd(fst) => format!("({}, {child})", render_prec(fst, PREC_BINDER)),
+        Frame::PairFst(snd) => format!("({child}, {})", render_prec(snd, PREC_BINDER, names)),
+        Frame::PairSnd(fst) => format!("({}, {child})", render_prec(fst, PREC_BINDER, names)),
         Frame::ProjBody(side) => {
             let prefix = match side {
                 Side::L => "fst ",
@@ -89,18 +92,18 @@ fn assemble(frame: &Frame, child: &str) -> String {
     }
 }
 
-pub fn render_with_cursor(z: &Zipper) -> String {
+pub fn render_with_cursor(z: &Zipper, names: &NameTable) -> String {
     let path = &z.path;
 
     let focus_min_prec = path.last().map(min_prec_for).unwrap_or(PREC_BINDER);
     let mut content = format!(
         "{CURSOR_OPEN}{}{CURSOR_CLOSE}",
-        render_prec(&z.focus, focus_min_prec)
+        render_prec(&z.focus, focus_min_prec, names)
     );
 
     for i in (0..path.len()).rev() {
         let frame = &path[i];
-        let assembled = assemble(frame, &content);
+        let assembled = assemble(frame, &content, names);
         let needed = if i == 0 {
             PREC_BINDER
         } else {
@@ -123,6 +126,10 @@ mod tests {
     use nothing_core::examples;
     use nothing_core::render;
 
+    fn names() -> NameTable {
+        examples::names()
+    }
+
     fn all_examples() -> Vec<nothing_core::exp::Exp> {
         vec![
             examples::let_identity(),
@@ -142,8 +149,8 @@ mod tests {
     fn root_position_matches_the_plain_projection_once_markers_are_stripped() {
         let e = examples::square_and_compare();
         let z = zipper::unzip(e.clone());
-        let marked = render_with_cursor(&z);
-        assert_eq!(marked, format!("{CURSOR_OPEN}{}{CURSOR_CLOSE}", render::render(&e)));
+        let marked = render_with_cursor(&z, &names());
+        assert_eq!(marked, format!("{CURSOR_OPEN}{}{CURSOR_CLOSE}", render::render(&e, &names())));
     }
 
     #[test]
@@ -156,7 +163,7 @@ mod tests {
             .move_child(0)
             .unwrap();
         assert_eq!(
-            render_with_cursor(&z),
+            render_with_cursor(&z, &names()),
             format!("let x0 = ({CURSOR_OPEN}1{CURSOR_CLOSE}, true) in fst x0")
         );
     }
@@ -173,7 +180,10 @@ mod tests {
             positions.len()
         );
 
-        let rendered: Vec<String> = positions.iter().map(render_with_cursor).collect();
+        let rendered: Vec<String> = positions
+            .iter()
+            .map(|z| render_with_cursor(z, &names()))
+            .collect();
 
         for (z, s) in positions.iter().zip(&rendered) {
             assert_eq!(
@@ -208,9 +218,9 @@ mod tests {
     #[test]
     fn stripping_markers_reproduces_the_plain_projection() {
         for e in all_examples() {
-            let expected = render::render(&e);
+            let expected = render::render(&e, &names());
             for z in zipper::all_positions(&e) {
-                let marked = render_with_cursor(&z);
+                let marked = render_with_cursor(&z, &names());
                 let stripped = marked.replace(CURSOR_OPEN, "").replace(CURSOR_CLOSE, "");
                 assert_eq!(
                     stripped,
@@ -228,9 +238,9 @@ mod tests {
         use crate::generate;
         for seed in 0..200u64 {
             let e = generate::well_typed_exp(seed);
-            let expected = render::render(&e);
+            let expected = render::render(&e, &names());
             for z in zipper::all_positions(&e) {
-                let marked = render_with_cursor(&z);
+                let marked = render_with_cursor(&z, &names());
                 let stripped = marked.replace(CURSOR_OPEN, "").replace(CURSOR_CLOSE, "");
                 assert_eq!(stripped, expected, "mismatch for seed {seed} at depth {}", z.depth());
             }

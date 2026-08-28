@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 im = "15"
+uuid = { version = "1.26.0", features = ["v4"] }
 
 [dev-dependencies]
 proptest = "1"

@@ -1,6 +1,9 @@
 
+use std::collections::HashSet;
+
 use nothing_core::ctx::Ctx;
-use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
+use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
+use nothing_core::names::{NameTable, fresh_binder_name};
 use nothing_core::ty::{Ty, matched_arrow, matched_prod};
 use nothing_core::typing::{ana, is_well_typed, syn};
 
@@ -36,13 +39,26 @@ pub enum Action {
 
     SetBinderId(Id),
 
+    Rename(Id, String),
+
     Finish,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+const FRESH_SEED: u128 = 0x1234_5678_9abc_def0_0f1e_2d3c_4b5a_6978;
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Fresh {
-    next_hole: u64,
-    next_id: u64,
+    stream: UuidStream,
+    used: HashSet<u128>,
+}
+
+impl Default for Fresh {
+    fn default() -> Fresh {
+        Fresh {
+            stream: UuidStream::new(FRESH_SEED),
+            used: HashSet::new(),
+        }
+    }
 }
 
 impl Fresh {
@@ -92,23 +108,34 @@ impl Fresh {
     }
 
     fn bump_id(&mut self, id: Id) {
-        self.next_id = self.next_id.max(id.0 + 1);
+        self.spend(id.as_u128());
     }
 
     fn bump_hole(&mut self, h: HoleId) {
-        self.next_hole = self.next_hole.max(h.0 + 1);
+        self.spend(h.as_u128());
+    }
+
+    fn spend(&mut self, bits: u128) {
+        if self.used.insert(bits) {
+            self.stream.stir(bits);
+        }
+    }
+
+    fn next_bits(&mut self) -> u128 {
+        loop {
+            let candidate = self.stream.next_uuid().as_u128();
+            if self.used.insert(candidate) {
+                return candidate;
+            }
+        }
     }
 
     pub fn hole(&mut self) -> HoleId {
-        let h = HoleId::new(self.next_hole);
-        self.next_hole += 1;
-        h
+        HoleId::from_u128(self.next_bits())
     }
 
     pub fn id(&mut self) -> Id {
-        let id = Id::new(self.next_id);
-        self.next_id += 1;
-        id
+        Id::from_u128(self.next_bits())
     }
 }
 
@@ -184,7 +211,12 @@ pub fn ctx_and_expected_ty_at(zipper: &Zipper) -> (Ctx, Ty) {
     (ctx, expected)
 }
 
-pub fn apply_with(zipper: Zipper, action: Action, fresh: &mut Fresh) -> Option<Zipper> {
+pub fn apply_with(
+    zipper: Zipper,
+    action: Action,
+    fresh: &mut Fresh,
+    names: &mut NameTable,
+) -> Option<Zipper> {
     match action {
         Action::MoveChild(n) => zipper.move_child(n),
         Action::MoveParent => zipper.move_parent(),
@@ -209,9 +241,13 @@ pub fn apply_with(zipper: Zipper, action: Action, fresh: &mut Fresh) -> Option<Z
         }
 
 
-        Action::ConstructLam => construct_wrapping(zipper, Ty::Hole, fresh, |body, fresh| {
-            Exp::lam(fresh.id(), Ty::Hole, body)
-        }),
+        Action::ConstructLam => {
+            let id = fresh.id();
+            let built =
+                construct_wrapping(zipper, Ty::Hole, fresh, |body, _| Exp::lam(id, Ty::Hole, body));
+            name_new_binder(id, &built, names);
+            built
+        }
         Action::ConstructAp => construct_wrapping(
             zipper,
             Ty::Arrow(Box::new(Ty::Hole), Box::new(Ty::Hole)),
@@ -228,9 +264,14 @@ pub fn apply_with(zipper: Zipper, action: Action, fresh: &mut Fresh) -> Option<Z
                 Exp::empty_hole(fresh.hole()),
             )
         }),
-        Action::ConstructLet => construct_wrapping(zipper, Ty::Hole, fresh, |bound, fresh| {
-            Exp::let_(fresh.id(), bound, Exp::empty_hole(fresh.hole()))
-        }),
+        Action::ConstructLet => {
+            let id = fresh.id();
+            let built = construct_wrapping(zipper, Ty::Hole, fresh, |bound, fresh| {
+                Exp::let_(id, bound, Exp::empty_hole(fresh.hole()))
+            });
+            name_new_binder(id, &built, names);
+            built
+        }
         Action::ConstructPair => construct_wrapping(zipper, Ty::Hole, fresh, |fst, fresh| {
             Exp::pair(fst, Exp::empty_hole(fresh.hole()))
         }),
@@ -253,7 +294,20 @@ pub fn apply_with(zipper: Zipper, action: Action, fresh: &mut Fresh) -> Option<Z
         Action::SetBinderId(id) => set_binder_id(zipper, id),
 
 
+        Action::Rename(id, name) => {
+            names.rename(id, name);
+            Some(zipper)
+        }
+
+
         Action::Finish => finish(zipper),
+    }
+}
+
+fn name_new_binder(id: Id, built: &Option<Zipper>, names: &mut NameTable) {
+    if built.is_some() {
+        let name = fresh_binder_name(names);
+        names.set(id, name);
     }
 }
 
@@ -383,21 +437,28 @@ fn finish(zipper: Zipper) -> Option<Zipper> {
 
 pub fn apply(zipper: Zipper, action: Action) -> Option<Zipper> {
     let mut fresh = Fresh::from_program(&zipper.to_exp());
-    apply_with(zipper, action, &mut fresh)
+    let mut names = NameTable::new();
+    apply_with(zipper, action, &mut fresh, &mut names)
 }
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct EditState {
     pub zipper: Zipper,
     pub fresh: Fresh,
+    pub names: NameTable,
 }
 
 impl EditState {
     pub fn new(exp: Exp) -> EditState {
+        EditState::with_names(exp, NameTable::new())
+    }
+
+    pub fn with_names(exp: Exp, names: NameTable) -> EditState {
         let fresh = Fresh::from_program(&exp);
         EditState {
             zipper: unzip(exp),
             fresh,
+            names,
         }
     }
 
@@ -407,6 +468,7 @@ impl EditState {
         EditState {
             zipper: unzip(Exp::empty_hole(hole)),
             fresh,
+            names: NameTable::new(),
         }
     }
 
@@ -414,10 +476,23 @@ impl EditState {
         self.zipper.to_exp()
     }
 
+    pub fn names(&self) -> &NameTable {
+        &self.names
+    }
+
+    pub fn render(&self) -> String {
+        nothing_core::render::render(&self.exp(), &self.names)
+    }
+
     pub fn apply(&self, action: Action) -> Option<EditState> {
         let mut fresh = self.fresh.clone();
-        let zipper = apply_with(self.zipper.clone(), action, &mut fresh)?;
-        Some(EditState { zipper, fresh })
+        let mut names = self.names.clone();
+        let zipper = apply_with(self.zipper.clone(), action, &mut fresh, &mut names)?;
+        Some(EditState {
+            zipper,
+            fresh,
+            names,
+        })
     }
 
     pub fn apply_mut(&mut self, action: Action) -> bool {
@@ -545,7 +620,7 @@ mod tests {
             .unwrap();
         let after = apply(z, Action::Delete).unwrap();
         match after.focus {
-            Exp::EmptyHole(h) => assert_ne!(h, HoleId::new(0)),
+            Exp::EmptyHole(h) => assert_ne!(h, HoleId::from_u128(0)),
             other => panic!("expected an empty hole, got {other:?}"),
         }
     }
@@ -614,8 +689,8 @@ mod tests {
         Ty::Prod(Box::new(a), Box::new(b))
     }
 
-    fn hole(n: u64) -> Exp {
-        Exp::empty_hole(HoleId::new(n))
+    fn hole(n: u128) -> Exp {
+        Exp::empty_hole(HoleId::from_u128(n))
     }
 
     #[test]
@@ -652,7 +727,7 @@ mod tests {
     #[test]
     fn expected_ty_at_an_application_argument_is_the_functions_input() {
 
-        let x = Id::new(0);
+        let x = Id::from_u128(0);
         let e = Exp::ap(Exp::lam(x, Ty::Num, Exp::var(x)), hole(0));
         let root = unzip(e);
         assert_eq!(expected_ty_at(&root.clone().move_child(1).unwrap()), Ty::Num);
@@ -668,8 +743,8 @@ mod tests {
     fn expected_ty_is_pushed_through_an_application_into_a_lambda_body() {
 
 
-        let f = Id::new(0);
-        let x = Id::new(1);
+        let f = Id::from_u128(0);
+        let x = Id::from_u128(1);
         let e = Exp::ap(
             Exp::lam(f, arrow(Ty::Num, Ty::Bool), Exp::var(f)),
             Exp::lam(x, Ty::Hole, hole(0)),
@@ -688,7 +763,7 @@ mod tests {
     #[test]
     fn expected_ty_is_pushed_into_a_pair_component() {
 
-        let p = Id::new(0);
+        let p = Id::from_u128(0);
         let e = Exp::ap(
             Exp::lam(p, prod(Ty::Num, Ty::Bool), Exp::var(p)),
             Exp::pair(hole(0), hole(1)),
@@ -776,7 +851,7 @@ mod tests {
     #[test]
     fn construct_var_writes_an_in_scope_reference_and_keeps_the_cursor_on_it() {
 
-        let x = Id::new(0);
+        let x = Id::from_u128(0);
         let z = unzip(Exp::lam(x, Ty::Num, hole(0))).move_child(0).unwrap();
         let after = apply(z, Action::ConstructVar(x)).unwrap();
 
@@ -789,7 +864,7 @@ mod tests {
     #[test]
     fn construct_var_fails_cleanly_when_the_binder_is_not_in_scope() {
         let z = unzip(hole(0));
-        assert!(apply(z, Action::ConstructVar(Id::new(3))).is_none());
+        assert!(apply(z, Action::ConstructVar(Id::from_u128(3))).is_none());
     }
 
 
@@ -940,7 +1015,7 @@ mod tests {
     #[test]
     fn construct_ap_wraps_focus() {
 
-        let x = Id::new(0);
+        let x = Id::from_u128(0);
         let f = Exp::lam(x, Ty::Num, Exp::var(x));
         let after = apply(unzip(f.clone()), Action::ConstructAp).unwrap();
 
@@ -1005,7 +1080,7 @@ mod tests {
     #[test]
     fn construct_proj_wraps_the_focus_as_the_operand() {
 
-        let p = Id::new(0);
+        let p = Id::from_u128(0);
         let z = unzip(Exp::let_(
             p,
             Exp::pair(Exp::num(1), Exp::bool_(true)),
@@ -1281,15 +1356,37 @@ mod tests {
     }
 
     #[test]
-    fn fresh_from_program_clears_every_id_in_use() {
+    fn fresh_from_program_never_reissues_an_id_the_program_already_uses() {
         let e = Exp::let_(
-            Id::new(7),
-            Exp::empty_hole(HoleId::new(12)),
-            Exp::non_empty_hole(HoleId::new(3), Exp::var(Id::new(7))),
+            Id::from_u128(7),
+            Exp::empty_hole(HoleId::from_u128(12)),
+            Exp::non_empty_hole(HoleId::from_u128(3), Exp::var(Id::from_u128(7))),
         );
+        let taken = [7u128, 12, 3];
         let mut fresh = Fresh::from_program(&e);
-        assert_eq!(fresh.hole(), HoleId::new(13));
-        assert_eq!(fresh.id(), Id::new(8));
+
+        let mut issued: Vec<u128> = Vec::new();
+        for _ in 0..100 {
+            issued.push(fresh.hole().as_u128());
+            issued.push(fresh.id().as_u128());
+        }
+
+        for bits in &issued {
+            assert!(!taken.contains(bits), "{bits:#x} is already in the program");
+        }
+        for (i, bits) in issued.iter().enumerate() {
+            assert!(
+                !issued[..i].contains(bits),
+                "{bits:#x} was issued twice"
+            );
+        }
+
+
+        assert_eq!(
+            Fresh::from_program(&e).id(),
+            Fresh::from_program(&e).id(),
+            "a session's fresh ids must be reproducible, or the log cannot replay"
+        );
     }
 
 
@@ -1297,7 +1394,7 @@ mod tests {
         vec![
             Action::ConstructNum(1),
             Action::ConstructBool(true),
-            Action::ConstructVar(Id::new(0)),
+            Action::ConstructVar(Id::from_u128(0)),
             Action::ConstructLam,
             Action::ConstructAp,
             Action::ConstructBinOp(Op::Add),

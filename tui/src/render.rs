@@ -12,32 +12,33 @@ use crate::app::{AppState, Slot};
 use crate::complete;
 
 pub fn program_line(state: &AppState) -> String {
-    slot_marked(state).unwrap_or_else(|| render_with_cursor(state.zipper()))
+    slot_marked(state).unwrap_or_else(|| render_with_cursor(state.zipper(), state.names()))
 }
 
 fn slot_marked(state: &AppState) -> Option<String> {
+    let names = state.names();
     let focus_text = match (state.focus(), state.slot) {
         (Exp::Lam(id, ty, body), Slot::BinderName) => format!(
             "λ{CURSOR_OPEN}{}{CURSOR_CLOSE}:{ty}. {}",
-            render_id(*id),
-            render_prec(body, PREC_BINDER)
+            render_id(*id, names),
+            render_prec(body, PREC_BINDER, names)
         ),
         (Exp::Lam(id, ty, body), Slot::Annotation) => format!(
             "λ{}:{CURSOR_OPEN}{ty}{CURSOR_CLOSE}. {}",
-            render_id(*id),
-            render_prec(body, PREC_BINDER)
+            render_id(*id, names),
+            render_prec(body, PREC_BINDER, names)
         ),
         (Exp::Let(id, bound, body), Slot::BinderName) => format!(
             "let {CURSOR_OPEN}{}{CURSOR_CLOSE} = {} in {}",
-            render_id(*id),
-            render_prec(bound, PREC_CMP),
-            render_prec(body, PREC_BINDER)
+            render_id(*id, names),
+            render_prec(bound, PREC_CMP, names),
+            render_prec(body, PREC_BINDER, names)
         ),
         _ => return None,
     };
 
 
-    let full = render_with_cursor(state.zipper());
+    let full = render_with_cursor(state.zipper(), names);
     let open = full.find(CURSOR_OPEN)?;
     let close = full.rfind(CURSOR_CLOSE)?;
     let marked = &full[open + CURSOR_OPEN.len()..close];
@@ -360,10 +361,14 @@ mod tests {
         ]
     }
 
+    fn example(exp: Exp) -> AppState {
+        AppState::with_names(exp, examples::names())
+    }
+
     fn all_states(exp: &Exp) -> Vec<AppState> {
         let mut out = Vec::new();
         for z in all_positions(exp) {
-            let base = AppState::new(exp.clone());
+            let base = example(exp.clone());
             let state = base
                 .apply_actions(
                     &index_path(&z)
@@ -389,7 +394,7 @@ mod tests {
     #[test]
     fn stripping_markers_reproduces_the_plain_projection() {
         for (name, exp) in all_examples() {
-            let plain = render(&exp);
+            let plain = render(&exp, &examples::names());
             for state in all_states(&exp) {
                 let marked = program_line(&state);
                 let stripped = marked.replace(CURSOR_OPEN, "").replace(CURSOR_CLOSE, "");
@@ -434,7 +439,7 @@ mod tests {
     #[test]
     fn a_slot_inside_parentheses_keeps_them() {
 
-        let state = AppState::new(examples::identity_hole_annotated_applied())
+        let state = example(examples::identity_hole_annotated_applied())
             .move_down()
             .unwrap()
             .move_down()
@@ -525,7 +530,7 @@ mod tests {
         use ratatui::crossterm::event::KeyCode;
 
 
-        let state = AppState::new(examples::add_with_non_empty_hole())
+        let state = example(examples::add_with_non_empty_hole())
             .apply_actions(&[nothing_action::act::Action::MoveChild(1)])
             .expect("the right operand");
         assert!(status_line(&state).contains("does not fit yet"));
@@ -690,7 +695,7 @@ mod tests {
 
         let wrapper = handle_key(
             key(KeyCode::Tab),
-            AppState::new(examples::add_with_non_empty_hole()),
+            example(examples::add_with_non_empty_hole()),
         );
         let contents = handle_key(key(KeyCode::Down), wrapper.clone());
 
@@ -718,7 +723,7 @@ mod tests {
 
         let state = handle_key(
             key(KeyCode::Tab),
-            AppState::new(examples::add_with_non_empty_hole()),
+            example(examples::add_with_non_empty_hole()),
         );
         let inside = handle_key(key(KeyCode::Down), state);
         assert!(status_line(&inside).contains("inside ⦇⦈ · does not fit yet"));
@@ -733,7 +738,7 @@ mod tests {
 
     #[test]
     fn the_status_line_counts_the_quarantines_left() {
-        let state = AppState::new(examples::add_with_non_empty_hole());
+        let state = example(examples::add_with_non_empty_hole());
         assert!(status_line(&state).contains("1 quarantined"));
         assert!(!status_line(&AppState::factorial()).contains("quarantined"));
     }

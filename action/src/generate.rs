@@ -1,5 +1,5 @@
 
-use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
+use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
 use nothing_core::ty::Ty;
 
 #[derive(Clone, Debug)]
@@ -55,16 +55,14 @@ enum Form {
 #[derive(Clone, Debug)]
 pub struct Gen {
     rng: Rng,
-    next_id: u64,
-    next_hole: u64,
+    ids: UuidStream,
 }
 
 impl Gen {
     pub fn new(seed: u64) -> Gen {
         Gen {
             rng: Rng::new(seed),
-            next_id: 0,
-            next_hole: 0,
+            ids: UuidStream::new((seed as u128) << 64 | 0x5EED),
         }
     }
 
@@ -73,15 +71,11 @@ impl Gen {
     }
 
     fn fresh_id(&mut self) -> Id {
-        let id = Id::new(self.next_id);
-        self.next_id += 1;
-        id
+        self.ids.next_id()
     }
 
     fn fresh_hole(&mut self) -> HoleId {
-        let h = HoleId::new(self.next_hole);
-        self.next_hole += 1;
-        h
+        self.ids.next_hole_id()
     }
 
     pub fn ty(&mut self, depth: u32) -> Ty {

@@ -1,7 +1,6 @@
 
 use nothing_action::act::Action;
 use nothing_core::exp::Id;
-use nothing_core::render::render_id;
 use nothing_core::ty::{Ty, is_consistent};
 
 use crate::app::AppState;
@@ -32,10 +31,6 @@ impl Candidate {
     }
 }
 
-pub fn display_name(id: Id) -> String {
-    render_id(id)
-}
-
 pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
     let ctx = state.ctx();
     let expected = state.expected_ty();
@@ -52,7 +47,7 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
 
     let mut out: Vec<(RankKey, Candidate)> = Vec::new();
     for (id, scope) in depth {
-        let name = display_name(id);
+        let name = state.display_name(id);
         if !name.starts_with(prefix) {
             continue;
         }

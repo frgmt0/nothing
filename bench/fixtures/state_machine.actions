@@ -12,14 +12,14 @@
 # λs:Num. ⦇⦈
 construct-lam
 move-parent
-set-binder-id 0
+rename x0
 set-ann Num
 move-child 0
 
 # if s == 0 then 1 else ⦇⦈    -- Idle -> Running
 construct-if
 construct-binop eq
-construct-var 0
+construct-var x0
 move-next-sibling
 construct-num 0
 move-parent
@@ -30,7 +30,7 @@ move-next-sibling
 # if s == 1 then 2 else 0     -- Running -> Stopped, Stopped -> Idle
 construct-if
 construct-binop eq
-construct-var 0
+construct-var x0
 move-next-sibling
 construct-num 1
 move-parent

@@ -112,9 +112,9 @@ fn replay(start: Exp, actions: &[Action]) -> Result<Exp, String> {
 
 
 fn canonical_hole_ids(exp: &Exp) -> Exp {
-    fn go(exp: &Exp, next: &mut u64) -> Exp {
+    fn go(exp: &Exp, next: &mut u128) -> Exp {
         let mut fresh = || {
-            let h = HoleId::new(*next);
+            let h = HoleId::from_u128(*next);
             *next += 1;
             h
         };
@@ -213,7 +213,7 @@ proptest! {
     fn every_program_is_reachable_from_nothing(seed in any::<u64>()) {
         let b = generate::well_typed_exp(seed);
         let empty = EditState::empty().exp();
-        let reached = replay(empty, &path_to(&Exp::EmptyHole(HoleId::new(0)), &b))
+        let reached = replay(empty, &path_to(&Exp::EmptyHole(HoleId::from_u128(0)), &b))
             .map_err(TestCaseError::fail)?;
         prop_assert!(eq_up_to_hole_ids(&reached, &b));
     }
@@ -342,7 +342,7 @@ fn the_targets_cover_the_hard_cases() {
 
 #[test]
 fn a_specific_annotated_binder_is_reachable() {
-    let x = Id::new(42);
+    let x = Id::from_u128(42);
     let target = Exp::lam(x, Ty::Num, Exp::bin_op(Op::Add, Exp::var(x), Exp::num(1)));
     assert!(is_well_typed(&target));
 
@@ -353,7 +353,7 @@ fn a_specific_annotated_binder_is_reachable() {
 
 #[test]
 fn set_ann_fails_cleanly_when_the_annotation_would_break_the_body() {
-    let x = Id::new(0);
+    let x = Id::from_u128(0);
     let program = Exp::lam(x, Ty::Hole, Exp::bin_op(Op::Add, Exp::var(x), Exp::num(1)));
     let state = EditState::new(program.clone());
 
@@ -369,7 +369,7 @@ fn set_ann_fails_cleanly_when_the_annotation_would_break_the_body() {
 
 #[test]
 fn binder_metadata_actions_do_not_apply_elsewhere() {
-    let x = Id::new(0);
+    let x = Id::from_u128(0);
 
 
     let state = EditState::new(Exp::num(1));
@@ -379,22 +379,22 @@ fn binder_metadata_actions_do_not_apply_elsewhere() {
 
     let lam = EditState::new(Exp::lam(x, Ty::Num, Exp::num(1)));
     assert_eq!(
-        lam.apply(Action::SetBinderId(Id::new(9)))
+        lam.apply(Action::SetBinderId(Id::from_u128(9)))
             .expect("the body does not mention the parameter")
             .exp(),
-        Exp::lam(Id::new(9), Ty::Num, Exp::num(1))
+        Exp::lam(Id::from_u128(9), Ty::Num, Exp::num(1))
     );
 
 
     let used = EditState::new(Exp::lam(x, Ty::Num, Exp::var(x)));
-    assert!(used.apply(Action::SetBinderId(Id::new(9))).is_none());
+    assert!(used.apply(Action::SetBinderId(Id::from_u128(9))).is_none());
 
     let let_ = EditState::new(Exp::let_(x, Exp::num(1), Exp::num(2)));
     assert_eq!(
-        let_.apply(Action::SetBinderId(Id::new(9)))
+        let_.apply(Action::SetBinderId(Id::from_u128(9)))
             .expect("the body does not mention the binding")
             .exp(),
-        Exp::let_(Id::new(9), Exp::num(1), Exp::num(2))
+        Exp::let_(Id::from_u128(9), Exp::num(1), Exp::num(2))
     );
 }
 
@@ -403,7 +403,7 @@ fn a_non_empty_hole_whose_contents_fit_is_reachable_only_explicitly() {
     let target = Exp::bin_op(
         Op::Add,
         Exp::num(1),
-        Exp::non_empty_hole(HoleId::new(0), Exp::num(2)),
+        Exp::non_empty_hole(HoleId::from_u128(0), Exp::num(2)),
     );
     assert!(is_well_typed(&target), "a fitting quarantine is legal");
 
@@ -411,7 +411,7 @@ fn a_non_empty_hole_whose_contents_fit_is_reachable_only_explicitly() {
     let plain = EditState::new(Exp::bin_op(
         Op::Add,
         Exp::num(1),
-        Exp::EmptyHole(HoleId::new(0)),
+        Exp::EmptyHole(HoleId::from_u128(0)),
     ))
     .apply(Action::MoveChild(1))
     .unwrap()

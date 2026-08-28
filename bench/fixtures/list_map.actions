@@ -11,29 +11,29 @@
 # λf:Num -> Num. ⦇⦈
 construct-lam
 move-parent
-set-binder-id 0
+rename x0
 set-ann Num -> Num
 move-child 0
 
 # λxs:Num * Num. ⦇⦈
 construct-lam
 move-parent
-set-binder-id 1
+rename x1
 set-ann Num * Num
 move-child 0
 
 # (f (fst xs), ⦇⦈)
 construct-pair
-construct-var 0
+construct-var x0
 construct-ap
 construct-proj fst
-construct-var 1
+construct-var x1
 
 # (..., f (snd xs))
 move-parent
 move-parent
 move-next-sibling
-construct-var 0
+construct-var x0
 construct-ap
 construct-proj snd
-construct-var 1
+construct-var x1

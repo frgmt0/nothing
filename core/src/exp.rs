@@ -1,34 +1,140 @@
 
+use uuid::Uuid;
+
 use crate::ty::Ty;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Id(pub u64);
+pub struct Id(Uuid);
 
 impl Id {
-    pub fn new(n: u64) -> Self {
-        Id(n)
+    pub fn fresh() -> Id {
+        Id(Uuid::new_v4())
+    }
+
+    pub const fn from_uuid(uuid: Uuid) -> Id {
+        Id(uuid)
+    }
+
+    pub const fn from_u128(bits: u128) -> Id {
+        Id(Uuid::from_u128(bits))
+    }
+
+    pub const fn uuid(self) -> Uuid {
+        self.0
+    }
+
+    pub const fn as_u128(self) -> u128 {
+        self.0.as_u128()
+    }
+
+    pub fn parse(text: &str) -> Option<Id> {
+        Uuid::parse_str(text).ok().map(Id)
+    }
+
+    pub fn short(self) -> String {
+        self.0.simple().to_string()[..8].to_string()
+    }
+}
+
+impl std::fmt::Display for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.hyphenated())
     }
 }
 
 impl std::fmt::Debug for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#{}", self.0)
+        write!(f, "#{}", self.short())
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct HoleId(pub u64);
+pub struct HoleId(Uuid);
 
 impl HoleId {
-    pub fn new(n: u64) -> Self {
-        HoleId(n)
+    pub fn fresh() -> HoleId {
+        HoleId(Uuid::new_v4())
+    }
+
+    pub const fn from_uuid(uuid: Uuid) -> HoleId {
+        HoleId(uuid)
+    }
+
+    pub const fn from_u128(bits: u128) -> HoleId {
+        HoleId(Uuid::from_u128(bits))
+    }
+
+    pub const fn uuid(self) -> Uuid {
+        self.0
+    }
+
+    pub const fn as_u128(self) -> u128 {
+        self.0.as_u128()
+    }
+
+    pub fn parse(text: &str) -> Option<HoleId> {
+        Uuid::parse_str(text).ok().map(HoleId)
+    }
+
+    pub fn short(self) -> String {
+        self.0.simple().to_string()[..8].to_string()
+    }
+}
+
+impl std::fmt::Display for HoleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.hyphenated())
     }
 }
 
 impl std::fmt::Debug for HoleId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "?{}", self.0)
+        write!(f, "?{}", self.short())
     }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UuidStream {
+    state: u128,
+}
+
+impl UuidStream {
+    pub const fn new(seed: u128) -> UuidStream {
+        UuidStream { state: seed }
+    }
+
+    pub fn stir(&mut self, bits: u128) {
+        self.state ^= bits;
+        self.step();
+    }
+
+    pub fn next_uuid(&mut self) -> Uuid {
+        self.step();
+        let bits = self.state;
+        uuid::Builder::from_random_bytes(bits.to_be_bytes()).into_uuid()
+    }
+
+    pub fn next_id(&mut self) -> Id {
+        Id(self.next_uuid())
+    }
+
+    pub fn next_hole_id(&mut self) -> HoleId {
+        HoleId(self.next_uuid())
+    }
+
+    fn step(&mut self) {
+        let (high, low) = ((self.state >> 64) as u64, self.state as u64);
+        let high = mix(high.wrapping_add(0x9E37_79B9_7F4A_7C15));
+        let low = mix(low.wrapping_add(0xBF58_476D_1CE4_E5B9) ^ high);
+        self.state = ((high as u128) << 64) | (low as u128);
+    }
+}
+
+fn mix(seed: u64) -> u64 {
+    let mut z = seed;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -135,9 +241,9 @@ mod tests {
 
     #[test]
     fn every_variant_reachable_from_a_constructor() {
-        let x = Id::new(0);
-        let h0 = HoleId::new(0);
-        let h1 = HoleId::new(1);
+        let x = Id::from_u128(0);
+        let h0 = HoleId::from_u128(0);
+        let h1 = HoleId::from_u128(1);
 
         let exps: Vec<Exp> = vec![
             Exp::var(x),
@@ -160,15 +266,15 @@ mod tests {
 
     #[test]
     fn ids_are_distinguishable_by_value() {
-        assert_eq!(Id::new(1), Id::new(1));
-        assert_ne!(Id::new(1), Id::new(2));
-        assert_eq!(HoleId::new(1), HoleId::new(1));
-        assert_ne!(HoleId::new(1), HoleId::new(2));
+        assert_eq!(Id::from_u128(1), Id::from_u128(1));
+        assert_ne!(Id::from_u128(1), Id::from_u128(2));
+        assert_eq!(HoleId::from_u128(1), HoleId::from_u128(1));
+        assert_ne!(HoleId::from_u128(1), HoleId::from_u128(2));
     }
 
     #[test]
     fn hole_kinds_are_distinct_variants() {
-        let h = HoleId::new(0);
+        let h = HoleId::from_u128(0);
         let empty = Exp::empty_hole(h);
         let non_empty = Exp::non_empty_hole(h, Exp::num(1));
         assert_ne!(empty, non_empty);

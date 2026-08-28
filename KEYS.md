@@ -37,7 +37,7 @@ every verb is one punctuation key.
 
 The one piece of positional state beyond the zipper is the **slot**: which
 part of the focused node the cursor addresses. Binders have parts the
-zipper has no child index for, and `SetAnn`/`SetBinderId` are unreachable
+zipper has no child index for, and `SetAnn`/`Rename` are unreachable
 without them.
 
 | node | slot 0 | slot 1 | slot 2 |
@@ -82,7 +82,7 @@ OPERATORS  (climb, then wrap)             FORMS  (wrap the focus)
   =   equals     e == ⦇⦈        "            ,      pair        (e, ⦇⦈)   …Pair
                                              [  ]   fst e / snd e   ConstructProj
 IN A BINDER-NAME SLOT                        !      quarantine  ⦇e⦈   …NonEmptyHole
-  a-zA-Z0-9_  name the binder  SetBinderId
+  a-zA-Z0-9_  name the binder  Rename
   :   → annotation slot                   HOLES & HISTORY
   =   → bound expression (let)              Bksp  run: un-type one char ·
   .   → body                                      empty hole: ascend · else Delete
@@ -184,11 +184,12 @@ its missing operand: `:n` → `Num`, `:n>` → `Num -> ?`, `:n>n` →
 `Num -> Num`, `:n*n` → `Num * Num`. Letters that are not `n`/`b` are
 swallowed inside a spelled base type, so `num > bool` works too.
 
-**Binder names.** Free text, one keystroke per character. Until Phase 5
-there is no name table, so the slot resolves digits to `SetBinderId(Id(n))`
-and names render `x0`, `x1`, … (`core::render::render_id`) — a reference
-costs `x`+digit rather than one key. When Phase 5 lands, the slot becomes
-a name-table write; not one binding in this file changes.
+**Binder names.** Free text, one keystroke per character. Since Phase 5 the
+slot is a name-table write: every keystroke re-issues `Rename(id, buffer)`
+against the focused binder's id, and the projection reads the name back out
+of the table (`core::names::NameTable`, `core::render::render_id`). A binder
+may be called anything, a reference costs one key per character of the name,
+and not one binding in this file changed when the slot switched over.
 
 ---
 
@@ -223,26 +224,26 @@ sensibility proptest covers every step.
 ## Which keys can decline
 
 Auto-quarantine means every construction key applies at every focus:
-`<` on `true` → `⦇true⦈ < ⦇⦈`; `space` on `1` → `⦇1⦈ ⦇⦈`. Exactly three
+`<` on `true` → `⦇true⦈ < ⦇⦈`; `space` on `1` → `⦇1⦈ ⦇⦈`. Exactly two
 things can decline, each with visible feedback:
 
 | what | when | feedback |
 |---|---|---|
 | annotation slot (`SetAnn`) | the annotation would break the body (`λx:?. x + 1` as `Bool`) — a type is not an expression, there is nothing to quarantine | slot stays open, offending type marked, status line says why |
-| binder slot (`SetBinderId`) | the identity would capture or orphan a reference | warned live, before the keystroke lands; slot stays open |
 | `Enter` (`Finish`) | the contents of `⦇e⦈` still do not fit | hole marked "does not fit yet: expected τ" |
 
-The binder row is the one that needs saying twice, because the two halves are
-caught in different places (settled item 13, `FRICTION.md` #7). **Orphaning**
-— a reference this binder was holding up, left unbound — the calculus
-declines by itself: a free variable does not synthesise, so `SetBinderId`
-fails the well-typedness check. **Capture** — the body already refers to the
-id you are typing, resolving to an outer binder — leaves a *well-typed*
-program that means something else, so the calculus has no reason to refuse it
-and the editor must. It is the only way this editor could silently change
-what a program says, and it is checked before the action is offered.
+The binder-name slot used to be a third row, declining a name that would
+capture or orphan a reference (settled item 13, `FRICTION.md` #7). Phase 5
+retired it. A name is metadata now: the binder's identity is a uuid the
+keyboard never types, references point at that uuid, and `Rename` writes one
+row of the name table. It cannot orphan a reference, because no reference
+resolves by name; it cannot capture one, because two binders wearing the
+display name `x` are still two binders and the inner `x` in the body still
+points where it always pointed. So the slot no longer refuses anything: the
+TUI applies `Rename` with an `expect`, because there is no failure for it to
+report.
 
-`ConstructVar` is the fourth fallible action, but the candidate list is
+`ConstructVar` is the third fallible action, but the candidate list is
 drawn from `ctx_at`, so the failing case is unreachable from the keyboard.
 
 ---
@@ -251,8 +252,9 @@ drawn from `ctx_at`, so the failing case is unreachable from the keyboard.
 
 Counts are keystrokes; one keystroke may expand to several primitive
 actions (climbing, `Tab`), and the action log records the primitives.
-Names are written as intended; pre-Phase-5 each binder reference costs one
-extra key (`x`+digit) and the pre-Phase-5 count is given too.
+Names are written as intended and cost one key per character; the counts in
+parentheses are what the same program cost before Phase 5, when a binder
+reference was `x`+digit.
 
 ### `1 + 2` — 3 keystrokes, 3 actions
 
@@ -284,7 +286,7 @@ movement key.
 | 13 | `*` | `… else n * ⦇⦈` | rhs — the unwritten recursive call |
 
 **13 keystrokes, 16 primitive actions.** The Phase 3 fixture is 16 actions,
-five of which are the `construct-lam` / `move-parent` / `set-binder-id` /
+five of which are the `construct-lam` / `move-parent` / `rename` /
 `set-ann` / `move-child 0` dance that the binder slots collapse into keys
 1–5. Neovim baseline 84 → **0.15×** (0.18× pre-Phase-5).
 
@@ -393,7 +395,7 @@ the same reason it was worst in Phase 3 (deep nesting, four binders).
 | `MovePrevSibling` | `←` | `ConstructProj(L/R)` | `[` / `]` |
 | `Delete` | `Del`; `Bksp` off a run/hole | `ConstructNonEmptyHole` | `!` |
 | `ConstructNum(i64)` | `0`–`9`, `~` | `SetAnn(Ty)` | `:` + annotation slot |
-| `ConstructBool(bool)` | `t`/`f` (top-ranked candidates) | `SetBinderId(Id)` | typing in the binder slot |
+| `ConstructBool(bool)` | `t`/`f` (top-ranked candidates) | `Rename(Id, String)` | typing in the binder slot |
 | `ConstructVar(Id)` | letters (name run) | `Finish` | `Enter` on or inside `⦇e⦈` |
 | `ConstructLam` | `\` | undo / redo | `C-z` / `C-r` |
 | `ConstructAp` | `space` | quit | `C-q` |
@@ -468,10 +470,13 @@ once and pinned by `tui/tests/matrix.rs`, which is the matrix as a table.
 7. **Undo covers a keystroke that changed only the cursor** — `:` into the
    annotation slot applies no action, and `C-z` must still take it back —
    but not one that changed nothing at all.
-8. **Pre-Phase-5 the binder-name slot reads the digits of what you type**
-   (`x0` → `SetBinderId(Id(0))`), as §"Literal entry" says. A name with no
-   digits is buffered and says so on the status line rather than being
-   refused.
+8. **The binder-name slot writes whatever you type**, character by
+   character, as `Rename(id, buffer)` — the id is the binder's own, never
+   typed and never parsed out of the name. Before Phase 5 the slot read the
+   digits of the name as the identity (`x0` → `SetBinderId(Id(0))`) and a
+   name with no digits could only sit in the buffer and say so on the status
+   line. The name table removed the parse, and with it the one case where
+   what you had typed was not yet in the program.
 9. **An unknown expected type ranks nothing.** §"Literal entry" rank 2
    reads "exact match above consistent-via-`?` above inconsistent"; taken
    literally at a hole whose expected type *is* `?`, a `?`-typed binder
@@ -516,14 +521,19 @@ friction session (`FRICTION.md`); each is pinned by a test named after it.
    subtree during the session (#13). Pinned by
    `keys::tests::enter_finishes_the_quarantine_the_cursor_is_inside`, which
    also asserts it is exactly one keystroke cheaper than walking out.
-13. **The binder-name slot declines a rename that would capture.** See
-   §"Which keys can decline" above. Pre-Phase-5 an `Id` *is* the display
-   name, so a capture also makes the outer binder unreachable from the
-   keyboard — the candidate list offers one `x0` and no keystroke produces a
-   reference to the other (#8). Phase 5 separates name from identity and
-   shadowing becomes expressible; this check is about identity and stays.
-   Pinned by `keys::tests::renaming_a_binder_onto_an_id_already_in_scope_is_declined`
-   and its two negative cases.
+13. ~~**The binder-name slot declines a rename that would capture.**~~
+   **Retired by Phase 5** (2026-08-28). The check made sense while an `Id`
+   *was* the display name: renaming onto an id already in scope silently
+   repointed references, and made the outer binder unreachable from the
+   keyboard besides — the candidate list offered one `x0` and no keystroke
+   produced a reference to the other (#8). With names in a side table
+   neither half survives: `Rename` writes metadata, no reference resolves by
+   name, and two binders displayed as `x` are two binders. The prediction in
+   the old wording — "this check is about identity and stays" — was wrong,
+   because the keyboard stopped setting identity at all. The three tests
+   that pinned it are gone; what stands in their place is
+   `keys::tests::two_binders_may_wear_the_same_display_name_without_capture`
+   and `keys::tests::renaming_a_binder_renames_every_reference_to_it_at_once`.
 14. **The program pane is a viewport, and the focus is a span.** The
    projection is wrapped by the editor rather than by `Paragraph`, so the
    line the cursor is on is known and the window is chosen to contain it

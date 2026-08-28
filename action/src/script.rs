@@ -7,8 +7,42 @@ use nothing_core::ty::Ty;
 use crate::act::{Action, EditState};
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum Command {
+pub enum Step {
     Act(Action),
+    Var(String),
+    Rename(String),
+}
+
+impl Step {
+    pub fn resolve(&self, state: &EditState) -> Result<Action, ParseError> {
+        match self {
+            Step::Act(action) => Ok(action.clone()),
+            Step::Var(name) => match lookup_in_scope(state, name) {
+                Some(id) => Ok(Action::ConstructVar(id)),
+                None => Err(ParseError(format!("no binder named `{name}` is in scope"))),
+            },
+            Step::Rename(name) => match state.zipper.binder_id() {
+                Some(id) => Ok(Action::Rename(id, name.clone())),
+                None => Err(ParseError(
+                    "`rename` needs the cursor on a lambda or a let".to_string(),
+                )),
+            },
+        }
+    }
+}
+
+fn lookup_in_scope(state: &EditState, name: &str) -> Option<Id> {
+    state
+        .zipper
+        .binders()
+        .into_iter()
+        .rev()
+        .find(|id| state.names.get(*id) == Some(name))
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum Command {
+    Act(Step),
     Quit,
     Show,
     Reset,
@@ -51,7 +85,7 @@ editing:
   delete                  replace the focus with an empty hole
   construct-num N         write a numeric literal
   construct-bool BOOL     write true or false
-  construct-var N         reference the in-scope binder with id N
+  construct-var NAME      reference the in-scope binder displayed as NAME
   construct-lam           e becomes λx:?. e
   construct-ap            e becomes e ⦇⦈
   construct-binop OP      e becomes e OP ⦇⦈   (add|sub|mul|lt|eq, or + - * < ==)
@@ -62,7 +96,8 @@ editing:
   construct-non-empty-hole  e becomes ⦇e⦈
   set-ann TY              set the focused lambda's annotation
                           TY := Num | Bool | ? | TY -> TY | TY * TY | ( TY )
-  set-binder-id N         re-identify the focused lambda or let binder
+  set-binder-id UUID      re-identify the focused lambda or let binder
+  rename NAME             give the focused binder the display name NAME
   finish                  unwrap a non-empty hole whose contents now fit
 harness:
   show                    re-print the current program
@@ -83,19 +118,19 @@ pub fn parse_command(line: &str) -> Result<Option<Command>, ParseError> {
         "help" | "?" => return Ok(Some(Command::Help)),
         _ => {}
     }
-    parse_action(line).map(|a| Some(Command::Act(a)))
+    parse_step(line).map(|step| Some(Command::Act(step)))
 }
 
-pub fn parse_action(line: &str) -> Result<Action, ParseError> {
+pub fn parse_step(line: &str) -> Result<Step, ParseError> {
     let line = line.trim();
     let (head, rest) = match line.find(char::is_whitespace) {
         Some(i) => (&line[..i], line[i..].trim()),
         None => (line, ""),
     };
 
-    let no_arg = |action: Action| -> Result<Action, ParseError> {
+    let no_arg = |action: Action| -> Result<Step, ParseError> {
         if rest.is_empty() {
-            Ok(action)
+            Ok(Step::Act(action))
         } else {
             Err(ParseError(format!(
                 "`{head}` takes no argument, got `{rest}`"
@@ -103,32 +138,43 @@ pub fn parse_action(line: &str) -> Result<Action, ParseError> {
         }
     };
 
+    let act = |action: Action| -> Result<Step, ParseError> { Ok(Step::Act(action)) };
+
     match head {
-        "move-child" => Ok(Action::MoveChild(parse_usize(head, rest)?)),
+        "move-child" => act(Action::MoveChild(parse_usize(head, rest)?)),
         "move-parent" => no_arg(Action::MoveParent),
         "move-next-sibling" | "move-next" => no_arg(Action::MoveNextSibling),
         "move-prev-sibling" | "move-prev" => no_arg(Action::MovePrevSibling),
 
         "delete" => no_arg(Action::Delete),
 
-        "construct-num" => Ok(Action::ConstructNum(parse_i64(head, rest)?)),
-        "construct-bool" => Ok(Action::ConstructBool(parse_bool(head, rest)?)),
-        "construct-var" => Ok(Action::ConstructVar(Id::new(parse_u64(head, rest)?))),
+        "construct-num" => act(Action::ConstructNum(parse_i64(head, rest)?)),
+        "construct-bool" => act(Action::ConstructBool(parse_bool(head, rest)?)),
+        "construct-var" => Ok(Step::Var(parse_name(head, rest)?)),
         "construct-lam" => no_arg(Action::ConstructLam),
         "construct-ap" => no_arg(Action::ConstructAp),
-        "construct-binop" => Ok(Action::ConstructBinOp(parse_op(rest)?)),
+        "construct-binop" => act(Action::ConstructBinOp(parse_op(rest)?)),
         "construct-if" => no_arg(Action::ConstructIf),
         "construct-let" => no_arg(Action::ConstructLet),
         "construct-pair" => no_arg(Action::ConstructPair),
-        "construct-proj" => Ok(Action::ConstructProj(parse_side(rest)?)),
+        "construct-proj" => act(Action::ConstructProj(parse_side(rest)?)),
         "construct-non-empty-hole" => no_arg(Action::ConstructNonEmptyHole),
 
-        "set-ann" => Ok(Action::SetAnn(parse_ty(rest)?)),
-        "set-binder-id" => Ok(Action::SetBinderId(Id::new(parse_u64(head, rest)?))),
+        "set-ann" => act(Action::SetAnn(parse_ty(rest)?)),
+        "set-binder-id" => act(Action::SetBinderId(parse_id(head, rest)?)),
+        "rename" => Ok(Step::Rename(parse_name(head, rest)?)),
         "finish" => no_arg(Action::Finish),
 
         "" => Err(ParseError("empty command".to_string())),
         other => Err(ParseError(format!("unknown action `{other}`"))),
+    }
+}
+
+pub fn step_name(step: &Step) -> String {
+    match step {
+        Step::Act(action) => action_name(action),
+        Step::Var(name) => format!("construct-var {name}"),
+        Step::Rename(name) => format!("rename {name}"),
     }
 }
 
@@ -141,7 +187,7 @@ pub fn action_name(action: &Action) -> String {
         Action::Delete => "delete".to_string(),
         Action::ConstructNum(n) => format!("construct-num {n}"),
         Action::ConstructBool(b) => format!("construct-bool {b}"),
-        Action::ConstructVar(id) => format!("construct-var {}", id.0),
+        Action::ConstructVar(id) => format!("construct-var {id}"),
         Action::ConstructLam => "construct-lam".to_string(),
         Action::ConstructAp => "construct-ap".to_string(),
         Action::ConstructBinOp(op) => format!("construct-binop {}", op_name(*op)),
@@ -151,7 +197,8 @@ pub fn action_name(action: &Action) -> String {
         Action::ConstructProj(side) => format!("construct-proj {}", side_name(*side)),
         Action::ConstructNonEmptyHole => "construct-non-empty-hole".to_string(),
         Action::SetAnn(ty) => format!("set-ann {ty}"),
-        Action::SetBinderId(id) => format!("set-binder-id {}", id.0),
+        Action::SetBinderId(id) => format!("set-binder-id {id}"),
+        Action::Rename(id, name) => format!("rename {name} {id}"),
         Action::Finish => "finish".to_string(),
     }
 }
@@ -178,9 +225,20 @@ fn parse_usize(head: &str, rest: &str) -> Result<usize, ParseError> {
         .map_err(|_| ParseError(format!("`{head}` expects a child index, got `{rest}`")))
 }
 
-fn parse_u64(head: &str, rest: &str) -> Result<u64, ParseError> {
-    rest.parse::<u64>()
-        .map_err(|_| ParseError(format!("`{head}` expects a binder id, got `{rest}`")))
+fn parse_id(head: &str, rest: &str) -> Result<Id, ParseError> {
+    Id::parse(rest).ok_or_else(|| {
+        ParseError(format!("`{head}` expects a binder uuid, got `{rest}`"))
+    })
+}
+
+fn parse_name(head: &str, rest: &str) -> Result<String, ParseError> {
+    let name = rest.split_whitespace().next().unwrap_or("");
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err(ParseError(format!(
+            "`{head}` expects a name, got `{rest}`"
+        )));
+    }
+    Ok(name.to_string())
 }
 
 fn parse_i64(head: &str, rest: &str) -> Result<i64, ParseError> {
@@ -308,14 +366,14 @@ fn ty_atom(tokens: &[String], pos: &mut usize) -> Result<Ty, ParseError> {
 }
 
 
-pub fn parse_script(text: &str) -> Result<Vec<Action>, ScriptError> {
+pub fn parse_script(text: &str) -> Result<Vec<Step>, ScriptError> {
     Ok(parse_numbered_script(text)?
         .into_iter()
-        .map(|(_, action)| action)
+        .map(|(_, step)| step)
         .collect())
 }
 
-pub fn parse_numbered_script(text: &str) -> Result<Vec<(usize, Action)>, ScriptError> {
+pub fn parse_numbered_script(text: &str) -> Result<Vec<(usize, Step)>, ScriptError> {
     let mut actions = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let at = |message: String| ScriptError {
@@ -325,7 +383,7 @@ pub fn parse_numbered_script(text: &str) -> Result<Vec<(usize, Action)>, ScriptE
         };
         match parse_command(line).map_err(|e| at(e.0))? {
             None => {}
-            Some(Command::Act(action)) => actions.push((i + 1, action)),
+            Some(Command::Act(step)) => actions.push((i + 1, step)),
             Some(Command::Quit) => break,
             Some(_) => {
                 return Err(at(
@@ -338,15 +396,24 @@ pub fn parse_numbered_script(text: &str) -> Result<Vec<(usize, Action)>, ScriptE
 }
 
 pub fn replay_script(text: &str) -> Result<EditState, ScriptError> {
+    replay_script_from(text, EditState::empty())
+}
+
+pub fn replay_script_from(text: &str, start: EditState) -> Result<EditState, ScriptError> {
     let lines: Vec<&str> = text.lines().collect();
-    let mut state = EditState::empty();
-    for (line_no, action) in parse_numbered_script(text)? {
-        if !state.apply_mut(action.clone()) {
-            return Err(ScriptError {
-                line: line_no,
-                text: lines[line_no - 1].to_string(),
-                message: format!("action did not apply: {}", action_name(&action)),
-            });
+    let mut state = start;
+    for (line_no, step) in parse_numbered_script(text)? {
+        let at = |message: String| ScriptError {
+            line: line_no,
+            text: lines[line_no - 1].to_string(),
+            message,
+        };
+        let action = step.resolve(&state).map_err(|e| at(e.0))?;
+        if !state.apply_mut(action) {
+            return Err(at(format!(
+                "action did not apply: {}",
+                step_name(&step)
+            )));
         }
     }
     Ok(state)
@@ -355,11 +422,10 @@ pub fn replay_script(text: &str) -> Result<EditState, ScriptError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nothing_core::render::render;
     use nothing_core::typing::is_well_typed;
 
-    fn every_action() -> Vec<Action> {
-        vec![
+    fn every_step() -> Vec<Step> {
+        let mut steps: Vec<Step> = vec![
             Action::MoveChild(0),
             Action::MoveChild(7),
             Action::MoveParent,
@@ -370,7 +436,6 @@ mod tests {
             Action::ConstructNum(-12),
             Action::ConstructBool(true),
             Action::ConstructBool(false),
-            Action::ConstructVar(Id::new(3)),
             Action::ConstructLam,
             Action::ConstructAp,
             Action::ConstructBinOp(Op::Add),
@@ -389,19 +454,71 @@ mod tests {
             Action::SetAnn(Ty::Hole),
             Action::SetAnn(Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool))),
             Action::SetAnn(Ty::Prod(Box::new(Ty::Num), Box::new(Ty::Num))),
-            Action::SetBinderId(Id::new(9)),
+            Action::SetBinderId(Id::from_u128(9)),
+            Action::Rename(Id::from_u128(9), "xs".to_string()),
             Action::Finish,
         ]
+        .into_iter()
+        .map(Step::Act)
+        .collect();
+        steps.push(Step::Var("x0".to_string()));
+        steps.push(Step::Rename("total".to_string()));
+        steps
     }
 
     #[test]
-    fn action_name_and_parse_action_are_inverse() {
-        for action in every_action() {
-            let name = action_name(&action);
-            let parsed = parse_action(&name)
-                .unwrap_or_else(|e| panic!("`{name}` did not parse back: {e}"));
-            assert_eq!(parsed, action, "round trip failed for `{name}`");
+    fn step_name_and_parse_step_are_inverse() {
+        for step in every_step() {
+            if matches!(step, Step::Act(Action::Rename(..))) {
+                continue;
+            }
+            let name = step_name(&step);
+            let parsed =
+                parse_step(&name).unwrap_or_else(|e| panic!("`{name}` did not parse back: {e}"));
+            assert_eq!(parsed, step, "round trip failed for `{name}`");
         }
+    }
+
+    #[test]
+    fn a_rename_step_resolves_against_the_focused_binder() {
+        let state = replay_script("construct-lam\nmove-parent\nrename total\n").expect("replays");
+        assert_eq!(state.render(), "λtotal:?. ⦇⦈");
+    }
+
+    #[test]
+    fn construct_var_names_the_binder_rather_than_its_identity() {
+        let state = replay_script(
+            "construct-lam\nmove-parent\nrename n\nset-ann Num\nmove-child 0\nconstruct-var n\n",
+        )
+        .expect("replays");
+        assert_eq!(state.render(), "λn:Num. n");
+
+
+        let err = replay_script("construct-lam\nconstruct-var nope\n").unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("no binder named"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_inner_binder_wins_a_shared_display_name() {
+        let state = replay_script(
+            "construct-lam\nmove-parent\nrename x\nset-ann Num\nmove-child 0\n\
+             construct-lam\nmove-parent\nrename x\nset-ann Bool\nmove-child 0\n\
+             construct-var x\n",
+        )
+        .expect("replays");
+        assert_eq!(state.render(), "λx:Num. λx:Bool. x");
+        let inner = match state.exp() {
+            nothing_core::exp::Exp::Lam(_, _, body) => match *body {
+                nothing_core::exp::Exp::Lam(id, _, body) => match *body {
+                    nothing_core::exp::Exp::Var(used) => (id, used),
+                    other => panic!("expected a variable, got {other:?}"),
+                },
+                other => panic!("expected a lambda, got {other:?}"),
+            },
+            other => panic!("expected a lambda, got {other:?}"),
+        };
+        assert_eq!(inner.0, inner.1, "`x` resolved to the innermost binder");
     }
 
     #[test]
@@ -412,8 +529,8 @@ mod tests {
             .filter(|line| !line.starts_with(' '))
             .filter_map(|line| line.split_whitespace().next())
             .collect();
-        for action in every_action() {
-            let name = action_name(&action);
+        for step in every_step() {
+            let name = step_name(&step);
             let head = name.split_whitespace().next().unwrap();
             assert!(
                 documented.contains(&head),
@@ -440,55 +557,58 @@ mod tests {
 
     #[test]
     fn unknown_and_malformed_input_is_an_error_not_a_panic() {
-        assert!(parse_action("frobnicate").is_err());
-        assert!(parse_action("move-child").is_err());
-        assert!(parse_action("move-child x").is_err());
-        assert!(parse_action("move-child -1").is_err());
-        assert!(parse_action("move-parent 3").is_err());
-        assert!(parse_action("construct-num").is_err());
-        assert!(parse_action("construct-num 1.5").is_err());
-        assert!(parse_action("construct-bool yes").is_err());
-        assert!(parse_action("construct-binop pow").is_err());
-        assert!(parse_action("construct-proj middle").is_err());
-        assert!(parse_action("set-ann").is_err());
-        assert!(parse_action("set-ann Str").is_err());
-        assert!(parse_action("set-ann (Num").is_err());
-        assert!(parse_action("set-ann Num ->").is_err());
-        assert!(parse_action("set-ann Num Num").is_err());
-        assert!(parse_action("set-binder-id nine").is_err());
+        assert!(parse_step("frobnicate").is_err());
+        assert!(parse_step("move-child").is_err());
+        assert!(parse_step("move-child x").is_err());
+        assert!(parse_step("move-child -1").is_err());
+        assert!(parse_step("move-parent 3").is_err());
+        assert!(parse_step("construct-num").is_err());
+        assert!(parse_step("construct-num 1.5").is_err());
+        assert!(parse_step("construct-bool yes").is_err());
+        assert!(parse_step("construct-binop pow").is_err());
+        assert!(parse_step("construct-proj middle").is_err());
+        assert!(parse_step("set-ann").is_err());
+        assert!(parse_step("set-ann Str").is_err());
+        assert!(parse_step("set-ann (Num").is_err());
+        assert!(parse_step("set-ann Num ->").is_err());
+        assert!(parse_step("set-ann Num Num").is_err());
+        assert!(parse_step("set-binder-id nine").is_err());
     }
 
     #[test]
     fn negative_numbers_are_accepted_but_negative_indices_are_not() {
-        assert_eq!(parse_action("construct-num -7").unwrap(), Action::ConstructNum(-7));
-        assert!(parse_action("construct-var -1").is_err());
+        assert_eq!(
+            parse_step("construct-num -7").unwrap(),
+            Step::Act(Action::ConstructNum(-7))
+        );
+        assert!(parse_step("construct-var -").is_err());
     }
 
     #[test]
     fn operator_and_side_aliases_work() {
         assert_eq!(
-            parse_action("construct-binop +").unwrap(),
-            Action::ConstructBinOp(Op::Add)
+            parse_step("construct-binop +").unwrap(),
+            Step::Act(Action::ConstructBinOp(Op::Add))
         );
         assert_eq!(
-            parse_action("construct-binop ==").unwrap(),
-            Action::ConstructBinOp(Op::Eq)
+            parse_step("construct-binop ==").unwrap(),
+            Step::Act(Action::ConstructBinOp(Op::Eq))
         );
         assert_eq!(
-            parse_action("construct-proj fst").unwrap(),
-            Action::ConstructProj(Side::L)
+            parse_step("construct-proj fst").unwrap(),
+            Step::Act(Action::ConstructProj(Side::L))
         );
         assert_eq!(
-            parse_action("construct-proj snd").unwrap(),
-            Action::ConstructProj(Side::R)
+            parse_step("construct-proj snd").unwrap(),
+            Step::Act(Action::ConstructProj(Side::R))
         );
         assert_eq!(
-            parse_action("move-next").unwrap(),
-            Action::MoveNextSibling
+            parse_step("move-next").unwrap(),
+            Step::Act(Action::MoveNextSibling)
         );
         assert_eq!(
-            parse_action("move-prev").unwrap(),
-            Action::MovePrevSibling
+            parse_step("move-prev").unwrap(),
+            Step::Act(Action::MovePrevSibling)
         );
     }
 
@@ -563,7 +683,7 @@ mod tests {
 
         let state = replay_script("construct-num 1\nconstruct-binop add\nconstruct-num 2\n")
             .expect("script replays");
-        assert_eq!(render(&state.exp()), "1 + 2");
+        assert_eq!(state.render(), "1 + 2");
         assert!(is_well_typed(&state.exp()));
         assert_eq!(
             parse_script("construct-num 1\nconstruct-binop add\nconstruct-num 2\n")
@@ -590,7 +710,7 @@ mod tests {
     #[test]
     fn quit_ends_a_script_and_comments_do_not_count_as_actions() {
         let actions = parse_script("# build 1\nconstruct-num 1\n\nquit\nconstruct-num 2\n").unwrap();
-        assert_eq!(actions, vec![Action::ConstructNum(1)]);
+        assert_eq!(actions, vec![Step::Act(Action::ConstructNum(1))]);
     }
 
     #[test]

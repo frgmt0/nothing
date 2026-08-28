@@ -3,7 +3,7 @@ use std::io::{BufRead, Write};
 
 use nothing_action::act::EditState;
 use nothing_action::cursor_render::render_with_cursor;
-use nothing_action::script::{Command, parse_command, HELP};
+use nothing_action::script::{Command, parse_command, step_name, HELP};
 
 fn main() {
     let stdin = std::io::stdin();
@@ -15,7 +15,7 @@ fn main() {
 
     if interactive {
         println!("nothing REPL harness — `help` for commands, `quit` to stop.");
-        println!("{}", render_with_cursor(&state.zipper));
+        println!("{}", render_with_cursor(&state.zipper, &state.names));
     }
 
     for line in stdin.lock().lines() {
@@ -35,20 +35,29 @@ fn main() {
             Ok(None) => {}
             Ok(Some(Command::Quit)) => break,
             Ok(Some(Command::Help)) => println!("{HELP}"),
-            Ok(Some(Command::Show)) => println!("{}", render_with_cursor(&state.zipper)),
+            Ok(Some(Command::Show)) => {
+                println!("{}", render_with_cursor(&state.zipper, &state.names))
+            }
             Ok(Some(Command::Reset)) => {
                 state = EditState::empty();
-                println!("{}", render_with_cursor(&state.zipper));
+                println!("{}", render_with_cursor(&state.zipper, &state.names));
             }
-            Ok(Some(Command::Act(action))) => {
-                if state.apply_mut(action.clone()) {
-                    println!("{}", render_with_cursor(&state.zipper));
-                } else {
-                    eprintln!(
-                        "error: action does not apply here: {}",
-                        nothing_action::script::action_name(&action)
-                    );
-                    rejected += 1;
+            Ok(Some(Command::Act(step))) => {
+                match step.resolve(&state) {
+                    Ok(action) if state.apply_mut(action.clone()) => {
+                        println!("{}", render_with_cursor(&state.zipper, &state.names));
+                    }
+                    Ok(_) => {
+                        eprintln!(
+                            "error: action does not apply here: {}",
+                            step_name(&step)
+                        );
+                        rejected += 1;
+                    }
+                    Err(err) => {
+                        eprintln!("error: {err}");
+                        rejected += 1;
+                    }
                 }
             }
         }

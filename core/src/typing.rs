@@ -159,11 +159,11 @@ mod tests {
     }
 
     fn x() -> Id {
-        Id::new(0)
+        Id::from_u128(0)
     }
 
-    fn h(n: u64) -> HoleId {
-        HoleId::new(n)
+    fn h(n: u128) -> HoleId {
+        HoleId::from_u128(n)
     }
 
 
@@ -422,7 +422,7 @@ mod tests {
     fn ana_let_propagates_expected_type_to_body() {
         let ctx = Ctx::empty();
 
-        let y = Id::new(9);
+        let y = Id::from_u128(9);
         let e = Exp::let_(x(), Exp::num(1), Exp::lam(y, Ty::Hole, Exp::var(y)));
         assert!(ana(&ctx, &e, &arrow(Ty::Num, Ty::Num)));
         assert!(!ana(&ctx, &e, &Ty::Bool));

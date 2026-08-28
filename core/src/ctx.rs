@@ -33,13 +33,13 @@ mod tests {
     #[test]
     fn empty_context_has_no_bindings() {
         let ctx = Ctx::empty();
-        assert_eq!(ctx.lookup(&Id::new(0)), None);
+        assert_eq!(ctx.lookup(&Id::from_u128(0)), None);
     }
 
     #[test]
     fn extend_finds_the_new_binding() {
         let ctx = Ctx::empty();
-        let x = Id::new(1);
+        let x = Id::from_u128(1);
         let extended = ctx.extend(x, Ty::Num);
         assert_eq!(extended.lookup(&x), Some(Ty::Num));
     }
@@ -47,7 +47,7 @@ mod tests {
     #[test]
     fn extend_does_not_mutate_the_original() {
         let original = Ctx::empty();
-        let x = Id::new(1);
+        let x = Id::from_u128(1);
         let extended = original.extend(x, Ty::Num);
 
 
@@ -58,22 +58,22 @@ mod tests {
 
     #[test]
     fn sibling_extensions_do_not_interfere() {
-        let base = Ctx::empty().extend(Id::new(1), Ty::Num);
-        let left = base.extend(Id::new(2), Ty::Bool);
-        let right = base.extend(Id::new(2), Ty::Hole);
+        let base = Ctx::empty().extend(Id::from_u128(1), Ty::Num);
+        let left = base.extend(Id::from_u128(2), Ty::Bool);
+        let right = base.extend(Id::from_u128(2), Ty::Hole);
 
-        assert_eq!(left.lookup(&Id::new(2)), Some(Ty::Bool));
-        assert_eq!(right.lookup(&Id::new(2)), Some(Ty::Hole));
-        assert_eq!(base.lookup(&Id::new(2)), None);
-        assert_eq!(base.lookup(&Id::new(1)), Some(Ty::Num));
+        assert_eq!(left.lookup(&Id::from_u128(2)), Some(Ty::Bool));
+        assert_eq!(right.lookup(&Id::from_u128(2)), Some(Ty::Hole));
+        assert_eq!(base.lookup(&Id::from_u128(2)), None);
+        assert_eq!(base.lookup(&Id::from_u128(1)), Some(Ty::Num));
     }
 
     #[test]
     fn re_extending_shadows_previous_binding_in_new_context_only() {
-        let ctx = Ctx::empty().extend(Id::new(1), Ty::Num);
-        let shadowed = ctx.extend(Id::new(1), Ty::Bool);
+        let ctx = Ctx::empty().extend(Id::from_u128(1), Ty::Num);
+        let shadowed = ctx.extend(Id::from_u128(1), Ty::Bool);
 
-        assert_eq!(ctx.lookup(&Id::new(1)), Some(Ty::Num));
-        assert_eq!(shadowed.lookup(&Id::new(1)), Some(Ty::Bool));
+        assert_eq!(ctx.lookup(&Id::from_u128(1)), Some(Ty::Num));
+        assert_eq!(shadowed.lookup(&Id::from_u128(1)), Some(Ty::Bool));
     }
 }

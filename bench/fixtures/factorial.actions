@@ -9,14 +9,14 @@
 # λn:Num. ⦇⦈
 construct-lam
 move-parent
-set-binder-id 0
+rename x0
 set-ann Num
 move-child 0
 
 # if ⦇⦈ == ⦇⦈ then ⦇⦈ else ⦇⦈
 construct-if
 construct-binop eq
-construct-var 0
+construct-var x0
 move-next-sibling
 construct-num 0
 
@@ -27,5 +27,5 @@ construct-num 1
 
 # else n * ⦇⦈
 move-next-sibling
-construct-var 0
+construct-var x0
 construct-binop mul
