@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>nothing</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="a programming language with no parser, no text files, and no syntax errors">
+<meta name="description" content="nothing: rethinking programming from the ground up">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Ubuntu:wght@400;500&display=swap" rel="stylesheet">
@@ -47,16 +47,36 @@
     opacity: 0.55;
   }
   p {
-    margin: 0 auto 0.6rem;
-    font-size: 0.95rem;
+    margin: 0 auto 2.25rem;
+    font-size: 1rem;
     line-height: 1.6;
     color: var(--fg);
     max-width: 30rem;
   }
-  p.sub {
+  ul {
+    list-style: none;
+    margin: 0 auto;
+    padding: 0;
+    max-width: 27rem;
+    text-align: left;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  li {
     color: var(--dim);
     font-size: 0.85rem;
+    line-height: 1.6;
     letter-spacing: 0.01em;
+    padding-left: 1.1rem;
+    position: relative;
+  }
+  li::before {
+    content: "\2013";
+    position: absolute;
+    left: 0;
+    color: var(--dim);
+    opacity: 0.6;
   }
   footer {
     margin-top: 2.5rem;
@@ -84,8 +104,12 @@
 <body>
 <main>
   <h1>nothin<span class="hole">⦇⦈</span></h1>
-  <p>no parser, no text files, no syntax errors — the program is the tree.</p>
-  <p class="sub">always well&#8209;typed &middot; holes are values &middot; merges that understand code</p>
+  <p>Rethinking programming from the ground up</p>
+  <ul>
+    <li>Parse-free: the syntax tree is the program</li>
+    <li>Strong typing guaranteed, with holes as first-class values</li>
+    <li>Structural merging that deeply understands your code</li>
+  </ul>
   <footer><a href="https://github.com/frgmt0/nothing">github.com/frgmt0/nothing</a></footer>
 </main>
 </body>
