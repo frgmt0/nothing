@@ -4,113 +4,425 @@
 <meta charset="utf-8">
 <title>nothing</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="nothing: rethinking programming from the ground up">
+<meta name="description" content="nothing is a projectional programming language. The syntax tree is the program, and holes are first-class values.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a0806'/%3E%3Cg fill='%23ffb642'%3E%3Crect x='3' y='2' width='2' height='2'/%3E%3Crect x='5' y='2' width='2' height='2'/%3E%3Crect x='2' y='4' width='2' height='8'/%3E%3Crect x='3' y='12' width='2' height='2'/%3E%3Crect x='5' y='12' width='2' height='2'/%3E%3Crect x='9' y='2' width='2' height='2'/%3E%3Crect x='11' y='2' width='2' height='2'/%3E%3Crect x='12' y='4' width='2' height='8'/%3E%3Crect x='9' y='12' width='2' height='2'/%3E%3Crect x='11' y='12' width='2' height='2'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Ubuntu:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Ubuntu+Mono&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f6f4ef;
-    --fg: #171512;
-    --dim: #6b6558;
+    --void:   #0a0806;
+    --ink:    #ffb642;
+    --dim:    rgba(255, 182, 66, 0.60);
+    --faint:  rgba(255, 182, 66, 0.38);
+    --hot:    #ffeccd;
+    --rule:   rgba(255, 182, 66, 0.24);
+    --soft:   rgba(255, 182, 66, 0.11);
+    --mono:   "Ubuntu Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --pixel:  "Silkscreen", "Ubuntu Mono", ui-monospace, monospace;
   }
+
   * { box-sizing: border-box; }
-  html, body {
-    height: 100%;
-    margin: 0;
-  }
+
+  html { background: var(--void); }
+
   body {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: "Ubuntu", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8vh 6vw;
-  }
-  main {
-    max-width: 34rem;
-    text-align: center;
-  }
-  h1 {
-    font-family: "Silkscreen", "Ubuntu", monospace;
-    font-weight: 700;
-    font-size: clamp(3rem, 12vw, 7rem);
-    letter-spacing: 0.02em;
-    margin: 0 0 1.75rem;
-    line-height: 1;
-    color: var(--fg);
-  }
-  h1 .hole {
-    display: inline-block;
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse 120% 85% at 50% 38%, rgba(255, 182, 66, 0.05), transparent 68%),
+      var(--void);
     color: var(--dim);
-    opacity: 0.55;
-  }
-  p {
-    margin: 0 auto 2.25rem;
-    font-size: 1rem;
+    font-family: var(--mono);
+    font-size: 15px;
     line-height: 1.6;
-    color: var(--fg);
-    max-width: 30rem;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
-  ul {
-    list-style: none;
-    margin: 0 auto;
-    padding: 0;
-    max-width: 27rem;
-    text-align: left;
-    display: inline-flex;
-    flex-direction: column;
-    gap: 0.6rem;
+
+  /* ---- CRT overlays ------------------------------------------------ */
+
+  .scan,
+  .vignette,
+  .bezel {
+    position: fixed;
+    pointer-events: none;
   }
-  li {
-    color: var(--dim);
-    font-size: 0.85rem;
-    line-height: 1.6;
-    letter-spacing: 0.01em;
-    padding-left: 1.1rem;
+
+  .scan {
+    inset: 0;
+    z-index: 8;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0 2px,
+      rgba(0, 0, 0, 0.26) 2px 3px
+    );
+  }
+
+  .vignette {
+    inset: 0;
+    z-index: 7;
+    background: radial-gradient(ellipse 90% 80% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.62) 100%);
+  }
+
+  .bezel {
+    inset: clamp(0.7rem, 1.8vw, 1.4rem);
+    z-index: 6;
+    border: 1px solid var(--soft);
+  }
+
+  .bezel b {
+    position: absolute;
+    font: 400 13px/1 var(--mono);
+    color: var(--rule);
+    transform: translate(-50%, -50%);
+  }
+
+  .bezel b:nth-child(1) { top: 0;    left: 0; }
+  .bezel b:nth-child(2) { top: 0;    left: 100%; }
+  .bezel b:nth-child(3) { top: 100%; left: 0; }
+  .bezel b:nth-child(4) { top: 100%; left: 100%; }
+
+  /* ---- layout ------------------------------------------------------ */
+
+  .screen {
     position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: clamp(3rem, 8vh, 6rem) clamp(1.75rem, 6vw, 4.5rem);
   }
-  li::before {
-    content: "\2013";
+
+  .grid {
+    width: 100%;
+    max-width: 1060px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(2.75rem, 6vw, 4rem);
+  }
+
+  @media (min-width: 900px) {
+    .grid {
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+      gap: clamp(3rem, 6vw, 5.5rem);
+      align-items: start;
+    }
+  }
+
+  /* ---- wordmark ---------------------------------------------------- */
+
+  h1 {
+    margin: 0 0 1.15rem;
+    font-family: var(--pixel);
+    font-weight: 400;
+    font-size: clamp(2.75rem, 9vw, 4.5rem);
+    line-height: 1;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    text-shadow: 0 0 18px rgba(255, 182, 66, 0.32);
+  }
+
+  .wm-hole {
+    height: 0.72em;
+    width: auto;
+    margin-left: 0.07em;
+    vertical-align: baseline;
+    color: var(--hot);
+    filter: drop-shadow(0 0 9px rgba(255, 236, 205, 0.45));
+  }
+
+  .tagline {
+    margin: 0;
+    font-size: clamp(0.95rem, 2.6vw, 1.15rem);
+    line-height: 1.45;
+    color: var(--ink);
+    letter-spacing: 0.005em;
+    max-width: 44ch;
+  }
+
+  /* ---- the tree ---------------------------------------------------- */
+
+  .tree {
+    position: relative;
+    list-style: none;
+    margin: 0;
+    padding: 1.4rem 0 0;
+    font-size: clamp(0.8125rem, 2.1vw, 0.9rem);
+  }
+
+  .tree::before {
+    content: "";
     position: absolute;
     left: 0;
-    color: var(--dim);
-    opacity: 0.6;
+    top: 0;
+    width: 1px;
+    height: 1.4rem;
+    background: var(--rule);
   }
-  footer {
-    margin-top: 2.5rem;
+
+  .tree li {
+    position: relative;
+    padding: 0 0 0.95rem 2.4ch;
   }
+
+  .tree li:last-child { padding-bottom: 0; }
+
+  .tree li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--rule);
+  }
+
+  .tree li:last-child::before {
+    bottom: auto;
+    height: 0.72em;
+  }
+
+  .tree li::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.72em;
+    width: 1.5ch;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  .tree .leaf { padding-top: 1.1rem; }
+
   a {
-    color: var(--dim);
+    display: inline-block;
+    color: var(--ink);
     text-decoration: none;
-    font-size: 0.8rem;
-    letter-spacing: 0.03em;
-    border-bottom: 1px solid transparent;
+    padding: 0.05em 0.5ch;
+    margin-left: -0.5ch;
+    border-bottom: 1px dotted var(--rule);
+    transition: background-color 90ms linear, color 90ms linear;
   }
-  a:hover {
-    color: var(--fg);
-    border-bottom-color: var(--dim);
+
+  a:hover,
+  a:focus-visible {
+    background: var(--ink);
+    color: var(--void);
+    border-bottom-color: transparent;
+    outline: none;
+    text-shadow: none;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #131210;
-      --fg: #ece7dc;
-      --dim: #8a8375;
-    }
+
+  a:focus-visible { box-shadow: 0 0 0 1px var(--hot); }
+
+  /* ---- terminal ---------------------------------------------------- */
+
+  .term {
+    border: 1px solid var(--rule);
+    background: rgba(255, 182, 66, 0.022);
+    box-shadow: 0 0 44px rgba(255, 182, 66, 0.05);
+  }
+
+  .rail {
+    height: 1.4rem;
+    border-bottom: 1px solid var(--soft);
+    background-image: repeating-conic-gradient(var(--rule) 0 25%, transparent 0 50%);
+    background-size: 4px 4px;
+    opacity: 0.55;
+    -webkit-mask-image: linear-gradient(90deg, #000 0%, transparent 62%);
+    mask-image: linear-gradient(90deg, #000 0%, transparent 62%);
+  }
+
+  .log {
+    padding: 1.05rem 1.15rem 1.15rem;
+    overflow-x: auto;
+    font-size: clamp(0.8125rem, 2.1vw, 0.875rem);
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 23ch minmax(0, 1fr);
+    line-height: 1.95;
+    min-height: 1.95em;
+    white-space: nowrap;
+  }
+
+  .p {
+    color: var(--faint);
+    padding-right: 1ch;
+  }
+
+  .cmd { color: var(--dim); }
+
+  .st {
+    border-left: 1px dashed var(--soft);
+    padding-left: 1.5ch;
+    color: var(--hot);
+  }
+
+  .v { transition: opacity 180ms linear; }
+
+  .sel { color: var(--faint); }
+
+  .hole {
+    color: var(--hot);
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 10px rgba(255, 236, 205, 0.4);
+  }
+
+  .hole.flag {
+    color: var(--dim);
+    border-bottom: 1px dashed var(--rule);
+    text-shadow: none;
+  }
+
+  .cur {
+    display: inline-block;
+    width: 0.55ch;
+    height: 1em;
+    margin-left: 0.2ch;
+    background: var(--hot);
+    vertical-align: -0.16em;
+    box-shadow: 0 0 10px rgba(255, 236, 205, 0.5);
+  }
+
+  /* ---- animated state ---------------------------------------------- */
+
+  .anim .v { opacity: 0; }
+  .anim .v.show { opacity: 1; }
+  .anim .cur { animation: blink 1.06s steps(1, end) infinite; }
+  .anim .log.clearing .row { opacity: 0.18; transition: opacity 260ms linear; }
+
+  @keyframes blink {
+    0%, 55% { opacity: 1; }
+    56%, 100% { opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .anim .v { opacity: 1; }
+    .cur { animation: none; }
+  }
+
+  @media (max-width: 420px) {
+    .st { padding-left: 1.1ch; }
   }
 </style>
 </head>
 <body>
-<main>
-  <h1>nothin<span class="hole">⦇⦈</span></h1>
-  <p>Rethinking programming from the ground up</p>
-  <ul>
-    <li>Parse-free: the syntax tree is the program</li>
-    <li>Strong typing guaranteed, with holes as first-class values</li>
-    <li>Structural merging that deeply understands your code</li>
-  </ul>
-  <footer><a href="https://github.com/frgmt0/nothing">github.com/frgmt0/nothing</a></footer>
+
+<div class="scan" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<div class="bezel" aria-hidden="true"><b>┌</b><b>┐</b><b>└</b><b>┘</b></div>
+
+<main class="screen">
+  <div class="grid">
+
+    <div>
+      <h1 aria-label="nothing">nothin<svg class="wm-hole" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="6" height="2"/><rect x="0" y="2" width="2" height="10"/><rect x="0" y="12" width="6" height="2"/><rect x="8" y="0" width="6" height="2"/><rect x="12" y="2" width="2" height="10"/><rect x="8" y="12" width="6" height="2"/></svg></h1>
+      <p class="tagline">Rethinking programming from the ground up</p>
+
+      <ul class="tree">
+        <li>Parse-free: the syntax tree is the program</li>
+        <li>Strong typing guaranteed, with holes as first-class values</li>
+        <li>Structural merging that deeply understands your code</li>
+        <li class="leaf"><a href="https://github.com/frgmt0/nothing">github.com/frgmt0/nothing</a></li>
+      </ul>
+    </div>
+
+    <div class="term">
+      <div class="rail" aria-hidden="true"></div>
+      <div class="log" id="log">
+        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-num 1</span></span><span class="st"><span class="v"><span class="sel">»</span>1<span class="sel">«</span></span></span></div>
+        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-binop +</span></span><span class="st"><span class="v">1 + <span class="sel">»</span><span class="hole">⦇⦈</span><span class="sel">«</span></span></span></div>
+        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-bool true</span></span><span class="st"><span class="v">1 + <span class="sel">»</span><span class="hole flag">⦇true⦈</span><span class="sel">«</span></span></span></div>
+        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">delete</span></span><span class="st"><span class="v">1 + <span class="sel">»</span><span class="hole">⦇⦈</span><span class="sel">«</span></span></span></div>
+        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-num 2</span></span><span class="st"><span class="v">1 + <span class="sel">»</span>2<span class="sel">«</span></span></span></div>
+      </div>
+    </div>
+
+  </div>
 </main>
+
+<script>
+(function () {
+  var log = document.getElementById("log");
+  if (!log || !window.requestAnimationFrame) return;
+
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var rows = Array.prototype.slice.call(log.querySelectorAll(".row"));
+  if (!rows.length) return;
+
+  var steps = rows.map(function (row) {
+    var t = row.querySelector(".t");
+    return { row: row, t: t, text: t.textContent, st: row.querySelector(".v") };
+  });
+
+  var cursor = document.createElement("span");
+  cursor.className = "cur";
+  cursor.setAttribute("aria-hidden", "true");
+
+  document.documentElement.classList.add("anim");
+
+  if (reduce) {
+    steps.forEach(function (s) { s.st.classList.add("show"); });
+    steps[steps.length - 1].t.parentNode.appendChild(cursor);
+    return;
+  }
+
+  var sleep = function (ms) {
+    return new Promise(function (res) { setTimeout(res, ms); });
+  };
+
+  var awake = function () {
+    if (!document.hidden) return Promise.resolve();
+    return new Promise(function (res) {
+      var on = function () {
+        if (document.hidden) return;
+        document.removeEventListener("visibilitychange", on);
+        res();
+      };
+      document.addEventListener("visibilitychange", on);
+    });
+  };
+
+  function reset() {
+    steps.forEach(function (s) {
+      s.t.textContent = "";
+      s.st.classList.remove("show");
+    });
+  }
+
+  async function run() {
+    for (;;) {
+      await awake();
+      reset();
+      await sleep(420);
+
+      for (var i = 0; i < steps.length; i++) {
+        var s = steps[i];
+        s.t.parentNode.appendChild(cursor);
+        for (var c = 1; c <= s.text.length; c++) {
+          s.t.textContent = s.text.slice(0, c);
+          await sleep(38);
+        }
+        await sleep(320);
+        s.st.classList.add("show");
+        await sleep(i === steps.length - 1 ? 3200 : 720);
+        await awake();
+      }
+
+      log.classList.add("clearing");
+      await sleep(320);
+      reset();
+      log.classList.remove("clearing");
+    }
+  }
+
+  run();
+})();
+</script>
+
 </body>
 </html>
