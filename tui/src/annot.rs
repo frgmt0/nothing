@@ -1,56 +1,25 @@
-//! The annotation slot's type entry (`KEYS.md` §"Literal entry" → *Types*).
-//!
-//! > The annotation slot re-issues `SetAnn` with the whole token buffer on
-//! > every keystroke, parsed by the `script::parse_ty` grammar with `>` for
-//! > `->`. **Every prefix parses** because a trailing operator takes `?` as
-//! > its missing operand: `:n` → `Num`, `:n>` → `Num -> ?`, `:n>n` →
-//! > `Num -> Num`, `:n*n` → `Num * Num`.
-//!
-//! That property is the whole point: annotation entry is commit-live like
-//! every other kind of entry, so there is no keystroke at which the buffer
-//! has no meaning and nothing can be written to the program.
-//!
-//! There is exactly one type parser in the project — `script::parse_ty` —
-//! and this module does not become a second one. It turns the buffer into a
-//! *repaired* string in that grammar (filling in missing operands with `?`
-//! and closing unclosed parens) and hands it over. [`parse`] is total, and
-//! `every_prefix_of_every_buffer_parses` proves it.
 
 use nothing_action::script::parse_ty;
 use nothing_core::ty::Ty;
 
-/// What a printable character does in the annotation slot.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Accept {
-    /// Part of the type: append it and re-issue `SetAnn`.
     Append,
-    /// A letter inside a spelled base type (`n`**um**, `b`**ool**): keep it
-    /// in the buffer so the user sees what they typed, but it means nothing.
     Swallow,
-    /// A character the slot has no meaning for. `KEYS.md`: *"a character a
-    /// slot does not understand means 'I am done here', and the character
-    /// gets its normal meaning one step out"* — the caller leaves the slot
-    /// and re-dispatches it. Never a refusal.
     Exit,
-    /// A `)` with no `(` to close. The only genuinely inert character here:
-    /// leaving the slot would be worse, since the user is plainly still
-    /// writing a type.
     Ignore,
 }
 
-/// Is the buffer in the middle of a spelled-out base type?
 fn in_word(buffer: &str) -> bool {
     buffer.chars().last().is_some_and(char::is_alphabetic)
 }
 
-/// How many `(` are still unclosed.
 fn open_parens(buffer: &str) -> usize {
     let opens = buffer.chars().filter(|c| *c == '(').count();
     let closes = buffer.chars().filter(|c| *c == ')').count();
     opens.saturating_sub(closes)
 }
 
-/// What `c` means when the annotation buffer currently reads `buffer`.
 pub fn accept(buffer: &str, c: char) -> Accept {
     match c {
         '?' | '*' | '>' | '(' => Accept::Append,
@@ -62,7 +31,6 @@ pub fn accept(buffer: &str, c: char) -> Accept {
     }
 }
 
-/// One meaningful token of the buffer.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tok {
     Base(&'static str),
@@ -71,8 +39,6 @@ enum Tok {
     Close,
 }
 
-/// The buffer's meaningful tokens, with spelled-out base types collapsed:
-/// `num > bool` and `n>b` tokenise identically.
 fn tokens(buffer: &str) -> Vec<Tok> {
     let mut out = Vec::new();
     let mut prev_alpha = false;
@@ -87,10 +53,8 @@ fn tokens(buffer: &str) -> Vec<Tok> {
                 '*' => out.push(Tok::Op("*")),
                 '(' => out.push(Tok::Open),
                 ')' => out.push(Tok::Close),
-                // Unreachable through `accept`, which never appends
-                // anything else; ignored rather than panicking, because a
-                // buffer is data and a panic in a key handler is not an
-                // outcome the editor is allowed to have.
+
+
                 _ => {}
             }
         }
@@ -99,8 +63,6 @@ fn tokens(buffer: &str) -> Vec<Tok> {
     out
 }
 
-/// The buffer as a `script::parse_ty` source string, with every missing
-/// operand filled in with `?` and every unclosed group closed.
 fn repaired(buffer: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     let mut want_operand = true;
@@ -143,8 +105,6 @@ fn repaired(buffer: &str) -> String {
     out.join(" ")
 }
 
-/// The type the buffer currently denotes. Total: an empty buffer is `?`,
-/// which is exactly the annotation a freshly constructed lambda already has.
 pub fn parse(buffer: &str) -> Ty {
     parse_ty(&repaired(buffer)).unwrap_or(Ty::Hole)
 }
@@ -189,8 +149,8 @@ mod tests {
 
     #[test]
     fn every_prefix_of_every_buffer_parses() {
-        // The commit-live invariant, stated as a test: there is no keystroke
-        // at which the annotation has no meaning.
+
+
         for buffer in [
             "n", "n>n", "n*n", "num>bool", "(n>n)>n", "n>(n*b)", "?>?", "n*n*n", "(((n", "n>>n",
             "*n", "()", "(n*)",
@@ -199,8 +159,8 @@ mod tests {
             for c in buffer.chars() {
                 prefix.push(c);
                 let ty = parse(&prefix);
-                // Round-trips through the one type grammar, so the repaired
-                // string really is in it.
+
+
                 assert_eq!(
                     parse_ty(&ty.to_string()).unwrap(),
                     ty,
@@ -226,8 +186,8 @@ mod tests {
 
     #[test]
     fn swallowed_letters_change_nothing_but_stay_visible() {
-        // `Swallow` keeps the character in the buffer (the caller appends
-        // it) but the type is the same before and after.
+
+
         assert_eq!(parse("nu"), parse("n"));
         assert_eq!(parse("boo"), parse("b"));
     }

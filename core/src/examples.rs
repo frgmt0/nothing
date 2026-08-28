@@ -1,23 +1,12 @@
-//! Hand-written example programs (Phase 1). Stubbed in Phase 0 so later
-//! agents do not need to touch `lib.rs` concurrently.
-//!
-//! Ten small programs built directly with the constructor functions from
-//! [`crate::exp`], covering the whole Phase 1 surface: lambdas, application,
-//! `let`, `if`, binary ops, pairs, and projections. At least two contain an
-//! empty hole; at least one contains a non-empty hole whose contents are
-//! well-typed on their own but inconsistent with the context they sit in.
-//! No recursion, strings, or lists — none of that exists in Phase 1.
 
 use crate::exp::{Exp, HoleId, Id, Op, Side};
 use crate::ty::Ty;
 
-/// `let x = 1 in x` — the simplest possible `let`.
 pub fn let_identity() -> Exp {
     let x = Id::new(0);
     Exp::let_(x, Exp::num(1), Exp::var(x))
 }
 
-/// `(λx:Num. x + 1) 41` — a lambda applied to a number.
 pub fn increment_applied() -> Exp {
     let x = Id::new(0);
     Exp::ap(
@@ -26,8 +15,6 @@ pub fn increment_applied() -> Exp {
     )
 }
 
-/// `λn:Num. if n < 1 then 1 else n` — a lambda with a conditional body,
-/// exercising `If`'s synthesis-via-branch-join.
 pub fn clamp_to_one() -> Exp {
     let n = Id::new(0);
     Exp::lam(
@@ -41,7 +28,6 @@ pub fn clamp_to_one() -> Exp {
     )
 }
 
-/// `let p = (1, true) in fst p` — a pair built and then projected.
 pub fn pair_and_project() -> Exp {
     let p = Id::new(0);
     Exp::let_(
@@ -51,20 +37,14 @@ pub fn pair_and_project() -> Exp {
     )
 }
 
-/// `(⦇⦈, 2)` — a pair whose first component is an empty hole. One of the
-/// two required empty-hole examples.
 pub fn pair_with_empty_hole() -> Exp {
     Exp::pair(Exp::empty_hole(HoleId::new(0)), Exp::num(2))
 }
 
-/// `1 + ⦇⦈` — an empty hole standing in for an unwritten operand. The other
-/// required empty-hole example.
 pub fn add_with_empty_hole() -> Exp {
     Exp::bin_op(Op::Add, Exp::num(1), Exp::empty_hole(HoleId::new(0)))
 }
 
-/// `let f = λx:Num. x * x in f 5 == 25` — `let`-bound function, applied,
-/// compared with `Eq`.
 pub fn square_and_compare() -> Exp {
     let f = Id::new(0);
     let x = Id::new(1);
@@ -75,18 +55,11 @@ pub fn square_and_compare() -> Exp {
     )
 }
 
-/// `λx:?. x` — a lambda with a hole annotation, applied to `true`. Exercises
-/// gradual typing: the parameter's type is unknown at the binder but gets
-/// pinned down by the argument at the call site.
 pub fn identity_hole_annotated_applied() -> Exp {
     let x = Id::new(0);
     Exp::ap(Exp::lam(x, Ty::Hole, Exp::var(x)), Exp::bool_(true))
 }
 
-/// `1 + ⦇true⦈` — a non-empty hole quarantining a `Bool` where the `Add`
-/// operand expects (is analysed against) `Num`. `true` typechecks fine on
-/// its own (`syn` gives `Bool`), it just doesn't fit here — exactly the
-/// case a non-empty hole exists for. The required non-empty-hole example.
 pub fn add_with_non_empty_hole() -> Exp {
     Exp::bin_op(
         Op::Add,
@@ -95,9 +68,6 @@ pub fn add_with_non_empty_hole() -> Exp {
     )
 }
 
-/// `if true then (1, 2) else (⦇⦈, 4)` — an `if` over pairs, one branch
-/// containing an empty hole, exercising the branch-join synthesis for `If`
-/// together with `Pair`.
 pub fn if_over_pairs_with_hole() -> Exp {
     Exp::if_(
         Exp::bool_(true),
@@ -129,8 +99,7 @@ mod tests {
             ("if_over_pairs_with_hole", if_over_pairs_with_hole()),
         ];
 
-        // Guard against a copy-paste slip: exactly ten example programs
-        // must be checked here.
+
         assert_eq!(examples.len(), 10, "expected exactly ten example programs");
 
         for (name, exp) in &examples {

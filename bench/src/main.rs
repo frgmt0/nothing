@@ -1,27 +1,3 @@
-//! `nothing-bench`: the keystroke benchmark harness.
-//!
-//! It takes a named reference program and a recorded sequence of editor
-//! actions and reports the count, then divides by the Neovim keystroke
-//! baseline fixed in `bench/references.md` to get the ratio that Phase 0's
-//! failure-mode guard is stated in terms of.
-//!
-//! The recorded sequences live in `bench/fixtures/<name>.actions`, one
-//! action per line in the syntax accepted by the Phase 3 REPL harness
-//! (`cargo run -p nothing-action --bin repl`). They are replayed through
-//! the real action calculus — this harness never contains a hand-written
-//! count, it always replays and counts what actually applied.
-//!
-//! Phase 4 adds a second, more honest denominator on the `nothing` side:
-//! the `.keys` fixtures in `tui/tests/keys/<name>.keys` record what a
-//! *person at the keyboard* presses — one keystroke per line, exactly the
-//! format `nothing-tui`'s own `keyscript` module reads and replays through
-//! the pure key handler (see `tui/tests/references.rs`, which is the test
-//! that keeps these fixtures honest against the actual TUI). The old
-//! action-count mode (`count`/`table`, against `bench/fixtures/*.actions`)
-//! stays exactly as it was — it measures primitive actions, which is a
-//! different and still-useful number — and the new `keystrokes`/`keytable`
-//! commands measure keystrokes, which is the number Phase 0's 3× guard is
-//! actually stated in terms of.
 
 use std::path::PathBuf;
 
@@ -29,30 +5,15 @@ use nothing_action::script::{parse_script, replay_script};
 use nothing_core::render::render;
 use nothing_core::typing::is_well_typed;
 
-/// A reference program benchmarked by keystroke/action count.
-///
-/// `fixture` names the file in `bench/fixtures` holding the recorded
-/// sequence of editor actions that builds this program from an empty hole;
-/// `neovim_keystrokes` is the permanent baseline from `bench/references.md`.
 struct ReferenceProgram {
     name: &'static str,
-    /// The reference-program number in `bench/references.md`.
     reference: usize,
     fixture: &'static str,
-    /// The `.keys` fixture in `tui/tests/keys` that builds this program one
-    /// keystroke at a time through the real TUI key handler. `None` would
-    /// mean no keyboard fixture exists yet; all five references have one.
     keys_fixture: &'static str,
     neovim_keystrokes: usize,
-    /// Whether the fixture is an exact rendering of the reference program
-    /// or an approximation forced by the Phase-1 surface. See
-    /// `bench/references.md` for the mapping.
     approximate: bool,
 }
 
-/// The five reference programs chosen in Phase 0 (`bench/references.md`),
-/// each with the Phase 3 action fixture that builds its nearest Phase-1
-/// equivalent.
 fn reference_programs() -> Vec<ReferenceProgram> {
     vec![
         ReferenceProgram {
@@ -98,10 +59,6 @@ fn reference_programs() -> Vec<ReferenceProgram> {
     ]
 }
 
-/// The directory holding the recorded action fixtures.
-///
-/// Defaults to `bench/fixtures` next to this crate's manifest; override with
-/// `NOTHING_BENCH_FIXTURES` when running the binary from somewhere else.
 fn fixture_dir() -> PathBuf {
     match std::env::var_os("NOTHING_BENCH_FIXTURES") {
         Some(dir) => PathBuf::from(dir),
@@ -109,12 +66,6 @@ fn fixture_dir() -> PathBuf {
     }
 }
 
-/// The directory holding the recorded `.keys` keyboard fixtures.
-///
-/// These belong to `nothing-tui` (they are also its own acceptance test,
-/// `tui/tests/references.rs`), not to `bench`; `bench` only reads them.
-/// Defaults to `../tui/tests/keys` next to this crate's manifest; override
-/// with `NOTHING_BENCH_KEYS` when running the binary from somewhere else.
 fn keys_dir() -> PathBuf {
     match std::env::var_os("NOTHING_BENCH_KEYS") {
         Some(dir) => PathBuf::from(dir),
@@ -127,8 +78,6 @@ impl ReferenceProgram {
         fixture_dir().join(self.fixture)
     }
 
-    /// The committed expected rendering, next to the fixture. Read by the
-    /// replay test, which is the thing that keeps the fixtures honest.
     #[cfg(test)]
     fn expected_path(&self) -> PathBuf {
         fixture_dir().join(self.fixture.replace(".actions", ".expected"))
@@ -139,9 +88,6 @@ impl ReferenceProgram {
         std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))
     }
 
-    /// The number of actions in the fixture. Comments and blank lines do
-    /// not count — only edits do, or the ratio would be a measure of how
-    /// chatty the fixture's comments are.
     fn action_count(&self) -> Result<usize, String> {
         let text = self.read()?;
         parse_script(&text)
@@ -149,7 +95,6 @@ impl ReferenceProgram {
             .map_err(|e| e.to_string())
     }
 
-    /// Replay the fixture through the action calculus and render the result.
     fn replay(&self) -> Result<String, String> {
         let text = self.read()?;
         let state = replay_script(&text).map_err(|e| e.to_string())?;
@@ -168,15 +113,6 @@ impl ReferenceProgram {
         keys_dir().join(self.keys_fixture)
     }
 
-    /// The number of keystrokes in the `.keys` fixture: one non-blank,
-    /// non-comment line is one keystroke, by construction of the format
-    /// (`tui/src/keyscript.rs`). This is deliberately a plain line count,
-    /// not a call into `nothing-tui`'s parser: the number the 3× guard is
-    /// stated in terms of has to be legible by inspection of the fixture
-    /// file, the same way the Neovim baselines in `references.md` are.
-    /// `nothing-tui`'s own `tui/tests/references.rs` is what proves this
-    /// count agrees with `keyscript::parse_keys` and with the pure key
-    /// handler actually accepting the fixture.
     fn keystroke_count(&self) -> Result<usize, String> {
         let path = self.keys_path();
         let text = std::fs::read_to_string(&path)
@@ -333,9 +269,6 @@ mod tests {
         assert_eq!(reference_programs().len(), 5);
     }
 
-    /// Phase 3's "all five fixtures exist and replay cleanly": every
-    /// recorded action applies, the result is well-typed, and it renders
-    /// exactly as the committed `.expected` file says.
     #[test]
     fn every_fixture_replays_to_its_committed_rendering() {
         for program in reference_programs() {
@@ -355,9 +288,6 @@ mod tests {
         }
     }
 
-    /// The guard against a fixture quietly turning into a no-op: the
-    /// benchmark would still "pass" with an empty fixture, and the ratio
-    /// would look wonderful.
     #[test]
     fn no_fixture_is_trivial() {
         for program in reference_programs() {
@@ -378,9 +308,6 @@ mod tests {
         }
     }
 
-    /// Only factorial is allowed to still contain a hole: it is the one
-    /// reference program whose missing piece (the recursive call) cannot be
-    /// written before Phase 6. Everything else must be complete.
     #[test]
     fn only_factorial_is_left_unfinished() {
         for program in reference_programs() {
@@ -424,7 +351,6 @@ mod tests {
         );
     }
 
-    /// Every reference program has a `.keys` fixture and it is not a stub.
     #[test]
     fn every_keys_fixture_exists_and_is_nontrivial() {
         for program in reference_programs() {
@@ -439,10 +365,6 @@ mod tests {
         }
     }
 
-    /// Phase 0's guard, stated in the unit it was actually stated in:
-    /// keystrokes, not actions. This is the tripwire `nothing-bench` itself
-    /// carries; `tui/tests/references.rs` carries the same tripwire against
-    /// the live key handler, so a regression trips in two places.
     #[test]
     fn no_keystroke_ratio_exceeds_the_three_times_guard() {
         for program in reference_programs() {
@@ -458,9 +380,6 @@ mod tests {
         }
     }
 
-    /// Phase 4's re-run of the benchmark: the dated keystroke ratios have to
-    /// actually be written into `RESULTS.md`, in the units the guard is
-    /// stated in.
     #[test]
     fn every_keystroke_ratio_is_recorded_in_results_md() {
         let results = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("RESULTS.md");

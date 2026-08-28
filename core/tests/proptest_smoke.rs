@@ -1,6 +1,3 @@
-//! Smoke test proving the `proptest` harness works in this crate. This is
-//! deliberately trivial — the point of Phase 0 is to get the plumbing
-//! working before Phase 2 needs it for real.
 
 use proptest::prelude::*;
 

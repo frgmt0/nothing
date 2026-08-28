@@ -1,27 +1,3 @@
-//! Phase 4, "Wire construction keys" — the acceptance criterion, headlessly.
-//!
-//! > **Done when** you can build all five reference programs in the TUI
-//! > without touching the REPL harness.
-//!
-//! Taken literally. For each of the five reference programs there is a
-//! `tests/keys/<name>.keys` fixture: the keystrokes, one per line, that a
-//! person types into the editor to build it. This test drives them through
-//! the *pure* key handler — the same function the terminal loop calls, with
-//! no REPL, no script parser and no hand-built `Exp` anywhere on the path —
-//! and asserts the result is the same program `bench/fixtures/<name>.actions`
-//! produces through the Phase 3 action calculus.
-//!
-//! "The same program" means structurally equal up to hole *identity*: the
-//! two routes mint hole ids in different orders, and a hole id is an
-//! identity, not a value. Everything else — shape, binder ids, literals,
-//! annotations, and where the holes are — must match exactly, and the
-//! rendered projection is compared too, so a difference is legible when this
-//! fails.
-//!
-//! The `.keys` files are also the input for the next benchmark run: their
-//! non-blank, non-comment line count is the keystroke count, and
-//! [`AppState::actions`] beside it is the primitive-action count that
-//! `KEYS.md` §Coverage asks the harness to record as well.
 
 use nothing_action::script::replay_script;
 use nothing_core::exp::{Exp, HoleId};
@@ -30,9 +6,6 @@ use nothing_core::typing::is_well_typed;
 use nothing_tui::AppState;
 use nothing_tui::keyscript::{parse_keys, replay_keys};
 
-/// One reference program: what the keyboard types, what the action calculus
-/// records, what the projection should read, and the permanent Neovim
-/// baseline from `bench/references.md`.
 struct Reference {
     name: &'static str,
     keys: &'static str,
@@ -81,13 +54,6 @@ fn references() -> Vec<Reference> {
     ]
 }
 
-/// Renumber every hole id in source order.
-///
-/// A hole id is an identity — which hole this is, across edits — not part of
-/// the program's value, and the keyboard and the action script arrive at the
-/// same program having minted holes in different orders. Normalising is the
-/// honest comparison; it still catches a hole in the wrong *place*, a
-/// missing hole, or an extra one.
 fn normalize(exp: &Exp) -> Exp {
     fn go(exp: &Exp, next: &mut u64) -> Exp {
         let mut fresh = || {
@@ -165,8 +131,6 @@ fn every_reference_program_is_buildable_from_the_keyboard() {
     }
 }
 
-/// The `.keys` files are the benchmark's input, so the count has to be the
-/// thing anyone can read off the file: one keystroke, one line.
 #[test]
 fn the_fixture_line_count_is_the_keystroke_count() {
     for reference in references() {
@@ -198,12 +162,6 @@ fn the_fixture_line_count_is_the_keystroke_count() {
     }
 }
 
-/// Phase 0's failure-mode guard, checked here rather than waited for: if a
-/// reference program costs more than 3× its Neovim baseline, the grammar is
-/// wrong and the next sprint is spent fixing it.
-///
-/// The dated ratios belong in `bench/RESULTS.md`, written by the benchmark
-/// re-run; this is only the tripwire.
 #[test]
 fn no_reference_program_exceeds_the_three_times_guard() {
     for reference in references() {
@@ -228,10 +186,6 @@ fn no_reference_program_exceeds_the_three_times_guard() {
     }
 }
 
-/// Undo is per keystroke, so undoing every keystroke of a reference program
-/// gets back to the empty hole it started from — a stronger statement than
-/// any single undo test, and it exercises replay from the base snapshot at
-/// every depth.
 #[test]
 fn undoing_every_keystroke_returns_to_the_empty_program() {
     use crossterm::event::KeyCode;

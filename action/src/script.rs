@@ -1,25 +1,3 @@
-//! The action *script* surface: a one-action-per-line textual encoding of
-//! [`Action`] (Phase 3).
-//!
-//! This is deliberately **not** a syntax for the language. There is no
-//! parser for `nothing` programs and there never will be. What is parsed
-//! here is the *edit stream* — the same thing the keyboard will emit in
-//! Phase 4 — so that a program can be built from a pipe before there is an
-//! editor to build it in, and so that a built program can be replayed
-//! byte-identically from a fixture file.
-//!
-//! The grammar is one action per line:
-//!
-//! ```text
-//! move-child 0
-//! construct-lam
-//! set-ann Num -> Num
-//! # blank lines and `#` comments are ignored
-//! ```
-//!
-//! Names are the lowercase-hyphen spelling of the [`Action`] variant, and
-//! [`action_name`] is the exact inverse of [`parse_action`] for every
-//! variant (there is a test).
 
 use std::fmt;
 
@@ -28,22 +6,15 @@ use nothing_core::ty::Ty;
 
 use crate::act::{Action, EditState};
 
-/// One line of a script.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Command {
-    /// An edit action to apply.
     Act(Action),
-    /// Stop reading input.
     Quit,
-    /// Re-print the current program without changing it.
     Show,
-    /// Discard the program and start again from `⦇⦈`.
     Reset,
-    /// Print the list of accepted commands.
     Help,
 }
 
-/// A line that is not a command.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ParseError(pub String);
 
@@ -55,14 +26,10 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// A failure while replaying a whole script, with the line it happened on.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ScriptError {
-    /// 1-based line number within the script.
     pub line: usize,
-    /// The offending line, verbatim.
     pub text: String,
-    /// What went wrong.
     pub message: String,
 }
 
@@ -74,7 +41,6 @@ impl fmt::Display for ScriptError {
 
 impl std::error::Error for ScriptError {}
 
-/// The accepted commands, as printed by `help` in the REPL harness.
 pub const HELP: &str = "\
 movement:
   move-child N            descend into child N (0-based, source order)
@@ -105,7 +71,6 @@ harness:
   quit                    stop reading input
   # ...                   comment (ignored); blank lines are ignored too";
 
-/// Parse one line. `Ok(None)` means the line was blank or a comment.
 pub fn parse_command(line: &str) -> Result<Option<Command>, ParseError> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
@@ -121,7 +86,6 @@ pub fn parse_command(line: &str) -> Result<Option<Command>, ParseError> {
     parse_action(line).map(|a| Some(Command::Act(a)))
 }
 
-/// Parse one line as an [`Action`].
 pub fn parse_action(line: &str) -> Result<Action, ParseError> {
     let line = line.trim();
     let (head, rest) = match line.find(char::is_whitespace) {
@@ -168,7 +132,6 @@ pub fn parse_action(line: &str) -> Result<Action, ParseError> {
     }
 }
 
-/// The canonical script spelling of an action. Inverse of [`parse_action`].
 pub fn action_name(action: &Action) -> String {
     match action {
         Action::MoveChild(n) => format!("move-child {n}"),
@@ -258,14 +221,7 @@ fn parse_side(rest: &str) -> Result<Side, ParseError> {
     }
 }
 
-// --- The type mini-grammar for `set-ann` -----------------------------------
-//
-// ty   := prod ("->" ty)?        -- right associative
-// prod := atom ("*" atom)*       -- left associative
-// atom := Num | Bool | ? | "(" ty ")"
 
-/// Parse a type in the `set-ann` mini-grammar. Case-insensitive on the base
-/// types, so `num`, `Num` and `NUM` are the same type.
 pub fn parse_ty(text: &str) -> Result<Ty, ParseError> {
     let tokens = lex_ty(text)?;
     let mut pos = 0;
@@ -351,14 +307,7 @@ fn ty_atom(tokens: &[String], pos: &mut usize) -> Result<Ty, ParseError> {
     }
 }
 
-// --- Whole scripts ---------------------------------------------------------
 
-/// Parse a whole script into the actions it contains.
-///
-/// Blank lines and `#` comments are skipped; `quit` ends the script (later
-/// lines are ignored, exactly as the REPL would); the other harness
-/// commands are not permitted in a fixture, because a fixture must be a
-/// pure sequence of edits for the benchmark's action count to mean anything.
 pub fn parse_script(text: &str) -> Result<Vec<Action>, ScriptError> {
     Ok(parse_numbered_script(text)?
         .into_iter()
@@ -366,8 +315,6 @@ pub fn parse_script(text: &str) -> Result<Vec<Action>, ScriptError> {
         .collect())
 }
 
-/// [`parse_script`], but keeping each action's 1-based line number so a
-/// failure during replay can point at the line that caused it.
 pub fn parse_numbered_script(text: &str) -> Result<Vec<(usize, Action)>, ScriptError> {
     let mut actions = Vec::new();
     for (i, line) in text.lines().enumerate() {
@@ -390,11 +337,6 @@ pub fn parse_numbered_script(text: &str) -> Result<Vec<(usize, Action)>, ScriptE
     Ok(actions)
 }
 
-/// Parse and replay a script from the empty program `⦇⦈`.
-///
-/// Every action must apply: an action that does not apply is a defect in
-/// the fixture, not a runtime condition, so it is reported with its line
-/// number rather than skipped.
 pub fn replay_script(text: &str) -> Result<EditState, ScriptError> {
     let lines: Vec<&str> = text.lines().collect();
     let mut state = EditState::empty();
@@ -462,10 +404,6 @@ mod tests {
         }
     }
 
-    /// The guard against a new `Action` variant silently having no script
-    /// spelling *and* no documentation: `action_name` has no wildcard arm,
-    /// so adding a variant breaks compilation there, and this test then
-    /// fails unless the new name is also listed in [`HELP`].
     #[test]
     fn every_action_is_documented_in_the_help_text() {
         let documented: Vec<&str> = HELP
@@ -561,7 +499,7 @@ mod tests {
         assert_eq!(parse_ty("BOOL").unwrap(), Ty::Bool);
         assert_eq!(parse_ty("?").unwrap(), Ty::Hole);
         assert_eq!(parse_ty("hole").unwrap(), Ty::Hole);
-        // `*` binds tighter than `->`.
+
         assert_eq!(
             parse_ty("Num * Num -> Num").unwrap(),
             Ty::Arrow(
@@ -569,7 +507,7 @@ mod tests {
                 Box::new(Ty::Num)
             )
         );
-        // `->` is right associative.
+
         assert_eq!(
             parse_ty("Num -> Num -> Bool").unwrap(),
             Ty::Arrow(
@@ -577,7 +515,7 @@ mod tests {
                 Box::new(Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool)))
             )
         );
-        // Parens override both.
+
         assert_eq!(
             parse_ty("(Num -> Num) -> Num").unwrap(),
             Ty::Arrow(
@@ -592,7 +530,7 @@ mod tests {
                 Box::new(Ty::Prod(Box::new(Ty::Num), Box::new(Ty::Num)))
             )
         );
-        // Whitespace is irrelevant.
+
         assert_eq!(parse_ty("Num->Num").unwrap(), parse_ty("Num -> Num").unwrap());
     }
 
@@ -622,7 +560,7 @@ mod tests {
 
     #[test]
     fn a_script_replays_from_the_empty_program() {
-        // The spec's own three-action example: `1 + 2` from an empty hole.
+
         let state = replay_script("construct-num 1\nconstruct-binop add\nconstruct-num 2\n")
             .expect("script replays");
         assert_eq!(render(&state.exp()), "1 + 2");

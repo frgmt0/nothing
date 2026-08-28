@@ -1,51 +1,12 @@
-//! Cursor-aware rendering (Phase 3).
-//!
-//! The plain-text projection lives in `core::render`; this module adds the
-//! cursor to it, delimiting the focused subexpression distinctly so that
-//! moving the cursor through a program produces visibly different output at
-//! every position.
-//!
-//! Cursor markers: the focus is wrapped in [`CURSOR_OPEN`] / [`CURSOR_CLOSE`]
-//! (`»focus«`) — chosen because neither glyph appears anywhere else in the
-//! plain-text vocabulary (parens, `λ`, `⦇⦈`, operators, digits, `x`-names),
-//! so a marker can never be confused with program syntax, and the
-//! open/close pair reads left-to-right the same way parens do.
-//!
-//! Design: rather than re-deriving parenthesisation independently, this
-//! module reuses `core::render`'s own precedence table and assembly rules —
-//! `core::render` gained a small `pub` surface for exactly this
-//! (`Prec`/`PREC_*`, `op_prec`, `op_str`, `render_id`, and a new
-//! `render_prec` wrapper around its private `fmt_prec`; see that module's
-//! doc comments). Every subtree *not* on the path to the cursor is rendered
-//! wholesale via `render_prec`, so its formatting is provably identical to
-//! the plain projection's. Only the spine of frames from the root down to
-//! the cursor is walked by hand here, to splice the marked focus into its
-//! ancestors' assembled text — and that walk's per-frame precedence
-//! decisions (`min_prec_for`, `own_prec`) and syntax templates (`assemble`)
-//! are a direct transcription of `core::render::fmt_prec`'s match arms,
-//! keyed on [`Frame`] instead of [`Exp`] (each `Frame` variant already
-//! pins down exactly one child position of exactly one `Exp` form, which is
-//! what makes the transcription mechanical). The test
-//! `stripping_markers_reproduces_the_plain_projection` pins this fidelity
-//! down directly: removing the markers from this module's output at *every*
-//! cursor position of *all ten* `core::examples` programs must reproduce
-//! `core::render::render` byte for byte.
 
 use nothing_core::exp::Side;
 use nothing_core::render::{PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, Prec, op_prec, op_str, render_id, render_prec};
 
 use crate::zipper::{Frame, Zipper};
 
-/// Marks the start of the focused subexpression.
 pub const CURSOR_OPEN: &str = "»";
-/// Marks the end of the focused subexpression.
 pub const CURSOR_CLOSE: &str = "«";
 
-/// The minimum precedence at which the child sitting in `frame`'s own
-/// position (`frame.child_index()`) must render — the same number
-/// `core::render::fmt_prec` passes to its recursive call for that exact
-/// child slot. Since a `Frame` variant is specific to one (parent form,
-/// child index) pair, this one match covers every slot in the grammar.
 fn min_prec_for(frame: &Frame) -> Prec {
     match frame {
         Frame::LamBody(..) => PREC_BINDER,
@@ -65,10 +26,6 @@ fn min_prec_for(frame: &Frame) -> Prec {
     }
 }
 
-/// The rendering precedence of the node `frame` itself builds (i.e. of
-/// `frame.clone().rebuild(anything)`) — needed to decide whether that
-/// assembled node requires parentheses once it becomes a child one level
-/// further out. Mirrors `core::render::prec_of`'s grouping by form family.
 fn own_prec(frame: &Frame) -> Prec {
     match frame {
         Frame::LamBody(..)
@@ -83,12 +40,6 @@ fn own_prec(frame: &Frame) -> Prec {
     }
 }
 
-/// Assemble the full text of the node `frame` builds, given `child` already
-/// rendered — and, if it is the marked focus itself, already
-/// parenthesised — for `frame`'s own child slot. The sibling(s) stored in
-/// `frame` are rendered here via `render_prec` at the same min-precedence
-/// `min_prec_for` would report for *their* slot (cross-checked in the
-/// doc-comment table above and pinned by the fidelity test).
 fn assemble(frame: &Frame, child: &str) -> String {
     match frame {
         Frame::LamBody(id, ty) => format!("λ{}:{}. {child}", render_id(*id), ty),
@@ -138,16 +89,6 @@ fn assemble(frame: &Frame, child: &str) -> String {
     }
 }
 
-/// Render the whole program `z` belongs to, with the focused subexpression
-/// delimited by [`CURSOR_OPEN`] / [`CURSOR_CLOSE`].
-///
-/// The focus is rendered at the minimum precedence its position demands
-/// (root: [`PREC_BINDER`], same as [`nothing_core::render::render`]'s own
-/// top-level call), then marked; each ancestor frame from the immediate
-/// parent up to the root is assembled in turn via [`assemble`], gaining its
-/// own parentheses exactly when [`own_prec`] falls below what the next
-/// frame out requires — the same rule [`nothing_core::render::render_prec`]
-/// applies internally.
 pub fn render_with_cursor(z: &Zipper) -> String {
     let path = &z.path;
 
@@ -207,12 +148,12 @@ mod tests {
 
     #[test]
     fn a_leaf_deep_inside_the_program_is_delimited_in_place() {
-        // let x0 = (1, true) in fst x0 -- put the cursor on the `1`.
+
         let e = examples::pair_and_project();
         let z = zipper::unzip(e)
-            .move_child(0) // the pair
+            .move_child(0)
             .unwrap()
-            .move_child(0) // the 1
+            .move_child(0)
             .unwrap();
         assert_eq!(
             render_with_cursor(&z),
@@ -220,16 +161,12 @@ mod tests {
         );
     }
 
-    /// The literal Done-when criterion: walking every cursor position of a
-    /// nontrivial example produces visibly different, uniquely-delimited
-    /// output at each one.
     #[test]
     fn cursor_moves_produce_visibly_distinct_output_at_every_position() {
         let e = examples::square_and_compare();
         let positions = zipper::all_positions(&e);
-        // "Nontrivial": several distinct frame kinds nested (let, lambda,
-        // binop, application, comparison), enough positions to make
-        // pairwise distinctness a real assertion rather than a vacuous one.
+
+
         assert!(
             positions.len() >= 10,
             "expected a nontrivial example, got {} positions",
@@ -268,9 +205,6 @@ mod tests {
         }
     }
 
-    /// Stripping the markers must always reproduce the plain projection
-    /// exactly, at every position of every one of the ten example programs
-    /// — the fidelity guarantee this module exists to provide.
     #[test]
     fn stripping_markers_reproduces_the_plain_projection() {
         for e in all_examples() {
@@ -289,9 +223,6 @@ mod tests {
         }
     }
 
-    /// Also true, and load-bearing for the criterion above at scale: over
-    /// arbitrary generated well-typed programs, not just the ten fixed
-    /// examples.
     #[test]
     fn stripping_markers_reproduces_the_plain_projection_on_generated_programs() {
         use crate::generate;

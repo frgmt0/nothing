@@ -1,33 +1,3 @@
-//! The `.keys` fixture format: **one keystroke per line**.
-//!
-//! `bench/fixtures/<name>.actions` records what the *calculus* did; a
-//! `.keys` file records what the *keyboard* did, which is the number Phase
-//! 0's guard is stated in terms of (`KEYS.md` §Coverage: "the bench harness
-//! should record both keystrokes and primitive actions per program"). The
-//! format is therefore trivially countable — `grep -vc '^\s*\(#.*\)\?$'` is
-//! the keystroke count — and needs no editor to read.
-//!
-//! ```text
-//! # tui/tests/keys/factorial.keys
-//! \          # λ⦇⦈:?. ⦇⦈, cursor in the binder-name slot
-//! x
-//! 0          # SetBinderId 0
-//! :          # → the annotation slot
-//! n          # SetAnn Num
-//! .          # → the body
-//! tab        # named keys are spelled out
-//! C-z        # control keys keep crossterm's spelling
-//! ```
-//!
-//! A line is a comment when its first non-blank character is `#`; otherwise
-//! its first whitespace-delimited word is the keystroke and the rest of the
-//! line is a comment. (`#` itself is therefore not writable as a keystroke.
-//! It is one of the characters `KEYS.md` deliberately holds in reserve, so
-//! there is nothing to write yet.)
-//!
-//! [`key_name`] is the exact inverse of [`parse_key`] for every keystroke
-//! the grammar binds — there is a test — so a recorded session can be
-//! written back out as a fixture.
 
 use std::fmt;
 
@@ -36,14 +6,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::AppState;
 use crate::keys::handle_key;
 
-/// A line of a `.keys` file that is not a keystroke.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct KeyScriptError {
-    /// 1-based line number within the file.
     pub line: usize,
-    /// The offending line, verbatim.
     pub text: String,
-    /// What went wrong.
     pub message: String,
 }
 
@@ -55,12 +21,6 @@ impl fmt::Display for KeyScriptError {
 
 impl std::error::Error for KeyScriptError {}
 
-/// Parse one keystroke token.
-///
-/// A single character is itself — that is the whole of the literal path, and
-/// it keeps a fixture legible as the thing that was typed. Everything else
-/// is a spelled-out name, case-insensitively, or `C-<char>` for a
-/// control-modified key.
 pub fn parse_key(token: &str) -> Option<KeyEvent> {
     let mut chars = token.chars();
     if let (Some(c), None) = (chars.next(), chars.next()) {
@@ -93,7 +53,6 @@ pub fn parse_key(token: &str) -> Option<KeyEvent> {
     Some(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
-/// The canonical token for a keystroke. Inverse of [`parse_key`].
 pub fn key_name(key: &KeyEvent) -> String {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -114,8 +73,6 @@ pub fn key_name(key: &KeyEvent) -> String {
     }
 }
 
-/// Parse a whole `.keys` file. The length of the result **is** the
-/// keystroke count.
 pub fn parse_keys(text: &str) -> Result<Vec<KeyEvent>, KeyScriptError> {
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
@@ -141,10 +98,6 @@ pub fn parse_keys(text: &str) -> Result<Vec<KeyEvent>, KeyScriptError> {
     Ok(out)
 }
 
-/// Replay a `.keys` file through the *pure* key handler.
-///
-/// Every keystroke is accepted by definition — the grammar has no refusals,
-/// only hints — so the only failure mode is a line that is not a keystroke.
 pub fn replay_keys(text: &str, state: AppState) -> Result<AppState, KeyScriptError> {
     Ok(parse_keys(text)?
         .into_iter()
@@ -175,8 +128,8 @@ mod tests {
             let key = parse_key(token).unwrap_or_else(|| panic!("`{token}` did not parse"));
             assert_eq!(key_name(&key), token, "`{token}` did not round trip");
         }
-        // Spellings are accepted case-insensitively, and alternates fold
-        // onto the canonical name.
+
+
         assert_eq!(parse_key("TAB"), parse_key("tab"));
         assert_eq!(parse_key("backspace"), parse_key("bksp"));
         assert_eq!(parse_key("c-z"), parse_key("C-z"));

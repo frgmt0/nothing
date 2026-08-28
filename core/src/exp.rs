@@ -1,20 +1,6 @@
-//! Expression grammar (Phase 1).
-//!
-//! `Exp` is the core AST of the `nothing` calculus. There is no parser and
-//! no text form backing it — every `Exp` is built directly, either by a
-//! constructor function here or (later) by an action from `core::action`.
-//!
-//! Binders (`Var`, `Lam`, `Let`) are identified by [`Id`], not by string —
-//! see the design commitment "names are not identity". `Id` here is a
-//! placeholder newtype; Phase 5 replaces it with a UUID-backed type plus a
-//! separate name table.
 
 use crate::ty::Ty;
 
-/// A stable binder/reference identity. Names are metadata, not identity —
-/// this is what a `Var`, a `Lam` parameter, or a `Let` binding actually
-/// carries. Phase 5 will replace this placeholder with a UUID-backed type
-/// and move the display name into a separate name table.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(pub u64);
 
@@ -30,9 +16,6 @@ impl std::fmt::Debug for Id {
     }
 }
 
-/// Identity of a hole, distinct from [`Id`] (which identifies binders).
-/// Every hole in a program gets a stable `HoleId` so the editor and the
-/// action log can refer to "that specific hole" across edits.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HoleId(pub u64);
 
@@ -48,9 +31,6 @@ impl std::fmt::Debug for HoleId {
     }
 }
 
-/// Binary operators. A small arithmetic/comparison set, deliberately
-/// minimal for Phase 1: `Add`/`Sub`/`Mul` cover arithmetic, `Lt`/`Eq` cover
-/// the comparisons needed to write conditionals over numbers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Op {
     Add,
@@ -60,17 +40,12 @@ pub enum Op {
     Eq,
 }
 
-/// Which side of a pair a [`Exp::Proj`] extracts.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
     L,
     R,
 }
 
-/// The expression grammar of `nothing`, Phase 1 surface: numbers, booleans,
-/// variables, lambda, application, binary ops, `if`, `let`, and pairs.
-/// Nothing else — see spec.md Phase 1 for why the surface is kept this
-/// small.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Exp {
     Var(Id),
@@ -99,9 +74,6 @@ pub enum Exp {
     NonEmptyHole(HoleId, Box<Exp>),
 }
 
-/// Ergonomic construction. Each takes plain `Exp`/`Box<Exp>`-ish arguments
-/// so call sites read like the grammar; children are accepted via
-/// `impl Into<Box<Exp>>` so callers need not box manually.
 impl Exp {
     pub fn var(id: Id) -> Exp {
         Exp::Var(id)
@@ -161,9 +133,6 @@ mod tests {
     use super::*;
     use crate::ty::Ty;
 
-    /// Every variant is reachable from a constructor function. This test
-    /// exists to fail to compile (not to fail at runtime) if a variant or
-    /// constructor is ever removed or renamed.
     #[test]
     fn every_variant_reachable_from_a_constructor() {
         let x = Id::new(0);
@@ -185,8 +154,7 @@ mod tests {
             Exp::non_empty_hole(h1, Exp::bool_(true)),
         ];
 
-        // Twelve variants listed in the spec's grammar line: Var, Lam, Ap,
-        // Num, Bool, BinOp, If, Let, Pair, Proj, EmptyHole, NonEmptyHole.
+
         assert_eq!(exps.len(), 12);
     }
 

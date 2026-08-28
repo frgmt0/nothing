@@ -1,54 +1,7 @@
-//! A generator for arbitrary **well-typed** programs.
-//!
-//! This module is load-bearing for the whole of Phase 2: the sensibility
-//! proptest, the reachability proptest, the zipper round-trip, and the
-//! movement invariants all need a supply of random programs that satisfy
-//! [`nothing_core::typing::is_well_typed`]. Rejection sampling would be
-//! hopeless (a random `Exp` is almost never well-typed), so instead
-//! programs are built **top-down from an expected type**, which is exactly
-//! the discipline bidirectional typing gives us.
-//!
-//! # The invariant
-//!
-//! [`Gen::exp_syn`] produces `e` such that `syn(ctx, e) == Some(ty)` —
-//! *exactly* `ty`, not merely something consistent with it. That exactness
-//! is what makes the construction compose: every rule below can rely on its
-//! children synthesising precisely what it asked for.
-//!
-//! [`Gen::exp_ana`] produces `e` such that `ana(ctx, e, ty)` holds. It is
-//! used at the positions where the typing rules *analyse* rather than
-//! synthesise (binary-operator operands, function arguments, the scrutinee
-//! of an `if`), and it is where holes get to appear in non-hole positions —
-//! which is how programs like `1 + ⦇⦈` come out of the generator.
-//!
-//! # Why a seed, not a `proptest::Strategy`
-//!
-//! The generator is a plain deterministic function of a `u64` seed and
-//! carries **no dependency on `proptest`**, so `proptest` stays a
-//! dev-dependency of this crate and the generator remains usable from
-//! benchmarks, fuzzers, and the REPL harness. To use it in a property test,
-//! one line suffices:
-//!
-//! ```ignore
-//! proptest! {
-//!     #[test]
-//!     fn my_property(seed in any::<u64>()) {
-//!         let e = gen::well_typed_exp(seed);
-//!         // ...
-//!     }
-//! }
-//! ```
-//!
-//! The cost is that shrinking shrinks the *seed*, not the program, so a
-//! failing case is not automatically minimised. When that matters, shrink
-//! by hand with [`well_typed_exp_with_depth`] at a smaller depth.
 
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::ty::Ty;
 
-/// A tiny deterministic PRNG (SplitMix64). Deliberately dependency-free —
-/// this crate should not grow a `rand` dependency just to shuffle a few
-/// constructor choices.
 #[derive(Clone, Debug)]
 pub struct Rng {
     state: u64,
@@ -69,7 +22,6 @@ impl Rng {
         z ^ (z >> 31)
     }
 
-    /// Uniform-ish integer in `0..n`. Panics if `n == 0`.
     pub fn below(&mut self, n: usize) -> usize {
         assert!(n > 0, "Rng::below(0)");
         (self.next_u64() % (n as u64)) as usize
@@ -79,24 +31,17 @@ impl Rng {
         self.next_u64() & 1 == 1
     }
 
-    /// A small signed integer, for `Num` literals.
     pub fn small_int(&mut self) -> i64 {
         (self.next_u64() % 21) as i64 - 10
     }
 
-    /// Pick an element of a non-empty slice.
     pub fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
         &xs[self.below(xs.len())]
     }
 }
 
-/// Which form to build at a given position. Kept as an explicit tag rather
-/// than a closure list so the candidate set is easy to read and to extend.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Form {
-    /// The form dictated by the target type's own shape: a literal for
-    /// `Num`/`Bool`, an empty hole for `?`, a lambda for an arrow, a pair
-    /// for a product. Always available, and always terminating.
     Canonical,
     Var,
     Let,
@@ -107,11 +52,6 @@ enum Form {
     NonEmptyHole,
 }
 
-/// The generator state: a PRNG plus the fresh-name counters.
-///
-/// Binder [`Id`]s are globally fresh within one `Gen`, so the generated
-/// contexts never shadow and a `Var` picked out of the context always
-/// resolves to the binding the generator intended.
 #[derive(Clone, Debug)]
 pub struct Gen {
     rng: Rng,
@@ -144,7 +84,6 @@ impl Gen {
         h
     }
 
-    /// A random type, nested at most `depth` deep.
     pub fn ty(&mut self, depth: u32) -> Ty {
         let n = if depth == 0 { 3 } else { 5 };
         match self.rng.below(n) {
@@ -162,23 +101,14 @@ impl Gen {
         }
     }
 
-    /// A whole program: a random type, then an expression synthesising it
-    /// in the empty context. The result satisfies `is_well_typed`.
     pub fn program(&mut self, depth: u32) -> Exp {
         let ty = self.ty(2);
         self.exp_syn(&[], &ty, depth)
     }
 
-    /// Generate `e` with `syn(ctx, e) == Some(ty)`.
-    ///
-    /// `ctx` is the same context the typing judgment will build as it
-    /// descends, represented as a list of bindings in scope; `depth` is the
-    /// remaining budget for *non-structural* recursion. The `Canonical`
-    /// form may still recurse at depth 0, but only on a structurally
-    /// smaller type, so termination is guaranteed either way.
     pub fn exp_syn(&mut self, ctx: &[(Id, Ty)], ty: &Ty, depth: u32) -> Exp {
-        // Which in-scope bindings synthesise exactly `ty`? Only those are
-        // usable, because `syn(Var id)` is the context lookup verbatim.
+
+
         let vars: Vec<Id> = ctx
             .iter()
             .filter(|(_, t)| t == ty)
@@ -187,9 +117,8 @@ impl Gen {
 
         let mut cands = vec![Form::Canonical];
         if !vars.is_empty() {
-            // Weighted up: programs that never mention their binders are
-            // boring, and the interesting typing rules are the ones that
-            // thread a context.
+
+
             cands.push(Form::Var);
             cands.push(Form::Var);
         }
@@ -211,8 +140,8 @@ impl Gen {
         let d = depth.saturating_sub(1);
 
         match form {
-            // syn(Num) = Num, syn(Bool) = Bool, syn(⦇⦈) = ?,
-            // syn(λx:a. body) = a -> syn(body), syn((a, b)) = syn a * syn b.
+
+
             Form::Canonical => match ty {
                 Ty::Num => Exp::num(self.rng.small_int()),
                 Ty::Bool => Exp::bool_(self.rng.boolean()),
@@ -231,10 +160,10 @@ impl Gen {
                 }
             },
 
-            // syn(Var id) = ctx[id], and `vars` was filtered to exactly ty.
+
             Form::Var => Exp::var(*self.rng.pick(&vars)),
 
-            // syn(let x = e1 in e2) = syn(e2) under ctx, x : syn(e1).
+
             Form::Let => {
                 let sigma = self.ty(1);
                 let bound = self.exp_syn(ctx, &sigma, d);
@@ -245,7 +174,7 @@ impl Gen {
                 Exp::let_(id, bound, body)
             }
 
-            // syn(if c then t else e) = join(syn t, syn e), and join(τ, τ) = τ.
+
             Form::If => {
                 let cond = self.exp_ana(ctx, &Ty::Bool, d);
                 let then = self.exp_syn(ctx, ty, d);
@@ -253,8 +182,7 @@ impl Gen {
                 Exp::if_(cond, then, else_)
             }
 
-            // syn(f a) = the output side of matched_arrow(syn f), given
-            // ana(a, input side).
+
             Form::Ap => {
                 let sigma = self.ty(1);
                 let fun_ty = Ty::Arrow(Box::new(sigma.clone()), Box::new(ty.clone()));
@@ -263,7 +191,7 @@ impl Gen {
                 Exp::ap(fun, arg)
             }
 
-            // syn(proj_L e) = the left side of matched_prod(syn e).
+
             Form::Proj => {
                 let sigma = self.ty(1);
                 let side = if self.rng.boolean() { Side::L } else { Side::R };
@@ -275,8 +203,7 @@ impl Gen {
                 Exp::proj(side, inner)
             }
 
-            // Operands are *analysed* against Num; the result type is Num
-            // for arithmetic and Bool for comparison.
+
             Form::BinOp => {
                 let op = if *ty == Ty::Num {
                     *self.rng.pick(&[Op::Add, Op::Sub, Op::Mul])
@@ -288,7 +215,7 @@ impl Gen {
                 Exp::bin_op(op, lhs, rhs)
             }
 
-            // syn(⦇e⦈) = ? provided e synthesises *something* in context.
+
             Form::NonEmptyHole => {
                 let sigma = self.ty(1);
                 let inner = self.exp_syn(ctx, &sigma, d);
@@ -297,21 +224,6 @@ impl Gen {
         }
     }
 
-    /// Generate `e` with `ana(ctx, e, ty)`.
-    ///
-    /// Three ways to satisfy analysis:
-    ///
-    /// 1. an expression synthesising exactly `ty` (consistency is
-    ///    reflexive, and the analysis rules that are *not* subsumption —
-    ///    lambda, `if`, `let`, pair — all agree with synthesis when the
-    ///    synthesised type is the expected one);
-    /// 2. an empty hole, which synthesises `?` and so is consistent with
-    ///    anything;
-    /// 3. a non-empty hole, likewise `?` outward, quarantining an
-    ///    expression of some unrelated type.
-    ///
-    /// Cases 2 and 3 are the reason the generator emits programs like
-    /// `1 + ⦇⦈` and `1 + ⦇true⦈` rather than only fully-written ones.
     pub fn exp_ana(&mut self, ctx: &[(Id, Ty)], ty: &Ty, depth: u32) -> Exp {
         match self.rng.below(6) {
             0 => Exp::empty_hole(self.fresh_hole()),
@@ -325,29 +237,20 @@ impl Gen {
     }
 }
 
-/// The default depth budget. Deep enough that programs have interesting
-/// nesting (five to a few dozen nodes), shallow enough that ten thousand of
-/// them generate in well under a second.
 pub const DEFAULT_DEPTH: u32 = 3;
 
-/// An arbitrary well-typed program from a seed.
 pub fn well_typed_exp(seed: u64) -> Exp {
     well_typed_exp_with_depth(seed, DEFAULT_DEPTH)
 }
 
-/// An arbitrary well-typed program from a seed, with an explicit depth
-/// budget. Depth 0 yields leaves and type-shaped canonical forms only.
 pub fn well_typed_exp_with_depth(seed: u64, depth: u32) -> Exp {
     Gen::new(seed).program(depth)
 }
 
-/// An arbitrary program synthesising exactly `ty` in the empty context.
 pub fn well_typed_exp_of_ty(seed: u64, ty: &Ty, depth: u32) -> Exp {
     Gen::new(seed).exp_syn(&[], ty, depth)
 }
 
-/// The number of nodes in an expression. Handy for sizing assertions and
-/// for the benchmark harness.
 pub fn size(exp: &Exp) -> usize {
     match exp {
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => 1,
@@ -380,8 +283,6 @@ mod tests {
         }
     }
 
-    /// The stronger invariant the whole construction rests on: the program
-    /// synthesises *exactly* the type it was asked for.
     #[test]
     fn generated_programs_synthesise_exactly_the_requested_type() {
         for seed in 0..2_000u64 {
@@ -410,8 +311,6 @@ mod tests {
         assert!(mean >= 2.0, "generated programs are trivially small (mean {mean})");
     }
 
-    /// Holes must actually show up, otherwise the generator is not
-    /// exercising the part of the calculus this project exists for.
     #[test]
     fn generated_programs_contain_holes_of_both_kinds() {
         fn count(e: &Exp, empty: &mut usize, non_empty: &mut usize) {
