@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nothing</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="a programming language with no parser, no text files, and no syntax errors">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Ubuntu:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --fg: #171512;
+    --dim: #6b6558;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Ubuntu", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8vh 6vw;
+  }
+  main {
+    max-width: 34rem;
+    text-align: center;
+  }
+  h1 {
+    font-family: "Silkscreen", "Ubuntu", monospace;
+    font-weight: 700;
+    font-size: clamp(3rem, 12vw, 7rem);
+    letter-spacing: 0.02em;
+    margin: 0 0 1.75rem;
+    line-height: 1;
+    color: var(--fg);
+  }
+  h1 .hole {
+    display: inline-block;
+    color: var(--dim);
+    opacity: 0.55;
+  }
+  p {
+    margin: 0 auto 0.6rem;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: var(--fg);
+    max-width: 30rem;
+  }
+  p.sub {
+    color: var(--dim);
+    font-size: 0.85rem;
+    letter-spacing: 0.01em;
+  }
+  footer {
+    margin-top: 2.5rem;
+  }
+  a {
+    color: var(--dim);
+    text-decoration: none;
+    font-size: 0.8rem;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid transparent;
+  }
+  a:hover {
+    color: var(--fg);
+    border-bottom-color: var(--dim);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131210;
+      --fg: #ece7dc;
+      --dim: #8a8375;
+    }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>nothin<span class="hole">⦇⦈</span></h1>
+  <p>no parser, no text files, no syntax errors — the program is the tree.</p>
+  <p class="sub">always well&#8209;typed &middot; holes are values &middot; merges that understand code</p>
+  <footer><a href="https://github.com/frgmt0/nothing">github.com/frgmt0/nothing</a></footer>
+</main>
+</body>
+</html>
