@@ -161,3 +161,17 @@ small steps reduce the combinator's self-application without a special
 case; the only guard added is fuel, because with recursion available a
 program can now diverge and the editor evaluates on every keystroke
 (`nothing_tui::live::LIVE_FUEL`).
+
+### 2026-08-28 — Phase 12 path: build v0.1.0
+
+The spec offered three exits: research artifact, merge service, agent SDK.
+Decision: none of them alone — productise the language itself, following
+`spec-build.md`, with the merge engine's git driver (spec-build B5) shipped
+along the way as the commercial wedge. Reasoning: the merge result (13/16
+vs git's 2/16) is the strongest measured evidence and monetises without
+language adoption, but extracting it standalone forfeits the projectional
+premise that produced it; the agent protocol's honest toy-scale loss says
+its bet pays only at a scale the current surface cannot express, which
+v0.1.0's data types and definitions are the prerequisite for. Building
+v0.1.0 keeps all three exits open and is the only path that generates the
+evidence the other two still lack. Revisit at the B7 release gate.
