@@ -1,4 +1,3 @@
-
 use crate::exp::Id;
 use crate::ty::Ty;
 
@@ -49,7 +48,6 @@ mod tests {
         let original = Ctx::empty();
         let x = Id::from_u128(1);
         let extended = original.extend(x, Ty::Num);
-
 
         assert_eq!(original.lookup(&x), None);
 

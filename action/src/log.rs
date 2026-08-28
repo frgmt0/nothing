@@ -1,4 +1,3 @@
-
 use crate::act::{Action, EditState};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -214,7 +213,9 @@ mod tests {
         while log.len() < 100 {
             let action = try_one_random_action(&state, &mut rng)
                 .expect("the action pool always has something that applies");
-            let next = state.apply(action.clone()).expect("just verified this applies");
+            let next = state
+                .apply(action.clone())
+                .expect("just verified this applies");
             state = next;
             log.append(action, log.len() as u64, AuthorId::new(1));
         }
@@ -232,7 +233,9 @@ mod tests {
         while log.len() < 100 {
             let action = try_one_random_action(&state, &mut rng)
                 .expect("the action pool always has something that applies");
-            state = state.apply(action.clone()).expect("just verified this applies");
+            state = state
+                .apply(action.clone())
+                .expect("just verified this applies");
             log.append(action, log.len() as u64, AuthorId::new(2));
         }
 
@@ -251,7 +254,9 @@ mod tests {
 
         for _ in 0..20 {
             let action = try_one_random_action(&state, &mut rng).expect("pool applies");
-            state = state.apply(action.clone()).expect("just verified this applies");
+            state = state
+                .apply(action.clone())
+                .expect("just verified this applies");
             log.append(action, log.len() as u64, AuthorId::new(3));
             snapshots.push(state.exp());
         }
@@ -297,7 +302,6 @@ mod tests {
         let final_exp = session.exp();
         assert!(is_well_typed(&final_exp));
 
-
         for _ in 0..50 {
             assert!(session.can_undo());
             assert!(session.undo());
@@ -307,7 +311,6 @@ mod tests {
         assert_eq!(session.exp(), EditState::empty().exp());
 
         assert!(!session.undo());
-
 
         for _ in 0..50 {
             assert!(session.can_redo());
@@ -331,13 +334,11 @@ mod tests {
         }
         assert_eq!(session.log().len(), 10);
 
-
         assert!(session.undo());
         assert!(session.undo());
         assert!(session.undo());
         assert_eq!(session.cursor(), 7);
         assert_eq!(session.log().len(), 10);
-
 
         let new_action = try_one_random_action(session.state(), &mut rng).expect("pool applies");
         assert!(session.apply(new_action.clone(), 999, AuthorId::new(9)));
@@ -350,7 +351,6 @@ mod tests {
     #[test]
     fn a_failed_action_does_not_touch_the_log_or_the_cursor() {
         let mut session = EditSession::new();
-
 
         assert!(!session.apply(Action::MoveParent, 0, AuthorId::new(1)));
         assert!(!session.apply(Action::MoveNextSibling, 0, AuthorId::new(1)));

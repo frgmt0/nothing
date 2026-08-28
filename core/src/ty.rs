@@ -1,4 +1,3 @@
-
 use std::fmt;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -27,10 +26,8 @@ fn fmt_prec(ty: &Ty, min_prec: u8, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "(")?;
             }
 
-
             fmt_prec(a, 1, f)?;
             write!(f, " -> ")?;
-
 
             fmt_prec(b, 0, f)?;
             if needs_parens {
@@ -92,7 +89,6 @@ mod tests {
         Ty::Prod(Box::new(a), Box::new(b))
     }
 
-
     #[test]
     fn display_atoms() {
         assert_eq!(Ty::Num.to_string(), "Num");
@@ -107,14 +103,12 @@ mod tests {
 
     #[test]
     fn display_arrow_right_associative_no_parens() {
-
         let ty = arrow(Ty::Num, arrow(Ty::Bool, Ty::Num));
         assert_eq!(ty.to_string(), "Num -> Bool -> Num");
     }
 
     #[test]
     fn display_arrow_left_nested_needs_parens() {
-
         let ty = arrow(arrow(Ty::Num, Ty::Bool), Ty::Num);
         assert_eq!(ty.to_string(), "(Num -> Bool) -> Num");
     }
@@ -132,8 +126,6 @@ mod tests {
 
     #[test]
     fn display_arrow_of_prod_needs_parens_on_left_only() {
-
-
         let ty = arrow(prod(Ty::Num, Ty::Bool), Ty::Num);
         assert_eq!(ty.to_string(), "Num * Bool -> Num");
     }
@@ -143,7 +135,6 @@ mod tests {
         let ty = arrow(Ty::Hole, Ty::Num);
         assert_eq!(ty.to_string(), "? -> Num");
     }
-
 
     #[test]
     fn consistency_reflexive_atoms() {
@@ -183,7 +174,6 @@ mod tests {
 
     #[test]
     fn consistency_compound_components_must_be_consistent() {
-
         assert!(is_consistent(
             &arrow(Ty::Hole, Ty::Bool),
             &arrow(Ty::Num, Ty::Bool)
@@ -194,9 +184,15 @@ mod tests {
             &arrow(Ty::Bool, Ty::Bool)
         ));
 
-        assert!(is_consistent(&prod(Ty::Hole, Ty::Bool), &prod(Ty::Num, Ty::Bool)));
+        assert!(is_consistent(
+            &prod(Ty::Hole, Ty::Bool),
+            &prod(Ty::Num, Ty::Bool)
+        ));
 
-        assert!(!is_consistent(&prod(Ty::Num, Ty::Bool), &prod(Ty::Bool, Ty::Bool)));
+        assert!(!is_consistent(
+            &prod(Ty::Num, Ty::Bool),
+            &prod(Ty::Bool, Ty::Bool)
+        ));
     }
 
     #[test]
@@ -220,12 +216,10 @@ mod tests {
 
     #[test]
     fn consistency_is_not_transitive() {
-
         assert!(is_consistent(&Ty::Num, &Ty::Hole));
         assert!(is_consistent(&Ty::Hole, &Ty::Bool));
         assert!(!is_consistent(&Ty::Num, &Ty::Bool));
     }
-
 
     #[test]
     fn matched_arrow_hole() {
@@ -244,7 +238,6 @@ mod tests {
         assert_eq!(matched_arrow(&Ty::Bool), None);
         assert_eq!(matched_arrow(&prod(Ty::Num, Ty::Bool)), None);
     }
-
 
     #[test]
     fn matched_prod_hole() {

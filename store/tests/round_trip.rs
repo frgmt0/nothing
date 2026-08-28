@@ -3,7 +3,7 @@ use nothing_action::log::{ActionLog, AuthorId};
 use nothing_core::examples;
 use nothing_core::exp::Exp;
 use nothing_core::names::NameTable;
-use nothing_store::document::{decode_document, encode_document, Document};
+use nothing_store::document::{Document, decode_document, encode_document};
 
 fn sample_log() -> ActionLog {
     let mut log = ActionLog::new();
@@ -51,7 +51,10 @@ fn every_example_program_round_trips_byte_identically() {
         let second = encode_document(&decoded);
 
         assert_eq!(first, second, "{name} did not round-trip byte-identically");
-        assert_eq!(decoded.exp, doc.exp, "{name} lost structure across the round trip");
+        assert_eq!(
+            decoded.exp, doc.exp,
+            "{name} lost structure across the round trip"
+        );
     }
 }
 

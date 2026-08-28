@@ -154,11 +154,19 @@ mod tests {
     #[test]
     fn replace_at_rebuilds_the_spine() {
         let x = Id::from_u128(1);
-        let e = Exp::let_(x, Exp::num(1), Exp::bin_op(Op::Add, Exp::var(x), Exp::num(2)));
+        let e = Exp::let_(
+            x,
+            Exp::num(1),
+            Exp::bin_op(Op::Add, Exp::var(x), Exp::num(2)),
+        );
         let out = replace_at(&e, &[1, 1], Exp::num(9)).unwrap();
         assert_eq!(
             out,
-            Exp::let_(x, Exp::num(1), Exp::bin_op(Op::Add, Exp::var(x), Exp::num(9)))
+            Exp::let_(
+                x,
+                Exp::num(1),
+                Exp::bin_op(Op::Add, Exp::var(x), Exp::num(9))
+            )
         );
         assert_eq!(at(&out, &[1, 1]), Some(&Exp::num(9)));
     }
@@ -167,7 +175,11 @@ mod tests {
     fn a_zipper_walk_agrees_with_the_path_walk() {
         use nothing_action::zipper::Zipper;
         let x = Id::from_u128(1);
-        let e = Exp::let_(x, Exp::num(1), Exp::bin_op(Op::Add, Exp::var(x), Exp::num(2)));
+        let e = Exp::let_(
+            x,
+            Exp::num(1),
+            Exp::bin_op(Op::Add, Exp::var(x), Exp::num(2)),
+        );
         for path in [vec![0], vec![1], vec![1, 0], vec![1, 1]] {
             let mut z = Zipper::new(e.clone());
             for step in &path {

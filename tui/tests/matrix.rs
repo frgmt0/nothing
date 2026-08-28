@@ -1,4 +1,3 @@
-
 use nothing_tui::keys::{handle_key, key};
 use nothing_tui::render::program_line;
 use nothing_tui::{AppState, Slot};
@@ -12,9 +11,7 @@ fn context(name: &str) -> AppState {
         })
     };
     match name {
-
         "A empty hole" => typed("\\x0:n."),
-
 
         "B written expr" => handle_key(key(KeyCode::Esc), typed("\\x0:n.x0")),
 
@@ -23,7 +20,6 @@ fn context(name: &str) -> AppState {
         "D mid-name run" => typed("\\x0:n.x"),
 
         "F binder name" => typed("\\x"),
-
 
         "G non-empty hole" => handle_key(key(KeyCode::Esc), typed("\\x0:n.?x")),
         other => panic!("unknown context {other}"),
@@ -71,25 +67,19 @@ fn column_a_empty_hole() {
         "A empty hole",
         context("A empty hole"),
         &[
-
             ('0', "λx0:Num. »0«"),
             ('7', "λx0:Num. »7«"),
-
             ('x', "λx0:Num. »x0« ⟨x⟩"),
             ('t', "λx0:Num. »true« ⟨t⟩"),
             ('f', "λx0:Num. »false« ⟨f⟩"),
-
             ('z', "λx0:Num. »⦇⦈« ⟨z⟩"),
             ('_', "λx0:Num. »⦇⦈« ⟨_⟩"),
             ('n', "λx0:Num. »⦇⦈« ⟨n⟩"),
-
-
             ('+', "λx0:Num. »⦇⦈« + ⦇⦈"),
             ('-', "λx0:Num. »⦇⦈« - ⦇⦈"),
             ('*', "λx0:Num. »⦇⦈« * ⦇⦈"),
             ('<', "λx0:Num. »⦇⦈« < ⦇⦈"),
             ('=', "λx0:Num. »⦇⦈« == ⦇⦈"),
-
             (' ', "λx0:Num. »⦇⦈« ⦇⦈"),
             ('\\', "name: λx0:Num. λ»x1«:?. ⦇⦈"),
             ('?', "λx0:Num. if »⦇⦈« then ⦇⦈ else ⦇⦈"),
@@ -98,7 +88,6 @@ fn column_a_empty_hole() {
             ('[', "λx0:Num. fst »⦇⦈«"),
             (']', "λx0:Num. snd »⦇⦈«"),
             ('!', "λx0:Num. ⦇»⦇⦈«⦈"),
-
             ('~', "λx0:Num. »⦇⦈«"),
             (':', "λx0:Num. »⦇⦈«"),
             ('.', "λx0:Num. »⦇⦈«"),
@@ -121,7 +110,6 @@ fn column_b_written_expression() {
             ('x', "λx0:Num. »x0« ⟨x⟩"),
             ('t', "λx0:Num. »true« ⟨t⟩"),
             ('f', "λx0:Num. »false« ⟨f⟩"),
-
             ('z', "λx0:Num. »x0« ⟨z⟩"),
             ('_', "λx0:Num. »x0« ⟨_⟩"),
             ('n', "λx0:Num. »x0« ⟨n⟩"),
@@ -130,14 +118,11 @@ fn column_b_written_expression() {
             ('*', "λx0:Num. x0 * »⦇⦈«"),
             ('<', "λx0:Num. x0 < »⦇⦈«"),
             ('=', "λx0:Num. x0 == »⦇⦈«"),
-
             (' ', "λx0:Num. ⦇x0⦈ »⦇⦈«"),
             ('\\', "name: λx0:Num. λ»x1«:?. x0"),
             ('?', "λx0:Num. if ⦇x0⦈ then »⦇⦈« else ⦇⦈"),
             (';', "name: λx0:Num. let »x1« = x0 in ⦇⦈"),
             (',', "λx0:Num. (x0, »⦇⦈«)"),
-
-
             ('[', "λx0:Num. »fst ⦇x0⦈«"),
             (']', "λx0:Num. »snd ⦇x0⦈«"),
             ('!', "λx0:Num. »⦇x0⦈«"),
@@ -182,8 +167,6 @@ fn column_d_name_run() {
         context("D mid-name run"),
         &[
             ('0', "λx0:Num. »x0« ⟨x0⟩"),
-
-
             ('7', "λx0:Num. »⦇⦈« ⟨x7⟩"),
             ('x', "λx0:Num. »⦇⦈« ⟨xx⟩"),
             ('_', "λx0:Num. »⦇⦈« ⟨x_⟩"),
@@ -211,12 +194,9 @@ fn column_e_annotation_slot() {
             ('*', "ann: λx0:»? * ?«. ⦇⦈ ⟨*⟩"),
             ('>', "ann: λx0:»? -> ?«. ⦇⦈ ⟨>⟩"),
             ('(', "ann: λx0:»?«. ⦇⦈ ⟨(⟩"),
-
             (')', "ann: λx0:»Num«. ⦇⦈"),
-
             (':', "ann: λx0:»Num«. ⦇⦈"),
             ('.', "λx0:Num. »⦇⦈«"),
-
             ('0', "λx0:Num. »0«"),
             ('x', "λx0:Num. »x0« ⟨x⟩"),
             ('+', "λx0:Num. »⦇⦈« + ⦇⦈"),
@@ -236,14 +216,11 @@ fn column_f_binder_name_slot() {
         &[
             ('0', "name: λ»x0«:?. ⦇⦈ ⟨x0⟩"),
             ('7', "name: λ»x7«:?. ⦇⦈ ⟨x7⟩"),
-
             ('y', "name: λ»xy«:?. ⦇⦈ ⟨xy⟩"),
             ('_', "name: λ»x_«:?. ⦇⦈ ⟨x_⟩"),
             (':', "ann: λx:»?«. ⦇⦈"),
             ('.', "λx:?. »⦇⦈«"),
             ('~', "name: λ»x«:?. ⦇⦈ ⟨x⟩"),
-
-
             ('=', "λx:?. »⦇⦈« == ⦇⦈"),
             ('+', "λx:?. »⦇⦈« + ⦇⦈"),
             ('?', "λx:?. if »⦇⦈« then ⦇⦈ else ⦇⦈"),
@@ -268,7 +245,6 @@ fn column_g_non_empty_hole() {
             (' ', "λx0:Num. if ⦇⦇x0⦈ »⦇⦈«⦈ then ⦇⦈ else ⦇⦈"),
             (',', "λx0:Num. if ⦇(x0, »⦇⦈«)⦈ then ⦇⦈ else ⦇⦈"),
             ('[', "λx0:Num. if ⦇»fst ⦇x0⦈«⦈ then ⦇⦈ else ⦇⦈"),
-
             ('!', "λx0:Num. if »⦇⦇x0⦈⦈« then ⦇⦈ else ⦇⦈"),
             ('~', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈"),
             ('.', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈"),
@@ -283,7 +259,6 @@ fn exiting_a_slot_costs_no_keystroke() {
         (annotation_context(), "annotation"),
         (context("F binder name"), "binder name"),
     ] {
-
         let after = handle_key(key(KeyCode::Char('+')), slot_state.clone());
         assert_eq!(after.slot, Slot::Node, "{name}: still in the slot");
         assert!(

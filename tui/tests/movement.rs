@@ -1,4 +1,3 @@
-
 use std::collections::BTreeSet;
 
 use crossterm::event::KeyCode;
@@ -109,7 +108,6 @@ fn press(code: KeyCode, state: &AppState) -> Option<AppState> {
 
 fn walk_subtree(state: &AppState, walk: &mut Walk) -> AppState {
     let mut cur = match press(KeyCode::Down, state) {
-
         None => return state.clone(),
         Some(child) => {
             walk.record(KeyCode::Down, &child);

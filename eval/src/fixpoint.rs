@@ -1,4 +1,3 @@
-
 use nothing_core::exp::{Exp, Id};
 use nothing_core::names::NameTable;
 use nothing_core::ty::Ty;
@@ -52,9 +51,9 @@ pub fn fix(b: Binders, generator: Exp) -> Exp {
 mod tests {
     use super::*;
     use crate::step::eval;
+    use nothing_core::ctx::Ctx;
     use nothing_core::exp::Op;
     use nothing_core::typing::{is_well_typed, syn};
-    use nothing_core::ctx::Ctx;
 
     fn factorial(b: Binders, fac: Id, n: Id) -> Exp {
         fix(
@@ -117,11 +116,7 @@ mod tests {
         for (input, expected) in [(0, 1), (1, 1), (2, 2), (3, 6), (5, 120), (10, 3_628_800)] {
             let applied = Exp::ap(f.clone(), Exp::num(input));
             assert!(is_well_typed(&applied));
-            assert_eq!(
-                eval(&applied).num(),
-                Some(expected),
-                "factorial({input})"
-            );
+            assert_eq!(eval(&applied).num(), Some(expected), "factorial({input})");
         }
     }
 

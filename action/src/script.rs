@@ -1,4 +1,3 @@
-
 use std::fmt;
 
 use nothing_core::exp::{Id, Op, Side};
@@ -226,17 +225,14 @@ fn parse_usize(head: &str, rest: &str) -> Result<usize, ParseError> {
 }
 
 fn parse_id(head: &str, rest: &str) -> Result<Id, ParseError> {
-    Id::parse(rest).ok_or_else(|| {
-        ParseError(format!("`{head}` expects a binder uuid, got `{rest}`"))
-    })
+    Id::parse(rest)
+        .ok_or_else(|| ParseError(format!("`{head}` expects a binder uuid, got `{rest}`")))
 }
 
 fn parse_name(head: &str, rest: &str) -> Result<String, ParseError> {
     let name = rest.split_whitespace().next().unwrap_or("");
     if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return Err(ParseError(format!(
-            "`{head}` expects a name, got `{rest}`"
-        )));
+        return Err(ParseError(format!("`{head}` expects a name, got `{rest}`")));
     }
     Ok(name.to_string())
 }
@@ -278,7 +274,6 @@ fn parse_side(rest: &str) -> Result<Side, ParseError> {
         ))),
     }
 }
-
 
 pub fn parse_ty(text: &str) -> Result<Ty, ParseError> {
     let tokens = lex_ty(text)?;
@@ -365,7 +360,6 @@ fn ty_atom(tokens: &[String], pos: &mut usize) -> Result<Ty, ParseError> {
     }
 }
 
-
 pub fn parse_script(text: &str) -> Result<Vec<Step>, ScriptError> {
     Ok(parse_numbered_script(text)?
         .into_iter()
@@ -410,10 +404,7 @@ pub fn replay_script_from(text: &str, start: EditState) -> Result<EditState, Scr
         };
         let action = step.resolve(&state).map_err(|e| at(e.0))?;
         if !state.apply_mut(action) {
-            return Err(at(format!(
-                "action did not apply: {}",
-                step_name(&step)
-            )));
+            return Err(at(format!("action did not apply: {}", step_name(&step))));
         }
     }
     Ok(state)
@@ -492,7 +483,6 @@ mod tests {
         )
         .expect("replays");
         assert_eq!(state.render(), "λn:Num. n");
-
 
         let err = replay_script("construct-lam\nconstruct-var nope\n").unwrap_err();
         assert_eq!(err.line, 2);
@@ -651,7 +641,10 @@ mod tests {
             )
         );
 
-        assert_eq!(parse_ty("Num->Num").unwrap(), parse_ty("Num -> Num").unwrap());
+        assert_eq!(
+            parse_ty("Num->Num").unwrap(),
+            parse_ty("Num -> Num").unwrap()
+        );
     }
 
     #[test]
@@ -680,7 +673,6 @@ mod tests {
 
     #[test]
     fn a_script_replays_from_the_empty_program() {
-
         let state = replay_script("construct-num 1\nconstruct-binop add\nconstruct-num 2\n")
             .expect("script replays");
         assert_eq!(state.render(), "1 + 2");
@@ -709,7 +701,8 @@ mod tests {
 
     #[test]
     fn quit_ends_a_script_and_comments_do_not_count_as_actions() {
-        let actions = parse_script("# build 1\nconstruct-num 1\n\nquit\nconstruct-num 2\n").unwrap();
+        let actions =
+            parse_script("# build 1\nconstruct-num 1\n\nquit\nconstruct-num 2\n").unwrap();
         assert_eq!(actions, vec![Step::Act(Action::ConstructNum(1))]);
     }
 

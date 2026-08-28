@@ -795,6 +795,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nothing-cli"
+version = "0.1.0"
+dependencies = [
+ "nothing-action",
+ "nothing-agentapi",
+ "nothing-core",
+ "nothing-eval",
+ "nothing-merge",
+ "nothing-store",
+ "nothing-tui",
+]
+
+[[package]]
 name = "nothing-core"
 version = "0.1.0"
 dependencies = [

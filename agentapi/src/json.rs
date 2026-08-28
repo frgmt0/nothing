@@ -184,7 +184,10 @@ impl Parser<'_> {
     }
 
     fn skip_ws(&mut self) {
-        while matches!(self.peek(), Some(' ') | Some('\t') | Some('\n') | Some('\r')) {
+        while matches!(
+            self.peek(),
+            Some(' ') | Some('\t') | Some('\n') | Some('\r')
+        ) {
             self.pos += 1;
         }
     }
@@ -261,8 +264,7 @@ impl Parser<'_> {
                             if !(0xdc00..0xe000).contains(&low) {
                                 return Err(JsonError("bad surrogate pair".to_string()));
                             }
-                            let combined =
-                                0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+                            let combined = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
                             match char::from_u32(combined) {
                                 Some(c) => out.push(c),
                                 None => return Err(JsonError("bad surrogate pair".to_string())),
@@ -275,7 +277,10 @@ impl Parser<'_> {
                         }
                     }
                     other => {
-                        return Err(JsonError(format!("bad escape `\\{}`", other.unwrap_or(' '))));
+                        return Err(JsonError(format!(
+                            "bad escape `\\{}`",
+                            other.unwrap_or(' ')
+                        )));
                     }
                 },
                 Some(c) => out.push(c),
@@ -286,7 +291,9 @@ impl Parser<'_> {
     fn hex4(&mut self) -> Result<u32, JsonError> {
         let mut value = 0u32;
         for _ in 0..4 {
-            let c = self.bump().ok_or_else(|| JsonError("short \\u escape".to_string()))?;
+            let c = self
+                .bump()
+                .ok_or_else(|| JsonError("short \\u escape".to_string()))?;
             let digit = c
                 .to_digit(16)
                 .ok_or_else(|| JsonError(format!("`{c}` is not a hex digit")))?;
@@ -429,7 +436,16 @@ mod tests {
     #[test]
     fn malformed_input_is_an_error_not_a_panic() {
         for text in [
-            "", "{", "}", "[1,", "\"unterminated", "{\"a\"}", "tru", "-", "01x", "{} {}",
+            "",
+            "{",
+            "}",
+            "[1,",
+            "\"unterminated",
+            "{\"a\"}",
+            "tru",
+            "-",
+            "01x",
+            "{} {}",
         ] {
             assert!(parse(text).is_err(), "`{text}` should not parse");
         }

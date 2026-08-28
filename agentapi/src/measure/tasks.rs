@@ -271,10 +271,9 @@ mod tests {
                 continue;
             }
             assert!(
-                session.apply_text(line).unwrap_or_else(|e| panic!(
-                    "{}: `{line}` did not parse: {e}",
-                    task.name
-                )),
+                session
+                    .apply_text(line)
+                    .unwrap_or_else(|e| panic!("{}: `{line}` did not parse: {e}", task.name)),
                 "{}: `{line}` did not apply",
                 task.name
             );
@@ -322,7 +321,10 @@ mod tests {
 
     #[test]
     fn every_quarantine_task_actually_starts_with_a_quarantine() {
-        for task in tasks().into_iter().filter(|t| t.family == Family::FixQuarantine) {
+        for task in tasks()
+            .into_iter()
+            .filter(|t| t.family == Family::FixQuarantine)
+        {
             let session = start(&task);
             assert!(
                 holes(&session.exp()).1 > 0,
@@ -338,7 +340,10 @@ mod tests {
         for task in tasks().into_iter().filter(|t| t.family == Family::FillHole) {
             let session = start(&task);
             assert!(
-                matches!(session.state().zipper.focus, nothing_core::exp::Exp::EmptyHole(_)),
+                matches!(
+                    session.state().zipper.focus,
+                    nothing_core::exp::Exp::EmptyHole(_)
+                ),
                 "{}: the cursor is not on an empty hole in `{}`",
                 task.name,
                 crate::holectx::hole_context(session.state()).focus_render
@@ -348,7 +353,10 @@ mod tests {
 
     #[test]
     fn every_build_task_starts_from_the_empty_program() {
-        for task in tasks().into_iter().filter(|t| t.family == Family::BuildFunction) {
+        for task in tasks()
+            .into_iter()
+            .filter(|t| t.family == Family::BuildFunction)
+        {
             assert_eq!(task.setup, "", "{}", task.name);
         }
     }
@@ -356,8 +364,10 @@ mod tests {
     #[test]
     fn every_target_parses_and_is_well_typed_or_holed() {
         for task in tasks() {
-            let parsed = crate::measure::text_parse::parse_program(task.target)
-                .unwrap_or_else(|e| panic!("{}: target `{}` did not parse: {e}", task.name, task.target));
+            let parsed =
+                crate::measure::text_parse::parse_program(task.target).unwrap_or_else(|e| {
+                    panic!("{}: target `{}` did not parse: {e}", task.name, task.target)
+                });
             assert!(
                 is_well_typed(&parsed.exp),
                 "{}: target `{}` is not well-typed",

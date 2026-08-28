@@ -1,4 +1,3 @@
-
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::names::NameTable;
 use nothing_core::ty::Ty;
@@ -60,11 +59,9 @@ pub fn elaborate_in(exp: &Exp, sigma: &Env) -> Dyn {
         ),
         Exp::Proj(side, inner) => Dyn::Proj(*side, Box::new(elaborate_in(inner, sigma))),
         Exp::EmptyHole(h) => Dyn::EmptyHole(*h, sigma.clone()),
-        Exp::NonEmptyHole(h, inner) => Dyn::NonEmptyHole(
-            *h,
-            sigma.clone(),
-            Box::new(elaborate_in(inner, sigma)),
-        ),
+        Exp::NonEmptyHole(h, inner) => {
+            Dyn::NonEmptyHole(*h, sigma.clone(), Box::new(elaborate_in(inner, sigma)))
+        }
     }
 }
 
@@ -102,18 +99,14 @@ pub fn subst(x: Id, v: &Dyn, d: &Dyn) -> Dyn {
         Dyn::Pair(fst, snd) => Dyn::Pair(Box::new(subst(x, v, fst)), Box::new(subst(x, v, snd))),
         Dyn::Proj(side, inner) => Dyn::Proj(*side, Box::new(subst(x, v, inner))),
         Dyn::EmptyHole(h, env) => Dyn::EmptyHole(*h, subst_env(x, v, env)),
-        Dyn::NonEmptyHole(h, env, inner) => Dyn::NonEmptyHole(
-            *h,
-            subst_env(x, v, env),
-            Box::new(subst(x, v, inner)),
-        ),
+        Dyn::NonEmptyHole(h, env, inner) => {
+            Dyn::NonEmptyHole(*h, subst_env(x, v, env), Box::new(subst(x, v, inner)))
+        }
     }
 }
 
 fn subst_env(x: Id, v: &Dyn, env: &Env) -> Env {
-    env.iter()
-        .map(|(id, d)| (*id, subst(x, v, d)))
-        .collect()
+    env.iter().map(|(id, d)| (*id, subst(x, v, d))).collect()
 }
 
 pub fn is_value(d: &Dyn) -> bool {
@@ -248,11 +241,7 @@ mod tests {
 
     #[test]
     fn a_let_binds_its_body_but_not_its_bound_expression() {
-        let d = Dyn::Let(
-            x(),
-            Box::new(Dyn::Var(x())),
-            Box::new(Dyn::Var(x())),
-        );
+        let d = Dyn::Let(x(), Box::new(Dyn::Var(x())), Box::new(Dyn::Var(x())));
         assert_eq!(
             subst(x(), &Dyn::Num(3), &d),
             Dyn::Let(x(), Box::new(Dyn::Num(3)), Box::new(Dyn::Var(x())))

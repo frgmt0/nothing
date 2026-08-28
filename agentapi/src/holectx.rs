@@ -261,7 +261,12 @@ impl HoleContext {
         Json::obj(vec![
             (
                 "cursor_path",
-                Json::arr(self.cursor_path.iter().map(|n| Json::Int(*n as i64)).collect()),
+                Json::arr(
+                    self.cursor_path
+                        .iter()
+                        .map(|n| Json::Int(*n as i64))
+                        .collect(),
+                ),
             ),
             ("focus_kind", Json::str(self.focus_kind)),
             ("focus_render", Json::str(self.focus_render.clone())),
@@ -274,11 +279,21 @@ impl HoleContext {
             ),
             (
                 "constructions",
-                Json::arr(self.constructions.iter().map(Construction::to_json).collect()),
+                Json::arr(
+                    self.constructions
+                        .iter()
+                        .map(Construction::to_json)
+                        .collect(),
+                ),
             ),
             (
                 "movements",
-                Json::arr(self.movements.iter().map(|m| Json::str(m.clone())).collect()),
+                Json::arr(
+                    self.movements
+                        .iter()
+                        .map(|m| Json::str(m.clone()))
+                        .collect(),
+                ),
             ),
             (
                 "other_actions",
@@ -411,7 +426,10 @@ mod tests {
             !steps.iter().any(|s| s.starts_with("construct-num")),
             "a Bool hole offered a number: {steps:?}"
         );
-        assert!(steps.iter().any(|s| s.starts_with("construct-bool")), "{steps:?}");
+        assert!(
+            steps.iter().any(|s| s.starts_with("construct-bool")),
+            "{steps:?}"
+        );
         assert_constructions_are_clean(&state);
     }
 
@@ -507,16 +525,21 @@ mod tests {
 
     #[test]
     fn the_json_shape_carries_names_types_and_constructions() {
-        let state = state_from(
-            "construct-lam\nmove-parent\nrename n\nset-ann Num\nmove-child 0\n",
-        );
+        let state = state_from("construct-lam\nmove-parent\nrename n\nset-ann Num\nmove-child 0\n");
         let text = hole_context(&state).to_json().to_string();
         let parsed = crate::json::parse(&text).unwrap();
         assert_eq!(parsed.get("at_empty_hole").unwrap().as_bool(), Some(true));
         let bindings = parsed.get("bindings").unwrap().as_arr().unwrap();
         assert_eq!(bindings[0].get("name").unwrap().as_str(), Some("n"));
         assert_eq!(bindings[0].get("ty_text").unwrap().as_str(), Some("Num"));
-        assert!(!parsed.get("constructions").unwrap().as_arr().unwrap().is_empty());
+        assert!(
+            !parsed
+                .get("constructions")
+                .unwrap()
+                .as_arr()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     proptest! {

@@ -1,4 +1,3 @@
-
 use nothing_action::act::{Action, EditState};
 use nothing_action::generate;
 use nothing_action::zipper::{Zipper, all_positions};
@@ -6,7 +5,6 @@ use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::ty::Ty;
 use nothing_core::typing::is_well_typed;
 use proptest::prelude::*;
-
 
 pub fn path_to(a: &Exp, b: &Exp) -> Vec<Action> {
     path_to_from(&Zipper::new(a.clone()), b)
@@ -21,15 +19,11 @@ pub fn path_to_from(cursor: &Zipper, b: &Exp) -> Vec<Action> {
 
 fn build(target: &Exp, actions: &mut Vec<Action>) {
     match target {
-
-
         Exp::EmptyHole(_) => {}
-
 
         Exp::Num(n) => actions.push(Action::ConstructNum(*n)),
         Exp::Bool(b) => actions.push(Action::ConstructBool(*b)),
         Exp::Var(id) => actions.push(Action::ConstructVar(*id)),
-
 
         Exp::Lam(id, ann, body) => {
             actions.push(Action::ConstructLam);
@@ -40,7 +34,6 @@ fn build(target: &Exp, actions: &mut Vec<Action>) {
             build(body, actions);
             actions.push(Action::MoveParent);
         }
-
 
         Exp::Let(id, bound, body) => {
             actions.push(Action::ConstructLet);
@@ -71,7 +64,6 @@ fn build(target: &Exp, actions: &mut Vec<Action>) {
             build_children(&[inner], actions);
         }
 
-
         Exp::NonEmptyHole(_, inner) => {
             actions.push(Action::ConstructNonEmptyHole);
             build_children(&[inner], actions);
@@ -88,7 +80,6 @@ fn build_children(children: &[&Exp], actions: &mut Vec<Action>) {
     }
     actions.push(Action::MoveParent);
 }
-
 
 fn replay(start: Exp, actions: &[Action]) -> Result<Exp, String> {
     let mut state = EditState::new(start);
@@ -109,7 +100,6 @@ fn replay(start: Exp, actions: &[Action]) -> Result<Exp, String> {
     }
     Ok(state.exp())
 }
-
 
 fn canonical_hole_ids(exp: &Exp) -> Exp {
     fn go(exp: &Exp, next: &mut u128) -> Exp {
@@ -154,7 +144,6 @@ fn is_hole_free(exp: &Exp) -> bool {
         Exp::If(c, t, e) => is_hole_free(c) && is_hole_free(t) && is_hole_free(e),
     }
 }
-
 
 proptest! {
     #![proptest_config(ProptestConfig {
@@ -339,7 +328,6 @@ fn the_targets_cover_the_hard_cases() {
     }
 }
 
-
 #[test]
 fn a_specific_annotated_binder_is_reachable() {
     let x = Id::from_u128(42);
@@ -371,11 +359,9 @@ fn set_ann_fails_cleanly_when_the_annotation_would_break_the_body() {
 fn binder_metadata_actions_do_not_apply_elsewhere() {
     let x = Id::from_u128(0);
 
-
     let state = EditState::new(Exp::num(1));
     assert!(state.apply(Action::SetAnn(Ty::Num)).is_none());
     assert!(state.apply(Action::SetBinderId(x)).is_none());
-
 
     let lam = EditState::new(Exp::lam(x, Ty::Num, Exp::num(1)));
     assert_eq!(
@@ -384,7 +370,6 @@ fn binder_metadata_actions_do_not_apply_elsewhere() {
             .exp(),
         Exp::lam(Id::from_u128(9), Ty::Num, Exp::num(1))
     );
-
 
     let used = EditState::new(Exp::lam(x, Ty::Num, Exp::var(x)));
     assert!(used.apply(Action::SetBinderId(Id::from_u128(9))).is_none());
@@ -407,7 +392,6 @@ fn a_non_empty_hole_whose_contents_fit_is_reachable_only_explicitly() {
     );
     assert!(is_well_typed(&target), "a fitting quarantine is legal");
 
-
     let plain = EditState::new(Exp::bin_op(
         Op::Add,
         Exp::num(1),
@@ -418,7 +402,6 @@ fn a_non_empty_hole_whose_contents_fit_is_reachable_only_explicitly() {
     .apply(Action::ConstructNum(2))
     .unwrap();
     assert_eq!(plain.exp(), Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)));
-
 
     let start = Exp::num(0);
     let reached = replay(start.clone(), &path_to(&start, &target)).expect("the path applies");
@@ -443,7 +426,6 @@ fn construct_non_empty_hole_and_finish_are_inverse() {
         other => panic!("expected a quarantined operand, got {other:?}"),
     }
     assert!(is_well_typed(&state.exp()));
-
 
     if !matches!(state.zipper.focus, Exp::NonEmptyHole(..)) {
         assert!(state.apply_mut(Action::MoveParent));

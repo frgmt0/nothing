@@ -1,4 +1,3 @@
-
 use nothing_action::act::Action;
 use nothing_core::exp::Id;
 use nothing_core::ty::{Ty, is_consistent};
@@ -35,7 +34,6 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
     let ctx = state.ctx();
     let expected = state.expected_ty();
 
-
     let binders = state.binders_in_scope();
     let mut depth: Vec<(Id, usize)> = Vec::new();
     for (i, id) in binders.iter().enumerate() {
@@ -69,7 +67,6 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
             ty: Ty::Bool,
             kind: CandidateKind::Bool(b),
         };
-
 
         out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
     }
@@ -158,10 +155,8 @@ mod tests {
             "x0 : Num -> Num must outrank x1 : Bool at a Num -> Num hole, got {ranked:?}"
         );
 
-
         assert_eq!(ranked, vec!["x0", "x2", "x1"]);
         assert_eq!(best(&state, "x").map(|c| c.name), Some("x0".to_string()));
-
 
         assert_eq!(
             names(&function_bool_and_caller(), "x"),
@@ -178,7 +173,6 @@ mod tests {
 
     #[test]
     fn a_bool_hole_prefers_a_boolean_literal_to_a_function() {
-
         let state = typed("\\x0:n>n.?");
         assert_eq!(state.expected_ty(), Ty::Bool);
         let ranked = names(&state, "");
@@ -195,12 +189,10 @@ mod tests {
         let state = function_bool_and_caller();
         assert_eq!(state.expected_ty(), Ty::Hole);
 
-
         assert_eq!(names(&state, ""), vec!["x2", "x1", "x0", "true", "false"]);
 
         assert_eq!(names(&state, "x"), vec!["x2", "x1", "x0"]);
         assert!(best(&state, "x").is_some());
-
 
         let empty = AppState::empty();
         assert_eq!(empty.expected_ty(), Ty::Hole);
@@ -210,7 +202,6 @@ mod tests {
 
     #[test]
     fn the_prefix_filters_before_the_type_ranks() {
-
         let state = hole_expecting_num_to_num();
         assert_eq!(names(&state, "x1"), vec!["x1"]);
         assert_eq!(best(&state, "x1").map(|c| c.name), Some("x1".to_string()));
@@ -245,8 +236,6 @@ mod tests {
 
     #[test]
     fn an_exact_match_outranks_a_longer_one() {
-
-
         let state = two_binders();
         assert_eq!(best(&state, "x1").map(|c| c.name), Some("x1".to_string()));
         assert_eq!(
@@ -268,8 +257,6 @@ mod tests {
 
     #[test]
     fn every_candidate_is_constructible_from_the_keyboard() {
-
-
         let state = two_binders();
         for candidate in candidates(&state, "") {
             assert!(

@@ -1,4 +1,3 @@
-
 use uuid::Uuid;
 
 use crate::ty::Ty;
@@ -259,7 +258,6 @@ mod tests {
             Exp::empty_hole(h0),
             Exp::non_empty_hole(h1, Exp::bool_(true)),
         ];
-
 
         assert_eq!(exps.len(), 12);
     }

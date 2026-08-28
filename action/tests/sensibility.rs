@@ -1,4 +1,3 @@
-
 use nothing_action::act::{Action, apply};
 use nothing_action::generate::{self, Gen};
 use nothing_action::zipper::{Zipper, all_positions};
@@ -8,7 +7,6 @@ use nothing_core::typing::is_well_typed;
 use proptest::prelude::*;
 use proptest::strategy::{Union, ValueTree};
 use proptest::test_runner::TestRunner;
-
 
 fn variant_name(action: &Action) -> &'static str {
     match action {
@@ -91,13 +89,10 @@ fn arb_name() -> impl Strategy<Value = String> {
 
 pub fn arb_action() -> impl Strategy<Value = Action> {
     Union::new(vec![
-
-
         (0usize..5).prop_map(Action::MoveChild).boxed(),
         Just(Action::MoveParent).boxed(),
         Just(Action::MoveNextSibling).boxed(),
         Just(Action::MovePrevSibling).boxed(),
-
         Just(Action::Delete).boxed(),
         any::<i64>().prop_map(Action::ConstructNum).boxed(),
         any::<bool>().prop_map(Action::ConstructBool).boxed(),
@@ -122,7 +117,6 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
 fn one_of_every_action() -> Vec<Action> {
     one_of_every_action_in(&[])
 }
-
 
 fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
     let mut actions = vec![
@@ -162,7 +156,6 @@ fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
     actions
 }
 
-
 #[test]
 fn the_strategy_covers_every_action_variant() {
     let mut runner = TestRunner::deterministic();
@@ -192,15 +185,16 @@ fn the_strategy_covers_every_action_variant() {
         "arb_action generated a variant not listed in ALL_VARIANTS"
     );
 
-    let exhaustive: Vec<&'static str> = one_of_every_action()
-        .iter()
-        .map(variant_name)
-        .fold(Vec::new(), |mut acc, name| {
-            if !acc.contains(&name) {
-                acc.push(name);
-            }
-            acc
-        });
+    let exhaustive: Vec<&'static str> =
+        one_of_every_action()
+            .iter()
+            .map(variant_name)
+            .fold(Vec::new(), |mut acc, name| {
+                if !acc.contains(&name) {
+                    acc.push(name);
+                }
+                acc
+            });
     for name in ALL_VARIANTS {
         assert!(
             exhaustive.contains(&name),
@@ -220,18 +214,20 @@ fn the_position_quantifier_reaches_more_than_the_root() {
         total += positions.len();
         deepest = deepest.max(positions.iter().map(Zipper::depth).max().unwrap_or(0));
     }
-    assert!(total > 600, "only {total} cursor positions over 200 programs");
-    assert!(deepest >= 3, "the deepest cursor position was only {deepest}");
+    assert!(
+        total > 600,
+        "only {total} cursor positions over 200 programs"
+    );
+    assert!(
+        deepest >= 3,
+        "the deepest cursor position was only {deepest}"
+    );
 }
-
 
 fn check_sensible(z: Zipper, action: &Action) -> Result<bool, TestCaseError> {
     let before = z.to_exp();
     match apply(z, action.clone()) {
-
-
         None => Ok(false),
-
 
         Some(after) => {
             let program = after.to_exp();
@@ -308,7 +304,6 @@ proptest! {
     }
 }
 
-
 #[test]
 fn every_action_succeeds_somewhere_in_the_search_space() {
     let mut applied: Vec<(&'static str, usize)> = ALL_VARIANTS.iter().map(|n| (*n, 0)).collect();
@@ -361,19 +356,19 @@ fn actions_that_do_not_apply_leave_the_program_untouched() {
                 if apply(cursor.clone(), action.clone()).is_none() {
                     refusals += 1;
 
-
                     assert_eq!(cursor.to_exp(), before);
                 }
             }
         }
     }
-    assert!(refusals > 0, "no action ever failed: the None branch is untested");
+    assert!(
+        refusals > 0,
+        "no action ever failed: the None branch is untested"
+    );
 }
 
 #[test]
 fn the_check_would_catch_an_unsound_action() {
-
-
     let unsound = Exp::bin_op(Op::Add, Exp::num(1), Exp::bool_(true));
     assert!(
         !is_well_typed(&unsound),

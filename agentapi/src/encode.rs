@@ -74,16 +74,24 @@ pub fn ty_from_json(value: &Json) -> Result<Ty, String> {
         "Bool" => Ok(Ty::Bool),
         "Hole" => Ok(Ty::Hole),
         "Arrow" => {
-            let from = value.get("from").ok_or_else(|| "Arrow needs `from`".to_string())?;
-            let to = value.get("to").ok_or_else(|| "Arrow needs `to`".to_string())?;
+            let from = value
+                .get("from")
+                .ok_or_else(|| "Arrow needs `from`".to_string())?;
+            let to = value
+                .get("to")
+                .ok_or_else(|| "Arrow needs `to`".to_string())?;
             Ok(Ty::Arrow(
                 Box::new(ty_from_json(from)?),
                 Box::new(ty_from_json(to)?),
             ))
         }
         "Prod" => {
-            let fst = value.get("fst").ok_or_else(|| "Prod needs `fst`".to_string())?;
-            let snd = value.get("snd").ok_or_else(|| "Prod needs `snd`".to_string())?;
+            let fst = value
+                .get("fst")
+                .ok_or_else(|| "Prod needs `fst`".to_string())?;
+            let snd = value
+                .get("snd")
+                .ok_or_else(|| "Prod needs `snd`".to_string())?;
             Ok(Ty::Prod(
                 Box::new(ty_from_json(fst)?),
                 Box::new(ty_from_json(snd)?),
@@ -211,10 +219,7 @@ pub fn action_json(action: &Action) -> Json {
         Action::ConstructNonEmptyHole => {
             Json::obj(vec![("action", Json::str("ConstructNonEmptyHole"))])
         }
-        Action::SetAnn(ty) => Json::obj(vec![
-            ("action", Json::str("SetAnn")),
-            ("ty", ty_json(ty)),
-        ]),
+        Action::SetAnn(ty) => Json::obj(vec![("action", Json::str("SetAnn")), ("ty", ty_json(ty))]),
         Action::SetBinderId(id) => Json::obj(vec![
             ("action", Json::str("SetBinderId")),
             ("id", Json::str(id.to_string())),
@@ -298,7 +303,10 @@ pub fn action_from_json(value: &Json) -> Result<Action, String> {
             let name = field(value, "name", tag)?
                 .as_str()
                 .ok_or_else(|| "`Rename` needs a string `name`".to_string())?;
-            Ok(Action::Rename(id_field(value, "id", tag)?, name.to_string()))
+            Ok(Action::Rename(
+                id_field(value, "id", tag)?,
+                name.to_string(),
+            ))
         }
         "Finish" => Ok(Action::Finish),
         other => Err(format!("unknown action `{other}`")),
@@ -312,7 +320,10 @@ pub fn author_json(author: AuthorId) -> Json {
 pub fn entry_json(entry: &LogEntry) -> Json {
     Json::obj(vec![
         ("action", action_json(&entry.action)),
-        ("step", Json::str(nothing_action::script::action_name(&entry.action))),
+        (
+            "step",
+            Json::str(nothing_action::script::action_name(&entry.action)),
+        ),
         ("timestamp", Json::Int(entry.timestamp as i64)),
         ("author", author_json(entry.author)),
     ])
@@ -438,7 +449,10 @@ mod tests {
 
     #[test]
     fn a_type_may_be_given_as_a_string() {
-        let value = Json::obj(vec![("action", Json::str("SetAnn")), ("ty", Json::str("Num -> Bool"))]);
+        let value = Json::obj(vec![
+            ("action", Json::str("SetAnn")),
+            ("ty", Json::str("Num -> Bool")),
+        ]);
         assert_eq!(
             action_from_json(&value).unwrap(),
             Action::SetAnn(Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool)))
@@ -467,7 +481,10 @@ mod tests {
         let json = exp_json(&examples::let_identity(), &examples::names()).to_string();
         assert!(json.contains("\"name\":\"x0\""), "{json}");
         assert!(json.contains("\"exp\":\"Let\""), "{json}");
-        assert_eq!(parse(&json).unwrap().get("exp").unwrap().as_str(), Some("Let"));
+        assert_eq!(
+            parse(&json).unwrap().get("exp").unwrap().as_str(),
+            Some("Let")
+        );
     }
 
     #[test]

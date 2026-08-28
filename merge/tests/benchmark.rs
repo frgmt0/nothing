@@ -83,7 +83,10 @@ fn a_line_based_merge_that_reports_clean_is_never_silently_wrong_here() {
     let Some(rows) = rows() else { return };
     for row in &rows {
         if row.git_correct == Some(false) {
-            eprintln!("git merged `{}` cleanly but produced different content", row.name);
+            eprintln!(
+                "git merged `{}` cleanly but produced different content",
+                row.name
+            );
         }
     }
     let t = totals(&rows);

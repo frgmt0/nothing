@@ -85,7 +85,11 @@ impl Claude {
 
 pub fn first_meaningful_line(reply: &str) -> String {
     for line in reply.lines() {
-        let line = line.trim().trim_start_matches('`').trim_end_matches('`').trim();
+        let line = line
+            .trim()
+            .trim_start_matches('`')
+            .trim_end_matches('`')
+            .trim();
         if line.is_empty() || line.starts_with("```") {
             continue;
         }
@@ -97,7 +101,12 @@ pub fn first_meaningful_line(reply: &str) -> String {
 pub fn action_lines(reply: &str) -> Vec<String> {
     let body = crate::measure::text_parse::strip_fences(reply);
     body.lines()
-        .map(|line| line.trim().trim_start_matches('`').trim_end_matches('`').trim())
+        .map(|line| {
+            line.trim()
+                .trim_start_matches('`')
+                .trim_end_matches('`')
+                .trim()
+        })
         .map(|line| match line.find('#') {
             Some(i) => line[..i].trim(),
             None => line,
@@ -113,13 +122,17 @@ mod tests {
 
     #[test]
     fn the_first_meaningful_line_survives_backticks_and_blank_lines() {
-        assert_eq!(first_meaningful_line("\n\n`construct-num 3`\n"), "construct-num 3");
+        assert_eq!(
+            first_meaningful_line("\n\n`construct-num 3`\n"),
+            "construct-num 3"
+        );
         assert_eq!(first_meaningful_line("construct-lam"), "construct-lam");
     }
 
     #[test]
     fn action_lines_strip_fences_and_comments() {
-        let reply = "```\nconstruct-num 1  # the left operand\nconstruct-binop add\n\nconstruct-num 2\n```";
+        let reply =
+            "```\nconstruct-num 1  # the left operand\nconstruct-binop add\n\nconstruct-num 2\n```";
         assert_eq!(
             action_lines(reply),
             vec!["construct-num 1", "construct-binop add", "construct-num 2"]

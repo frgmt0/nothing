@@ -148,10 +148,7 @@ fn stock() -> [Exp; 3] {
 }
 
 fn pair_program(fst: Exp, snd: Exp) -> Version {
-    Version::new(
-        program([F, G, H], stock(), Exp::pair(fst, snd)),
-        names(),
-    )
+    Version::new(program([F, G, H], stock(), Exp::pair(fst, snd)), names())
 }
 
 fn renamed(version: &Version, target: u128, name: &str) -> Version {

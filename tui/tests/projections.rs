@@ -1,4 +1,3 @@
-
 use nothing_action::act::Action;
 use nothing_action::script::replay_script;
 use nothing_core::exp::Exp;
@@ -38,7 +37,10 @@ fn the_override_key_forces_text_back_and_then_cycles() {
     assert_eq!(forced_text.active_projection(), ProjectionKind::Text);
 
     let back_to_table = handle_key(ctrl_p(), forced_text.clone());
-    assert_eq!(back_to_table.active_projection(), ProjectionKind::StateMachine);
+    assert_eq!(
+        back_to_table.active_projection(),
+        ProjectionKind::StateMachine
+    );
 
     let beginner = handle_key(ctrl_p(), back_to_table);
     assert_eq!(beginner.active_projection(), ProjectionKind::Beginner);
@@ -82,7 +84,11 @@ fn an_edit_made_through_the_text_projection_is_visible_in_the_state_machine_proj
     assert_eq!(forced_text.active_projection(), ProjectionKind::Text);
 
     let edited = forced_text
-        .apply_actions(&[Action::MoveChild(0), Action::MoveChild(1), Action::ConstructNum(99)])
+        .apply_actions(&[
+            Action::MoveChild(0),
+            Action::MoveChild(1),
+            Action::ConstructNum(99),
+        ])
         .expect("row 0's result is a plain node under ordinary tree movement");
     assert!(matches!(edited.focus(), Exp::Num(99)));
 

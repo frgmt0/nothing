@@ -1,8 +1,8 @@
 use nothing_core::exp::{Exp, Id};
 
 use crate::codec::{
-    decode_op, decode_side, decode_ty, encode_op, encode_side, encode_ty, read_hole_id, read_id,
-    read_i64, read_u8, write_hole_id, write_id, write_i64,
+    decode_op, decode_side, decode_ty, encode_op, encode_side, encode_ty, read_hole_id, read_i64,
+    read_id, read_u8, write_hole_id, write_i64, write_id,
 };
 use crate::error::DecodeError;
 
@@ -27,7 +27,11 @@ fn hash_node(tag: u8, canonical_payload: &[u8], children: &[Digest]) -> Digest {
 }
 
 fn debruijn_index(id: Id, stack: &[Id]) -> Option<u64> {
-    stack.iter().rev().position(|bound| *bound == id).map(|p| p as u64)
+    stack
+        .iter()
+        .rev()
+        .position(|bound| *bound == id)
+        .map(|p| p as u64)
 }
 
 fn push_entry(
@@ -168,7 +172,10 @@ pub fn build_node_table(exp: &Exp) -> Vec<NodeEntry> {
 
 pub fn content_hash(exp: &Exp) -> Digest {
     let table = build_node_table(exp);
-    table.last().expect("every Exp produces at least one node").hash
+    table
+        .last()
+        .expect("every Exp produces at least one node")
+        .hash
 }
 
 fn decode_child(
@@ -181,7 +188,9 @@ fn decode_child(
 }
 
 fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
-    let entry = entries.get(idx).ok_or(DecodeError::BadNodeRef(idx as u32))?;
+    let entry = entries
+        .get(idx)
+        .ok_or(DecodeError::BadNodeRef(idx as u32))?;
     let mut pos = 0usize;
     match entry.tag {
         0 => {
@@ -269,11 +278,19 @@ mod tests {
     fn alpha_equivalent_functions_hash_the_same() {
         let a = {
             let x = Id::from_u128(1);
-            Exp::lam(x, Ty::Num, Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(x), Exp::num(1)))
+            Exp::lam(
+                x,
+                Ty::Num,
+                Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(x), Exp::num(1)),
+            )
         };
         let b = {
             let y = Id::from_u128(999);
-            Exp::lam(y, Ty::Num, Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(y), Exp::num(1)))
+            Exp::lam(
+                y,
+                Ty::Num,
+                Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(y), Exp::num(1)),
+            )
         };
         assert_ne!(a, b);
         assert_eq!(content_hash(&a), content_hash(&b));
@@ -282,8 +299,16 @@ mod tests {
     #[test]
     fn structurally_different_functions_hash_differently() {
         let x = Id::from_u128(1);
-        let a = Exp::lam(x, Ty::Num, Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(x), Exp::num(1)));
-        let b = Exp::lam(x, Ty::Num, Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(x), Exp::num(2)));
+        let a = Exp::lam(
+            x,
+            Ty::Num,
+            Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(x), Exp::num(1)),
+        );
+        let b = Exp::lam(
+            x,
+            Ty::Num,
+            Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(x), Exp::num(2)),
+        );
         assert_ne!(content_hash(&a), content_hash(&b));
     }
 

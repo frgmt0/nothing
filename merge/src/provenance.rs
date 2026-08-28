@@ -114,9 +114,11 @@ struct Step {
 }
 
 fn overlaps(a: &Operation, b: &Operation) -> bool {
-    a.footprint()
-        .iter()
-        .any(|left| b.footprint().iter().any(|right| regions_overlap(left, right)))
+    a.footprint().iter().any(|left| {
+        b.footprint()
+            .iter()
+            .any(|right| regions_overlap(left, right))
+    })
 }
 
 pub fn attribute_from(base: &EditState, entries: &[LogEntry]) -> Attributed {
@@ -282,11 +284,7 @@ mod tests {
         assert_eq!(attributed.head.render(), head);
         assert!(!attributed.ops.is_empty());
         for op in &attributed.ops {
-            assert!(
-                op.author.is_some(),
-                "{:?} was not attributed",
-                op.op.kind()
-            );
+            assert!(op.author.is_some(), "{:?} was not attributed", op.op.kind());
         }
         assert_eq!(attributed.authors(), vec![HUMAN, AGENT]);
     }
@@ -381,7 +379,10 @@ mod tests {
     fn a_single_author_log_attributes_everything_to_that_author() {
         let mut r = Recorder::new();
         let (base, at) = r.snapshot();
-        r.steps("construct-num 1\nconstruct-binop add\nconstruct-num 2", AGENT);
+        r.steps(
+            "construct-num 1\nconstruct-binop add\nconstruct-num 2",
+            AGENT,
+        );
         let attributed = attribute_from(&base, &r.since(at));
         assert!(!attributed.ops.is_empty());
         assert!(attributed.ops.iter().all(|op| op.by(AGENT)));

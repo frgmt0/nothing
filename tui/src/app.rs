@@ -1,4 +1,3 @@
-
 use nothing_action::act::{Action, EditState, ctx_and_expected_ty_at};
 use nothing_action::script::replay_script;
 use nothing_action::zipper::{Frame, Zipper, all_positions};
@@ -223,8 +222,6 @@ impl AppState {
     fn rewind_to(&mut self, prefix: usize, typing: Typing) {
         let mut edit = self.base.clone();
         for action in &self.history.actions()[..prefix] {
-
-
             edit.apply_mut(action.clone());
         }
         self.edit = edit;
@@ -248,10 +245,8 @@ impl AppState {
         }
     }
 
-
     pub fn move_down(&self) -> Option<AppState> {
         match self.slot {
-
             Slot::BinderName | Slot::Annotation => None,
             Slot::Node => match self.binder_kind() {
                 Some(_) => Some(self.in_slot(Slot::BinderName)),
@@ -269,7 +264,6 @@ impl AppState {
 
     pub fn move_next(&self) -> Option<AppState> {
         match (self.slot, self.binder_kind()) {
-
             (Slot::BinderName, Some(BinderKind::Lam)) => Some(self.in_slot(Slot::Annotation)),
             (Slot::BinderName, Some(BinderKind::Let)) => {
                 self.apply_actions(&[Action::MoveChild(0)])
@@ -278,7 +272,6 @@ impl AppState {
             (Slot::Annotation, _) => self.apply_actions(&[Action::MoveChild(0)]),
             (Slot::BinderName, None) => None,
             (Slot::Node, _) => match self.edit.zipper.path.last() {
-
                 Some(Frame::LamBody(..)) | Some(Frame::LetBody(..)) => None,
                 Some(_) => self.apply_actions(&[Action::MoveNextSibling]),
                 None => None,
@@ -458,10 +451,7 @@ mod tests {
     #[test]
     fn factorial_demo_renders_the_reference_program() {
         let state = AppState::factorial();
-        assert_eq!(
-            state.text(),
-            "λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈"
-        );
+        assert_eq!(state.text(), "λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈");
         assert!(state.edit.zipper.is_root());
         assert_eq!(state.slot, Slot::Node);
     }
@@ -471,7 +461,6 @@ mod tests {
         let start = AppState::factorial();
         let program = start.program();
         let mut state = start;
-
 
         for step in [
             AppState::move_down,
@@ -491,7 +480,6 @@ mod tests {
 
     #[test]
     fn lambda_slots_walk_name_annotation_body() {
-
         let lam = AppState::factorial();
         let name = lam.move_down().expect("a lambda has a binder name");
         assert_eq!(name.slot, Slot::BinderName);
@@ -505,7 +493,6 @@ mod tests {
         assert!(matches!(body.focus(), Exp::If(..)));
         assert!(body.move_next().is_none(), "the body is the last child");
 
-
         let back_ann = body.move_prev().expect("body → annotation");
         assert_eq!(at(&back_ann), at(&ann));
         assert_eq!(back_ann.move_prev().as_ref().map(at), Some(at(&name)),);
@@ -515,7 +502,6 @@ mod tests {
 
     #[test]
     fn let_slots_walk_name_bound_body() {
-
         let root = AppState::new(examples::let_identity());
         let name = root.move_down().expect("a let has a binder name");
         assert_eq!(name.slot, Slot::BinderName);
@@ -541,8 +527,6 @@ mod tests {
 
     #[test]
     fn tab_cycles_the_empty_holes() {
-
-
         let state = AppState::new(examples::add_with_empty_hole());
         let hole = state.move_to_hole(true).expect("there is a hole");
         assert!(matches!(hole.focus(), Exp::EmptyHole(_)));
@@ -553,7 +537,6 @@ mod tests {
 
     #[test]
     fn tab_wraps_and_shift_tab_reverses() {
-
         let program = Exp::pair(
             Exp::empty_hole(nothing_core::exp::HoleId::from_u128(0)),
             Exp::empty_hole(nothing_core::exp::HoleId::from_u128(1)),

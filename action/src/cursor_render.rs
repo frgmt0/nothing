@@ -1,4 +1,3 @@
-
 use nothing_core::exp::Side;
 use nothing_core::names::NameTable;
 use nothing_core::render::{
@@ -49,10 +48,18 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
         Frame::ApFun(arg) => format!("{child} {}", render_prec(arg, PREC_ATOM, names)),
         Frame::ApArg(fun) => format!("{} {child}", render_prec(fun, PREC_APP, names)),
         Frame::BinOpLeft(op, rhs) => {
-            format!("{child} {} {}", op_str(*op), render_prec(rhs, op_prec(*op) + 1, names))
+            format!(
+                "{child} {} {}",
+                op_str(*op),
+                render_prec(rhs, op_prec(*op) + 1, names)
+            )
         }
         Frame::BinOpRight(op, lhs) => {
-            format!("{} {} {child}", render_prec(lhs, op_prec(*op), names), op_str(*op))
+            format!(
+                "{} {} {child}",
+                render_prec(lhs, op_prec(*op), names),
+                op_str(*op)
+            )
         }
         Frame::IfCond(then_, else_) => format!(
             "if {child} then {} else {}",
@@ -150,12 +157,17 @@ mod tests {
         let e = examples::square_and_compare();
         let z = zipper::unzip(e.clone());
         let marked = render_with_cursor(&z, &names());
-        assert_eq!(marked, format!("{CURSOR_OPEN}{}{CURSOR_CLOSE}", render::render(&e, &names())));
+        assert_eq!(
+            marked,
+            format!(
+                "{CURSOR_OPEN}{}{CURSOR_CLOSE}",
+                render::render(&e, &names())
+            )
+        );
     }
 
     #[test]
     fn a_leaf_deep_inside_the_program_is_delimited_in_place() {
-
         let e = examples::pair_and_project();
         let z = zipper::unzip(e)
             .move_child(0)
@@ -172,7 +184,6 @@ mod tests {
     fn cursor_moves_produce_visibly_distinct_output_at_every_position() {
         let e = examples::square_and_compare();
         let positions = zipper::all_positions(&e);
-
 
         assert!(
             positions.len() >= 10,
@@ -205,7 +216,8 @@ mod tests {
         for i in 0..rendered.len() {
             for j in (i + 1)..rendered.len() {
                 assert_ne!(
-                    rendered[i], rendered[j],
+                    rendered[i],
+                    rendered[j],
                     "positions {i} and {j} (depths {}, {}) rendered identically: {}",
                     positions[i].depth(),
                     positions[j].depth(),
@@ -242,7 +254,12 @@ mod tests {
             for z in zipper::all_positions(&e) {
                 let marked = render_with_cursor(&z, &names());
                 let stripped = marked.replace(CURSOR_OPEN, "").replace(CURSOR_CLOSE, "");
-                assert_eq!(stripped, expected, "mismatch for seed {seed} at depth {}", z.depth());
+                assert_eq!(
+                    stripped,
+                    expected,
+                    "mismatch for seed {seed} at depth {}",
+                    z.depth()
+                );
             }
         }
     }

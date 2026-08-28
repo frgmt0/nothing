@@ -1,4 +1,3 @@
-
 use nothing_action::act::Action;
 use nothing_action::cursor_render::{CURSOR_CLOSE, CURSOR_OPEN};
 use nothing_action::zipper::unzip;
@@ -115,7 +114,11 @@ pub fn marked_text(state: &AppState) -> String {
         .iter()
         .map(|row| render(&exp_at(&program, &row.result), names))
         .collect();
-    let cond_width = cond_texts.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+    let cond_width = cond_texts
+        .iter()
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(0);
 
     let mut out = format!("state machine on {var_name}\n");
     for (i, row) in shape.rows.iter().enumerate() {

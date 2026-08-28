@@ -232,11 +232,9 @@ impl Operation {
                 render(node, names),
                 label(base, path)
             ),
-            Operation::Insert { path, node, .. } => format!(
-                "wraps {} in `{}`",
-                label(base, path),
-                render(node, names)
-            ),
+            Operation::Insert { path, node, .. } => {
+                format!("wraps {} in `{}`", label(base, path), render(node, names))
+            }
             Operation::Delete { path, node, slot } => format!(
                 "unwraps {} from `{}`, keeping child {slot}",
                 label(base, path),

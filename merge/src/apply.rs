@@ -51,9 +51,7 @@ pub fn apply_one(exp: &Exp, op: &Operation) -> Option<Exp> {
     match op {
         Operation::Rename { .. } => Some(exp.clone()),
         Operation::Fill { path, node, .. } => replace_at(exp, path, node.clone()),
-        Operation::DeleteToHole { path, hole, .. } => {
-            replace_at(exp, path, Exp::empty_hole(*hole))
-        }
+        Operation::DeleteToHole { path, hole, .. } => replace_at(exp, path, Exp::empty_hole(*hole)),
         Operation::Insert { path, slot, node } => {
             let current = at(exp, path)?.clone();
             let wrapped = with_child(node, *slot, current)?;

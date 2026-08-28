@@ -1,4 +1,3 @@
-
 use nothing_action::script::parse_ty;
 use nothing_core::ty::Ty;
 
@@ -53,7 +52,6 @@ fn tokens(buffer: &str) -> Vec<Tok> {
                 '*' => out.push(Tok::Op("*")),
                 '(' => out.push(Tok::Open),
                 ')' => out.push(Tok::Close),
-
 
                 _ => {}
             }
@@ -149,8 +147,6 @@ mod tests {
 
     #[test]
     fn every_prefix_of_every_buffer_parses() {
-
-
         for buffer in [
             "n", "n>n", "n*n", "num>bool", "(n>n)>n", "n>(n*b)", "?>?", "n*n*n", "(((n", "n>>n",
             "*n", "()", "(n*)",
@@ -159,7 +155,6 @@ mod tests {
             for c in buffer.chars() {
                 prefix.push(c);
                 let ty = parse(&prefix);
-
 
                 assert_eq!(
                     parse_ty(&ty.to_string()).unwrap(),
@@ -186,8 +181,6 @@ mod tests {
 
     #[test]
     fn swallowed_letters_change_nothing_but_stay_visible() {
-
-
         assert_eq!(parse("nu"), parse("n"));
         assert_eq!(parse("boo"), parse("b"));
     }

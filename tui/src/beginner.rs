@@ -1,4 +1,3 @@
-
 use nothing_action::cursor_render::{CURSOR_CLOSE, CURSOR_OPEN};
 use nothing_action::zipper::{Frame, Zipper};
 use nothing_core::exp::{Exp, Op, Side};

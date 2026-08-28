@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -57,7 +57,7 @@ fn workspace(tag: &str) -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-fn run_git_merge_file(dir: &PathBuf, ours: &str, base: &str, theirs: &str) -> (i32, String) {
+fn run_git_merge_file(dir: &Path, ours: &str, base: &str, theirs: &str) -> (i32, String) {
     let ours_path = dir.join("ours.txt");
     let base_path = dir.join("base.txt");
     let theirs_path = dir.join("theirs.txt");
@@ -144,10 +144,7 @@ pub fn totals(rows: &[Row]) -> Totals {
     Totals {
         scenarios: rows.len(),
         git_clean: rows.iter().filter(|r| r.git_clean).count(),
-        git_clean_and_correct: rows
-            .iter()
-            .filter(|r| r.git_correct == Some(true))
-            .count(),
+        git_clean_and_correct: rows.iter().filter(|r| r.git_correct == Some(true)).count(),
         structural_clean: rows.iter().filter(|r| r.structural_clean).count(),
         structural_well_typed: rows.iter().filter(|r| r.structural_well_typed).count(),
     }
@@ -167,10 +164,7 @@ pub fn per_category(rows: &[Row]) -> Vec<(Category, usize, usize, usize, usize)>
         .iter()
         .map(|category| {
             let group: Vec<&Row> = rows.iter().filter(|r| r.category == *category).collect();
-            let git_ok = group
-                .iter()
-                .filter(|r| r.git_correct == Some(true))
-                .count();
+            let git_ok = group.iter().filter(|r| r.git_correct == Some(true)).count();
             let git_wrong = group
                 .iter()
                 .filter(|r| r.git_correct == Some(false))

@@ -1,4 +1,3 @@
-
 use nothing_action::script::replay_script;
 use nothing_core::exp::{Exp, Id, Op, Side};
 use nothing_core::names::NameTable;
@@ -26,13 +25,9 @@ fn fill_first_hole(exp: &Exp, with: &Exp) -> Option<Exp> {
     match exp {
         Exp::EmptyHole(_) => Some(with.clone()),
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => None,
-        Exp::Lam(id, ty, body) => {
-            Some(Exp::lam(*id, ty.clone(), fill_first_hole(body, with)?))
-        }
+        Exp::Lam(id, ty, body) => Some(Exp::lam(*id, ty.clone(), fill_first_hole(body, with)?)),
         Exp::Proj(side, body) => Some(Exp::proj(*side, fill_first_hole(body, with)?)),
-        Exp::NonEmptyHole(h, body) => {
-            Some(Exp::non_empty_hole(*h, fill_first_hole(body, with)?))
-        }
+        Exp::NonEmptyHole(h, body) => Some(Exp::non_empty_hole(*h, fill_first_hole(body, with)?)),
         Exp::Ap(a, b) => two(a, b, with, &|a, b| Exp::ap(a, b)),
         Exp::BinOp(op, a, b) => two(a, b, with, &|a, b| Exp::bin_op(*op, a, b)),
         Exp::Let(id, a, b) => two(a, b, with, &|a, b| Exp::let_(*id, a, b)),
@@ -133,10 +128,7 @@ fn reference_two_list_map_maps() {
     let k = Id::fresh();
     let double = Exp::lam(k, Ty::Num, Exp::bin_op(Op::Mul, Exp::var(k), Exp::num(2)));
 
-    let applied = Exp::ap(
-        Exp::ap(map, double),
-        Exp::pair(Exp::num(3), Exp::num(4)),
-    );
+    let applied = Exp::ap(Exp::ap(map, double), Exp::pair(Exp::num(3), Exp::num(4)));
     assert!(is_well_typed(&applied));
 
     let outcome = eval(&applied);
@@ -188,7 +180,15 @@ fn reference_five_nested_conditional_classifies() {
     let (classify, _) = reference("nested_conditional", NESTED_CONDITIONAL);
     assert!(eval(&classify).is_value());
 
-    for (input, expected) in [(-3, 0), (0, 0), (1, 1), (10, 1), (11, 2), (100, 2), (101, 3)] {
+    for (input, expected) in [
+        (-3, 0),
+        (0, 0),
+        (1, 1),
+        (10, 1),
+        (11, 2),
+        (100, 2),
+        (101, 3),
+    ] {
         let applied = Exp::ap(classify.clone(), Exp::num(input));
         assert!(is_well_typed(&applied));
         assert_eq!(eval(&applied).num(), Some(expected), "classify({input})");
@@ -205,9 +205,6 @@ fn every_reference_program_evaluates_without_fuel_exhaustion() {
         ("nested_conditional", NESTED_CONDITIONAL),
     ] {
         let (exp, _) = reference(name, actions);
-        assert!(
-            !eval(&exp).is_out_of_fuel(),
-            "{name} did not settle"
-        );
+        assert!(!eval(&exp).is_out_of_fuel(), "{name} did not settle");
     }
 }

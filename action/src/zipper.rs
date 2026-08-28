@@ -1,4 +1,3 @@
-
 use nothing_core::ctx::Ctx;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::ty::Ty;
@@ -138,8 +137,6 @@ impl Zipper {
     }
 
     pub fn move_child(self, n: usize) -> Option<Zipper> {
-
-
         if n >= arity(&self.focus) {
             return None;
         }
@@ -181,7 +178,6 @@ impl Zipper {
             }
             Exp::Proj(side, inner) => (Frame::ProjBody(side), *inner),
             Exp::NonEmptyHole(h, inner) => (Frame::NonEmptyHoleBody(h), *inner),
-
 
             Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => return None,
         };
@@ -251,7 +247,6 @@ impl Zipper {
                     ctx = ctx.extend(*id, ty);
                 }
 
-
                 _ => {}
             }
         }
@@ -308,7 +303,6 @@ mod tests {
         ]
     }
 
-
     #[test]
     fn zip_unzip_is_the_identity_on_every_example() {
         for (name, e) in all_examples() {
@@ -341,7 +335,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn move_child_out_of_range_fails_cleanly() {
         let e = examples::add_with_empty_hole();
@@ -350,7 +343,6 @@ mod tests {
         assert!(z.clone().move_child(1).is_some());
         assert!(z.clone().move_child(2).is_none());
         assert!(z.clone().move_child(usize::MAX).is_none());
-
 
         let leaf = z.move_child(0).unwrap();
         assert_eq!(leaf.focus, Exp::num(1));
@@ -376,19 +368,23 @@ mod tests {
 
     #[test]
     fn sibling_movement_walks_the_children_and_stops_at_the_ends() {
-
         let e = examples::if_over_pairs_with_hole();
         let root = unzip(e);
 
         let cond = root.clone().move_child(0).unwrap();
-        assert!(cond.clone().move_prev_sibling().is_none(), "no child before 0");
+        assert!(
+            cond.clone().move_prev_sibling().is_none(),
+            "no child before 0"
+        );
 
         let then = cond.move_next_sibling().unwrap();
         assert_eq!(then.child_index(), Some(1));
         let else_ = then.clone().move_next_sibling().unwrap();
         assert_eq!(else_.child_index(), Some(2));
-        assert!(else_.clone().move_next_sibling().is_none(), "no child after 2");
-
+        assert!(
+            else_.clone().move_next_sibling().is_none(),
+            "no child after 2"
+        );
 
         assert_eq!(else_.move_prev_sibling().unwrap(), then);
     }
@@ -400,22 +396,23 @@ mod tests {
         assert!(z.move_prev_sibling().is_none());
     }
 
-
     #[test]
     fn ctx_at_a_lambda_body_sees_the_parameter() {
-
         let z = unzip(examples::clamp_to_one()).move_child(0).unwrap();
         assert_eq!(z.ctx().lookup(&examples::binder(0)), Some(Ty::Num));
     }
 
     #[test]
     fn ctx_at_a_let_body_sees_the_binding_but_the_bound_expression_does_not() {
-
         let root = unzip(examples::pair_and_project());
         let p = examples::binder(0);
 
         let bound = root.clone().move_child(0).unwrap();
-        assert_eq!(bound.ctx().lookup(&p), None, "a let does not bind its own RHS");
+        assert_eq!(
+            bound.ctx().lookup(&p),
+            None,
+            "a let does not bind its own RHS"
+        );
 
         let body = root.move_child(1).unwrap();
         assert_eq!(
@@ -428,7 +425,6 @@ mod tests {
     fn ctx_at_the_root_is_empty() {
         assert_eq!(unzip(examples::let_identity()).ctx(), Ctx::empty());
     }
-
 
     fn wander(mut z: Zipper, moves: &[u8]) -> Zipper {
         for m in moves {

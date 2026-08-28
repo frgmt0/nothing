@@ -1,4 +1,3 @@
-
 use nothing_action::generate;
 use nothing_core::exp::Exp;
 use nothing_core::typing::is_well_typed;
@@ -21,7 +20,11 @@ fn holes(exp: &Exp) -> usize {
     }
 }
 
-fn free_vars(d: &Dyn, bound: &mut Vec<nothing_core::exp::Id>, out: &mut Vec<nothing_core::exp::Id>) {
+fn free_vars(
+    d: &Dyn,
+    bound: &mut Vec<nothing_core::exp::Id>,
+    out: &mut Vec<nothing_core::exp::Id>,
+) {
     match d {
         Dyn::Var(id) => {
             if !bound.contains(id) {

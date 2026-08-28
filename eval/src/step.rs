@@ -1,4 +1,3 @@
-
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 
 use crate::dynamic::{Dyn, Env, elaborate, is_value, subst};
@@ -354,14 +353,25 @@ mod tests {
                 Exp::lam(
                     x(),
                     Ty::Num,
-                    Exp::lam(y(), Ty::Num, Exp::bin_op(Op::Sub, Exp::var(x()), Exp::var(y()))),
+                    Exp::lam(
+                        y(),
+                        Ty::Num,
+                        Exp::bin_op(Op::Sub, Exp::var(x()), Exp::var(y())),
+                    ),
                 ),
                 Exp::num(10),
             ),
             Exp::num(4),
         );
-        assert_eq!(nothing_core::render::render(&e, &table), "(λx:Num. λx:Num. x - x) 10 4");
-        assert_eq!(eval(&e).num(), Some(6), "identity, not display name, decides");
+        assert_eq!(
+            nothing_core::render::render(&e, &table),
+            "(λx:Num. λx:Num. x - x) 10 4"
+        );
+        assert_eq!(
+            eval(&e).num(),
+            Some(6),
+            "identity, not display name, decides"
+        );
     }
 
     #[test]
@@ -428,11 +438,7 @@ mod tests {
     fn every_binder_in_scope_at_the_hole_is_captured() {
         let e = Exp::ap(
             Exp::ap(
-                Exp::lam(
-                    x(),
-                    Ty::Num,
-                    Exp::lam(y(), Ty::Bool, Exp::empty_hole(h(0))),
-                ),
+                Exp::lam(x(), Ty::Num, Exp::lam(y(), Ty::Bool, Exp::empty_hole(h(0)))),
                 Exp::num(5),
             ),
             Exp::bool_(true),
@@ -497,11 +503,7 @@ mod tests {
 
     #[test]
     fn a_runaway_program_runs_out_of_fuel_rather_than_hanging() {
-        let omega = Exp::lam(
-            x(),
-            Ty::Hole,
-            Exp::ap(Exp::var(x()), Exp::var(x())),
-        );
+        let omega = Exp::lam(x(), Ty::Hole, Exp::ap(Exp::var(x()), Exp::var(x())));
         let e = Exp::ap(omega.clone(), omega);
         assert!(is_well_typed(&e));
 

@@ -239,10 +239,7 @@ mod tests {
     #[test]
     fn an_argument_that_no_longer_fits_is_quarantined_not_dropped() {
         let x = Id::from_u128(1);
-        let e = Exp::ap(
-            Exp::lam(x, Ty::Num, Exp::var(x)),
-            Exp::bool_(true),
-        );
+        let e = Exp::ap(Exp::lam(x, Ty::Num, Exp::var(x)), Exp::bool_(true));
         assert!(!is_well_typed(&e));
         let out = repair(&e, &NameTable::new());
         assert!(is_well_typed(&out.exp));

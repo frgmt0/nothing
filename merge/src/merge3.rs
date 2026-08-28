@@ -135,12 +135,12 @@ fn rebase_against_moves(movers: &[Planned], riders: &mut [Planned]) {
 
 fn undo_rebases(blocked: &[bool], riders: &mut [Planned]) {
     for rider in riders.iter_mut() {
-        if let Some(index) = rider.commuted_with {
-            if blocked.get(index).copied().unwrap_or(false) {
-                rider.effective = rider.original.clone();
-                rider.phase = PHASE_PLAIN;
-                rider.commuted_with = None;
-            }
+        if let Some(index) = rider.commuted_with
+            && blocked.get(index).copied().unwrap_or(false)
+        {
+            rider.effective = rider.original.clone();
+            rider.phase = PHASE_PLAIN;
+            rider.commuted_with = None;
         }
     }
 }
@@ -196,7 +196,10 @@ pub fn merge(base: &Version, ours: &Version, theirs: &Version) -> MergeOutcome {
         if yours_blocked[j] {
             continue;
         }
-        if schedule.iter().any(|other| other.effective == item.effective) {
+        if schedule
+            .iter()
+            .any(|other| other.effective == item.effective)
+        {
             continue;
         }
         schedule.push(item.clone());

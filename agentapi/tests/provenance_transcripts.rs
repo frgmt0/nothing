@@ -58,14 +58,18 @@ fn replay(setup: &[String], model: &[String]) -> AgentSession {
     let mut session = AgentSession::new(HUMAN);
     for step in setup {
         assert!(
-            session.apply_text(step).unwrap_or_else(|e| panic!("`{step}`: {e}")),
+            session
+                .apply_text(step)
+                .unwrap_or_else(|e| panic!("`{step}`: {e}")),
             "human setup step `{step}` did not apply"
         );
     }
     session.set_author(MODEL);
     for step in model {
         assert!(
-            session.apply_text(step).unwrap_or_else(|e| panic!("`{step}`: {e}")),
+            session
+                .apply_text(step)
+                .unwrap_or_else(|e| panic!("`{step}`: {e}")),
             "model step `{step}` did not apply"
         );
     }
@@ -87,7 +91,11 @@ fn the_recorded_model_run_replays_to_the_factorial_reference_program() {
         run.get("model").and_then(Json::as_str),
         Some("claude-haiku-4-5-20251001")
     );
-    let target = run.get("target").and_then(Json::as_str).unwrap().to_string();
+    let target = run
+        .get("target")
+        .and_then(Json::as_str)
+        .unwrap()
+        .to_string();
 
     let summary = record(&records, "summary");
     assert_eq!(
@@ -96,7 +104,10 @@ fn the_recorded_model_run_replays_to_the_factorial_reference_program() {
     );
 
     let actions = model_actions(&records);
-    assert!(!actions.is_empty(), "the transcript recorded no applied actions");
+    assert!(
+        !actions.is_empty(),
+        "the transcript recorded no applied actions"
+    );
     let session = replay(&[], &actions);
     assert_eq!(session.state().render(), target);
     assert!(is_well_typed(&session.exp()));
@@ -124,7 +135,10 @@ fn every_recorded_reply_that_applied_still_applies_on_replay() {
 fn the_real_model_transcript_replayed_over_a_human_base_distinguishes_the_authors() {
     let records = transcript("mixed-authorship.jsonl");
     let setup = human_setup(&records);
-    assert!(!setup.is_empty(), "this transcript has a human-authored base");
+    assert!(
+        !setup.is_empty(),
+        "this transcript has a human-authored base"
+    );
     let model = model_actions(&records);
     assert!(!model.is_empty());
 
@@ -207,6 +221,9 @@ fn the_provenance_filter_over_the_diff_agrees_with_the_node_projection() {
     assert!(!attributed.ops.is_empty());
     assert_eq!(attributed.authors(), vec![MODEL]);
     assert!(attributed.by(HUMAN).is_empty());
-    assert_eq!(attributed.filter(&Filter::only(MODEL)).len(), attributed.ops.len());
+    assert_eq!(
+        attributed.filter(&Filter::only(MODEL)).len(),
+        attributed.ops.len()
+    );
     assert_eq!(attributed.head.render(), session.state().render());
 }

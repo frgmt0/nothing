@@ -56,10 +56,7 @@ fn action_prompt(task: &Task, session: &AgentSession) -> String {
     out.push_str(&format!("Task: {}\n\n", task.goal));
     out.push_str(&format!(
         "Current program (the cursor is between » and «):\n  {}\n\n",
-        nothing_action::cursor_render::render_with_cursor(
-            &session.state().zipper,
-            session.names()
-        )
+        nothing_action::cursor_render::render_with_cursor(&session.state().zipper, session.names())
     ));
     out.push_str(&context.to_prompt_block());
     out.push_str(
@@ -187,11 +184,11 @@ fn main() {
         .take(options.limit)
         .collect();
 
-    if let Some(parent) = options.out.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("error: cannot create {}: {e}", parent.display());
-            std::process::exit(1);
-        }
+    if let Some(parent) = options.out.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        eprintln!("error: cannot create {}: {e}", parent.display());
+        std::process::exit(1);
     }
 
     let mut lines: Vec<String> = vec![
@@ -199,7 +196,10 @@ fn main() {
             ("record", Json::str("run")),
             ("model", Json::str(claude.model.clone())),
             ("tasks", Json::Int(all.len() as i64)),
-            ("conditions", Json::str("A=action protocol, B=text baseline")),
+            (
+                "conditions",
+                Json::str("A=action protocol, B=text baseline"),
+            ),
         ])
         .to_string(),
     ];
@@ -366,7 +366,10 @@ fn main() {
                     .count())
                 .unwrap_or(0),
             if a_reached { "yes" } else { "no " },
-            b_record.get("outcome").and_then(Json::as_str).unwrap_or("call failed"),
+            b_record
+                .get("outcome")
+                .and_then(Json::as_str)
+                .unwrap_or("call failed"),
             if b_reached { "yes" } else { "no " },
         );
     }

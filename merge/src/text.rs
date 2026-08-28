@@ -72,7 +72,12 @@ fn emit(exp: &Exp, names: &NameTable, style: Style, depth: usize, out: &mut Vec<
             emit(&flat.tail, names, style, depth, out);
         }
         Exp::Lam(id, ty, body) => {
-            out.push(format!("{}λ{}:{}.", pad(style, depth), names.display(*id), ty));
+            out.push(format!(
+                "{}λ{}:{}.",
+                pad(style, depth),
+                names.display(*id),
+                ty
+            ));
             emit(body, names, style, depth + 1, out);
         }
         Exp::If(cond, then, else_) => {

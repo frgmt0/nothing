@@ -1,4 +1,3 @@
-
 use std::collections::HashSet;
 
 use nothing_core::ctx::Ctx;
@@ -11,20 +10,16 @@ use crate::zipper::{Frame, Zipper, unzip};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Action {
-
     MoveChild(usize),
     MoveParent,
     MoveNextSibling,
     MovePrevSibling,
 
-
     Delete,
-
 
     ConstructNum(i64),
     ConstructBool(bool),
     ConstructVar(Id),
-
 
     ConstructLam,
     ConstructAp,
@@ -157,7 +152,6 @@ pub fn ctx_and_expected_ty_at(zipper: &Zipper) -> (Ctx, Ty) {
             Frame::LamBody(id, ann) => {
                 let (_, out) = matched_arrow(&expected).unwrap_or((Ty::Hole, Ty::Hole));
 
-
                 ctx = ctx.extend(*id, ann.clone());
                 expected = out;
             }
@@ -184,7 +178,6 @@ pub fn ctx_and_expected_ty_at(zipper: &Zipper) -> (Ctx, Ty) {
                 }
             }
 
-
             Frame::LetBound(..) => expected = Ty::Hole,
             Frame::LetBody(id, bound) => {
                 let ty = syn(&ctx, bound).unwrap_or(Ty::Hole);
@@ -202,7 +195,6 @@ pub fn ctx_and_expected_ty_at(zipper: &Zipper) -> (Ctx, Ty) {
                     Side::R => Ty::Prod(Box::new(Ty::Hole), Box::new(expected)),
                 };
             }
-
 
             Frame::NonEmptyHoleBody(_) => expected = Ty::Hole,
         }
@@ -223,12 +215,10 @@ pub fn apply_with(
         Action::MoveNextSibling => zipper.move_next_sibling(),
         Action::MovePrevSibling => zipper.move_prev_sibling(),
 
-
         Action::Delete => {
             let hole = fresh.hole();
             Some(zipper.replace_focus(Exp::empty_hole(hole)))
         }
-
 
         Action::ConstructNum(n) => construct_leaf(zipper, Exp::num(n), fresh),
         Action::ConstructBool(b) => construct_leaf(zipper, Exp::bool_(b), fresh),
@@ -240,11 +230,11 @@ pub fn apply_with(
             }
         }
 
-
         Action::ConstructLam => {
             let id = fresh.id();
-            let built =
-                construct_wrapping(zipper, Ty::Hole, fresh, |body, _| Exp::lam(id, Ty::Hole, body));
+            let built = construct_wrapping(zipper, Ty::Hole, fresh, |body, _| {
+                Exp::lam(id, Ty::Hole, body)
+            });
             name_new_binder(id, &built, names);
             built
         }
@@ -282,23 +272,19 @@ pub fn apply_with(
             |body, _| Exp::proj(side, body),
         ),
 
-
         Action::ConstructNonEmptyHole => {
             construct_wrapping(zipper, Ty::Hole, fresh, |inner, fresh| {
                 Exp::non_empty_hole(fresh.hole(), inner)
             })
         }
 
-
         Action::SetAnn(ann) => set_ann(zipper, ann),
         Action::SetBinderId(id) => set_binder_id(zipper, id),
-
 
         Action::Rename(id, name) => {
             names.rename(id, name);
             Some(zipper)
         }
-
 
         Action::Finish => finish(zipper),
     }
@@ -313,9 +299,7 @@ fn name_new_binder(id: Id, built: &Option<Zipper>, names: &mut NameTable) {
 
 fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
     fn first(children: &[&Exp]) -> Option<usize> {
-        children
-            .iter()
-            .position(|c| matches!(c, Exp::EmptyHole(_)))
+        children.iter().position(|c| matches!(c, Exp::EmptyHole(_)))
     }
     match exp {
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => None,
@@ -348,13 +332,7 @@ fn construct_wrapping(
     place(zipper, form, &ctx, &expected, fresh)
 }
 
-fn place(
-    zipper: Zipper,
-    form: Exp,
-    ctx: &Ctx,
-    expected: &Ty,
-    fresh: &mut Fresh,
-) -> Option<Zipper> {
+fn place(zipper: Zipper, form: Exp, ctx: &Ctx, expected: &Ty, fresh: &mut Fresh) -> Option<Zipper> {
     let target = first_empty_hole_child(&form);
 
     if ana(ctx, &form, expected) {
@@ -369,8 +347,6 @@ fn place(
     if is_well_typed(&candidate.to_exp()) {
         descend_into_form(candidate, target, true)
     } else {
-
-
         None
     }
 }
@@ -538,10 +514,8 @@ mod tests {
         ]
     }
 
-
     #[test]
     fn movement_actions_relocate_the_cursor() {
-
         let e = examples::increment_applied();
         let z = unzip(e.clone());
 
@@ -575,7 +549,6 @@ mod tests {
             assert!(apply(z.clone(), Action::MoveChild(n)).is_none());
         }
     }
-
 
     #[test]
     fn deleting_any_subexpression_of_any_example_stays_well_typed() {
@@ -614,7 +587,6 @@ mod tests {
 
     #[test]
     fn delete_uses_a_hole_id_not_already_in_the_program() {
-
         let z = unzip(examples::add_with_empty_hole())
             .move_child(0)
             .unwrap();
@@ -627,7 +599,6 @@ mod tests {
 
     #[test]
     fn repeated_deletes_in_a_session_never_reuse_a_hole_id() {
-
         let mut state = EditState::new(Exp::pair(Exp::num(1), Exp::num(2)));
         assert!(state.apply_mut(Action::MoveChild(0)));
         assert!(state.apply_mut(Action::Delete));
@@ -645,8 +616,6 @@ mod tests {
 
     #[test]
     fn delete_inside_a_non_empty_hole_keeps_the_hole() {
-
-
         let z = unzip(examples::add_with_non_empty_hole())
             .move_child(1)
             .unwrap()
@@ -658,7 +627,9 @@ mod tests {
         assert!(is_well_typed(&program));
         match program {
             Exp::BinOp(Op::Add, _, rhs) => {
-                assert!(matches!(*rhs, Exp::NonEmptyHole(_, ref inner) if matches!(**inner, Exp::EmptyHole(_))));
+                assert!(
+                    matches!(*rhs, Exp::NonEmptyHole(_, ref inner) if matches!(**inner, Exp::EmptyHole(_)))
+                );
             }
             other => panic!("expected `1 + ⦇⦈⦈`, got {other:?}"),
         }
@@ -666,8 +637,6 @@ mod tests {
 
     #[test]
     fn delete_weakens_a_binding_to_hole_without_breaking_its_uses() {
-
-
         let z = unzip(examples::pair_and_project()).move_child(0).unwrap();
         let program = apply(z, Action::Delete).unwrap().to_exp();
         assert!(is_well_typed(&program));
@@ -679,7 +648,6 @@ mod tests {
             other => panic!("expected a let, got {other:?}"),
         }
     }
-
 
     fn arrow(a: Ty, b: Ty) -> Ty {
         Ty::Arrow(Box::new(a), Box::new(b))
@@ -700,9 +668,11 @@ mod tests {
 
     #[test]
     fn expected_ty_at_a_binop_operand_is_num() {
-
         let root = unzip(examples::add_with_empty_hole());
-        assert_eq!(expected_ty_at(&root.clone().move_child(0).unwrap()), Ty::Num);
+        assert_eq!(
+            expected_ty_at(&root.clone().move_child(0).unwrap()),
+            Ty::Num
+        );
         assert_eq!(expected_ty_at(&root.move_child(1).unwrap()), Ty::Num);
     }
 
@@ -716,22 +686,24 @@ mod tests {
 
     #[test]
     fn expected_ty_at_an_if_branch_comes_from_the_other_branch() {
-
-
         let e = Exp::if_(Exp::bool_(true), hole(0), Exp::num(2));
         let root = unzip(e);
-        assert_eq!(expected_ty_at(&root.clone().move_child(1).unwrap()), Ty::Num);
+        assert_eq!(
+            expected_ty_at(&root.clone().move_child(1).unwrap()),
+            Ty::Num
+        );
         assert_eq!(expected_ty_at(&root.move_child(2).unwrap()), Ty::Hole);
     }
 
     #[test]
     fn expected_ty_at_an_application_argument_is_the_functions_input() {
-
         let x = Id::from_u128(0);
         let e = Exp::ap(Exp::lam(x, Ty::Num, Exp::var(x)), hole(0));
         let root = unzip(e);
-        assert_eq!(expected_ty_at(&root.clone().move_child(1).unwrap()), Ty::Num);
-
+        assert_eq!(
+            expected_ty_at(&root.clone().move_child(1).unwrap()),
+            Ty::Num
+        );
 
         assert_eq!(
             expected_ty_at(&root.move_child(0).unwrap()),
@@ -741,8 +713,6 @@ mod tests {
 
     #[test]
     fn expected_ty_is_pushed_through_an_application_into_a_lambda_body() {
-
-
         let f = Id::from_u128(0);
         let x = Id::from_u128(1);
         let e = Exp::ap(
@@ -750,11 +720,7 @@ mod tests {
             Exp::lam(x, Ty::Hole, hole(0)),
         );
         assert!(is_well_typed(&e));
-        let body = unzip(e)
-            .move_child(1)
-            .unwrap()
-            .move_child(0)
-            .unwrap();
+        let body = unzip(e).move_child(1).unwrap().move_child(0).unwrap();
         assert_eq!(expected_ty_at(&body), Ty::Bool);
 
         assert_eq!(ctx_at(&body).lookup(&x), Some(Ty::Hole));
@@ -762,27 +728,20 @@ mod tests {
 
     #[test]
     fn expected_ty_is_pushed_into_a_pair_component() {
-
         let p = Id::from_u128(0);
         let e = Exp::ap(
             Exp::lam(p, prod(Ty::Num, Ty::Bool), Exp::var(p)),
             Exp::pair(hole(0), hole(1)),
         );
         let arg = unzip(e).move_child(1).unwrap();
-        assert_eq!(
-            expected_ty_at(&arg.clone().move_child(0).unwrap()),
-            Ty::Num
-        );
+        assert_eq!(expected_ty_at(&arg.clone().move_child(0).unwrap()), Ty::Num);
         assert_eq!(expected_ty_at(&arg.move_child(1).unwrap()), Ty::Bool);
     }
 
     #[test]
     fn expected_ty_under_a_projection_is_a_product() {
-
-
         let z = unzip(Exp::proj(Side::L, hole(0))).move_child(0).unwrap();
         assert_eq!(expected_ty_at(&z), prod(Ty::Hole, Ty::Hole));
-
 
         let z = unzip(Exp::bin_op(
             Op::Add,
@@ -798,8 +757,6 @@ mod tests {
 
     #[test]
     fn nothing_is_expected_of_a_holes_contents() {
-
-
         let z = unzip(examples::add_with_non_empty_hole())
             .move_child(1)
             .unwrap()
@@ -829,7 +786,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn construct_num_writes_a_literal_and_keeps_the_cursor_on_it() {
         let state = EditState::empty().apply(Action::ConstructNum(7)).unwrap();
@@ -850,7 +806,6 @@ mod tests {
 
     #[test]
     fn construct_var_writes_an_in_scope_reference_and_keeps_the_cursor_on_it() {
-
         let x = Id::from_u128(0);
         let z = unzip(Exp::lam(x, Ty::Num, hole(0))).move_child(0).unwrap();
         let after = apply(z, Action::ConstructVar(x)).unwrap();
@@ -866,7 +821,6 @@ mod tests {
         let z = unzip(hole(0));
         assert!(apply(z, Action::ConstructVar(Id::from_u128(3))).is_none());
     }
-
 
     #[test]
     fn construct_lam_builds_an_unannotated_binder_with_the_cursor_in_the_body() {
@@ -887,14 +841,10 @@ mod tests {
     fn construct_ap_on_a_hole_leaves_the_cursor_on_the_function() {
         let state = EditState::empty().apply(Action::ConstructAp).unwrap();
         match state.exp() {
-            Exp::Ap(fun, arg) => {
-
-
-                match (*fun, *arg) {
-                    (Exp::EmptyHole(a), Exp::EmptyHole(b)) => assert_ne!(a, b),
-                    other => panic!("expected two empty holes, got {other:?}"),
-                }
-            }
+            Exp::Ap(fun, arg) => match (*fun, *arg) {
+                (Exp::EmptyHole(a), Exp::EmptyHole(b)) => assert_ne!(a, b),
+                other => panic!("expected two empty holes, got {other:?}"),
+            },
             other => panic!("expected an application, got {other:?}"),
         }
 
@@ -978,7 +928,6 @@ mod tests {
 
     #[test]
     fn a_binder_constructed_twice_gets_two_distinct_ids() {
-
         let mut state = EditState::empty();
         assert!(state.apply_mut(Action::ConstructLet));
         assert!(state.apply_mut(Action::MoveNextSibling));
@@ -992,12 +941,10 @@ mod tests {
         }
     }
 
-
     #[test]
     fn construct_binop_wraps_focus() {
         let z = unzip(Exp::num(1));
         let after = apply(z, Action::ConstructBinOp(Op::Add)).unwrap();
-
 
         match after.to_exp() {
             Exp::BinOp(Op::Add, l, r) => {
@@ -1014,7 +961,6 @@ mod tests {
 
     #[test]
     fn construct_ap_wraps_focus() {
-
         let x = Id::from_u128(0);
         let f = Exp::lam(x, Ty::Num, Exp::var(x));
         let after = apply(unzip(f.clone()), Action::ConstructAp).unwrap();
@@ -1033,8 +979,6 @@ mod tests {
 
     #[test]
     fn wrapping_does_not_drag_the_cursor_back_into_the_wrapped_expression() {
-
-
         let f = Exp::ap(hole(0), hole(1));
         let after = apply(unzip(f.clone()), Action::ConstructBinOp(Op::Add)).unwrap();
         assert_eq!(after.child_index(), Some(1));
@@ -1046,7 +990,6 @@ mod tests {
 
     #[test]
     fn construct_if_wraps_the_focus_as_the_scrutinee() {
-
         let cond = Exp::bin_op(Op::Lt, Exp::num(0), Exp::num(1));
         let after = apply(unzip(cond.clone()), Action::ConstructIf).unwrap();
         match after.to_exp() {
@@ -1063,8 +1006,6 @@ mod tests {
 
     #[test]
     fn construct_lam_wraps_the_focus_as_the_body() {
-
-
         let after = apply(unzip(Exp::num(1)), Action::ConstructLam).unwrap();
         match after.to_exp() {
             Exp::Lam(_, ann, body) => {
@@ -1079,7 +1020,6 @@ mod tests {
 
     #[test]
     fn construct_proj_wraps_the_focus_as_the_operand() {
-
         let p = Id::from_u128(0);
         let z = unzip(Exp::let_(
             p,
@@ -1150,7 +1090,6 @@ mod tests {
         assert_eq!(state.zipper.focus, Exp::num(2));
     }
 
-
     #[test]
     fn constructing_one_plus_true_quarantines_the_true() {
         let mut state = EditState::empty();
@@ -1174,14 +1113,11 @@ mod tests {
             other => panic!("expected `1 + ⦇true⦈`, got {other:?}"),
         }
 
-
         assert!(matches!(state.zipper.focus, Exp::NonEmptyHole(..)));
     }
 
     #[test]
     fn construct_binop_on_a_bool_focus_quarantines_the_bool() {
-
-
         let after = apply(unzip(Exp::bool_(true)), Action::ConstructBinOp(Op::Add)).unwrap();
         let program = after.to_exp();
         assert!(is_well_typed(&program), "{program:?}");
@@ -1211,8 +1147,6 @@ mod tests {
 
     #[test]
     fn a_quarantined_form_is_still_entered_by_the_cursor() {
-
-
         let z = unzip(examples::add_with_empty_hole())
             .move_child(1)
             .unwrap();
@@ -1232,8 +1166,6 @@ mod tests {
 
     #[test]
     fn a_construction_that_fits_is_not_quarantined() {
-
-
         let z = unzip(examples::add_with_empty_hole())
             .move_child(1)
             .unwrap();
@@ -1246,8 +1178,6 @@ mod tests {
 
     #[test]
     fn quarantine_also_catches_a_branch_that_would_not_join() {
-
-
         let e = Exp::if_(Exp::bool_(true), hole(0), Exp::bool_(true));
         assert!(is_well_typed(&e));
         let z = unzip(e).move_child(1).unwrap();
@@ -1258,7 +1188,6 @@ mod tests {
             other => panic!("expected a conditional, got {other:?}"),
         }
     }
-
 
     fn contains_a_hole(e: &Exp) -> bool {
         match e {
@@ -1274,10 +1203,8 @@ mod tests {
 
     #[test]
     fn a_non_empty_hole_edited_until_it_fits_can_be_finished() {
-
         let mut state = EditState::new(examples::add_with_non_empty_hole());
         assert!(contains_a_hole(&state.exp()));
-
 
         assert!(state.apply_mut(Action::MoveChild(1)));
         assert!(state.apply_mut(Action::MoveChild(0)));
@@ -1285,7 +1212,6 @@ mod tests {
         assert!(state.apply_mut(Action::ConstructNum(2)));
         assert!(state.apply_mut(Action::MoveParent));
         assert!(matches!(state.zipper.focus, Exp::NonEmptyHole(..)));
-
 
         assert!(state.apply_mut(Action::Finish));
 
@@ -1298,7 +1224,6 @@ mod tests {
 
     #[test]
     fn finish_refuses_while_the_contents_still_do_not_fit() {
-
         let state = EditState::new(examples::add_with_non_empty_hole());
         let at_hole = state.apply(Action::MoveChild(1)).unwrap();
         assert!(matches!(at_hole.zipper.focus, Exp::NonEmptyHole(..)));
@@ -1326,8 +1251,6 @@ mod tests {
 
     #[test]
     fn finish_undoes_an_automatic_quarantine() {
-
-
         let mut state = EditState::empty();
         assert!(state.apply_mut(Action::ConstructNum(1)));
         assert!(state.apply_mut(Action::ConstructBinOp(Op::Add)));
@@ -1338,7 +1261,6 @@ mod tests {
         assert!(state.apply_mut(Action::Finish));
         assert_eq!(state.exp(), Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)));
     }
-
 
     #[test]
     fn edit_state_leaves_itself_untouched_when_an_action_does_not_apply() {
@@ -1375,12 +1297,8 @@ mod tests {
             assert!(!taken.contains(bits), "{bits:#x} is already in the program");
         }
         for (i, bits) in issued.iter().enumerate() {
-            assert!(
-                !issued[..i].contains(bits),
-                "{bits:#x} was issued twice"
-            );
+            assert!(!issued[..i].contains(bits), "{bits:#x} was issued twice");
         }
-
 
         assert_eq!(
             Fresh::from_program(&e).id(),
@@ -1388,7 +1306,6 @@ mod tests {
             "a session's fresh ids must be reproducible, or the log cannot replay"
         );
     }
-
 
     fn every_construction() -> Vec<Action> {
         vec![
@@ -1413,9 +1330,7 @@ mod tests {
             return true;
         }
         (0..arity(haystack)).any(|i| {
-            let child = unzip(haystack.clone())
-                .move_child(i)
-                .expect("i < arity");
+            let child = unzip(haystack.clone()).move_child(i).expect("i < arity");
             contains_subexpression(&child.focus, needle)
         })
     }

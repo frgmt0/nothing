@@ -1,4 +1,3 @@
-
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
 use nothing_core::ty::Ty;
 
@@ -84,14 +83,8 @@ impl Gen {
             0 => Ty::Num,
             1 => Ty::Bool,
             2 => Ty::Hole,
-            3 => Ty::Arrow(
-                Box::new(self.ty(depth - 1)),
-                Box::new(self.ty(depth - 1)),
-            ),
-            _ => Ty::Prod(
-                Box::new(self.ty(depth - 1)),
-                Box::new(self.ty(depth - 1)),
-            ),
+            3 => Ty::Arrow(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
+            _ => Ty::Prod(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
         }
     }
 
@@ -101,8 +94,6 @@ impl Gen {
     }
 
     pub fn exp_syn(&mut self, ctx: &[(Id, Ty)], ty: &Ty, depth: u32) -> Exp {
-
-
         let vars: Vec<Id> = ctx
             .iter()
             .filter(|(_, t)| t == ty)
@@ -111,8 +102,6 @@ impl Gen {
 
         let mut cands = vec![Form::Canonical];
         if !vars.is_empty() {
-
-
             cands.push(Form::Var);
             cands.push(Form::Var);
         }
@@ -134,8 +123,6 @@ impl Gen {
         let d = depth.saturating_sub(1);
 
         match form {
-
-
             Form::Canonical => match ty {
                 Ty::Num => Exp::num(self.rng.small_int()),
                 Ty::Bool => Exp::bool_(self.rng.boolean()),
@@ -154,9 +141,7 @@ impl Gen {
                 }
             },
 
-
             Form::Var => Exp::var(*self.rng.pick(&vars)),
-
 
             Form::Let => {
                 let sigma = self.ty(1);
@@ -168,14 +153,12 @@ impl Gen {
                 Exp::let_(id, bound, body)
             }
 
-
             Form::If => {
                 let cond = self.exp_ana(ctx, &Ty::Bool, d);
                 let then = self.exp_syn(ctx, ty, d);
                 let else_ = self.exp_syn(ctx, ty, d);
                 Exp::if_(cond, then, else_)
             }
-
 
             Form::Ap => {
                 let sigma = self.ty(1);
@@ -184,7 +167,6 @@ impl Gen {
                 let arg = self.exp_ana(ctx, &sigma, d);
                 Exp::ap(fun, arg)
             }
-
 
             Form::Proj => {
                 let sigma = self.ty(1);
@@ -197,7 +179,6 @@ impl Gen {
                 Exp::proj(side, inner)
             }
 
-
             Form::BinOp => {
                 let op = if *ty == Ty::Num {
                     *self.rng.pick(&[Op::Add, Op::Sub, Op::Mul])
@@ -208,7 +189,6 @@ impl Gen {
                 let rhs = self.exp_ana(ctx, &Ty::Num, d);
                 Exp::bin_op(op, lhs, rhs)
             }
-
 
             Form::NonEmptyHole => {
                 let sigma = self.ty(1);
@@ -301,8 +281,14 @@ mod tests {
         let sizes: Vec<usize> = (0..500u64).map(|s| size(&well_typed_exp(s))).collect();
         let max = *sizes.iter().max().unwrap();
         let mean = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
-        assert!(max >= 10, "generator never produced a program of ten nodes (max {max})");
-        assert!(mean >= 2.0, "generated programs are trivially small (mean {mean})");
+        assert!(
+            max >= 10,
+            "generator never produced a program of ten nodes (max {max})"
+        );
+        assert!(
+            mean >= 2.0,
+            "generated programs are trivially small (mean {mean})"
+        );
     }
 
     #[test]

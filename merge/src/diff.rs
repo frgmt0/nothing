@@ -37,9 +37,7 @@ pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
             o1 == o2 && structurally_equal(l1, l2) && structurally_equal(r1, r2)
         }
         (Exp::If(c1, t1, e1), Exp::If(c2, t2, e2)) => {
-            structurally_equal(c1, c2)
-                && structurally_equal(t1, t2)
-                && structurally_equal(e1, e2)
+            structurally_equal(c1, c2) && structurally_equal(t1, t2) && structurally_equal(e1, e2)
         }
         (Exp::Let(x, bound1, body1), Exp::Let(y, bound2, body2)) => {
             x == y && structurally_equal(bound1, bound2) && structurally_equal(body1, body2)
@@ -152,27 +150,27 @@ fn diff_children(a: &Exp, b: &Exp, path: &[usize], count: usize, out: &mut Vec<O
 
 fn diff_shapes(a: &Exp, b: &Exp, path: &[usize], out: &mut Vec<Operation>) {
     for n in 0..arity(b) {
-        if let Some(c) = child(b, n) {
-            if structurally_equal(c, a) {
-                out.push(Operation::Insert {
-                    path: path.to_vec(),
-                    slot: n,
-                    node: b.clone(),
-                });
-                return;
-            }
+        if let Some(c) = child(b, n)
+            && structurally_equal(c, a)
+        {
+            out.push(Operation::Insert {
+                path: path.to_vec(),
+                slot: n,
+                node: b.clone(),
+            });
+            return;
         }
     }
     for n in 0..arity(a) {
-        if let Some(c) = child(a, n) {
-            if structurally_equal(c, b) {
-                out.push(Operation::Delete {
-                    path: path.to_vec(),
-                    slot: n,
-                    node: a.clone(),
-                });
-                return;
-            }
+        if let Some(c) = child(a, n)
+            && structurally_equal(c, b)
+        {
+            out.push(Operation::Delete {
+                path: path.to_vec(),
+                slot: n,
+                node: a.clone(),
+            });
+            return;
         }
     }
     out.push(replace(path, a, b));
@@ -192,22 +190,20 @@ fn diff_chain(a: &Exp, b: &Exp, path: &[usize], out: &mut Vec<Operation>) {
     let ids_a: Vec<Id> = chain_a.bindings.iter().map(|x| x.id).collect();
     let ids_b: Vec<Id> = chain_b.bindings.iter().map(|x| x.id).collect();
 
-    let reordered = ids_a.len() == ids_b.len()
-        && ids_a != ids_b
-        && {
-            let mut sorted_a = ids_a.clone();
-            let mut sorted_b = ids_b.clone();
-            sorted_a.sort();
-            sorted_b.sort();
-            sorted_a == sorted_b
-        };
+    let reordered = ids_a.len() == ids_b.len() && ids_a != ids_b && {
+        let mut sorted_a = ids_a.clone();
+        let mut sorted_b = ids_b.clone();
+        sorted_a.sort();
+        sorted_b.sort();
+        sorted_a == sorted_b
+    };
 
     if !reordered {
-        if let (Exp::Let(id_a, ..), Exp::Let(id_b, ..)) = (a, b) {
-            if id_a != id_b {
-                out.push(replace(path, a, b));
-                return;
-            }
+        if let (Exp::Let(id_a, ..), Exp::Let(id_b, ..)) = (a, b)
+            && id_a != id_b
+        {
+            out.push(replace(path, a, b));
+            return;
         }
         diff_children(a, b, path, 2, out);
         return;

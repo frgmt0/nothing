@@ -1,4 +1,3 @@
-
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -130,7 +129,9 @@ pub fn scope_of(blocked: &Blocked, names: &NameTable) -> Option<String> {
     Some(
         known
             .iter()
-            .map(|(id, value)| format!("{} = {}", names.display(*id), dynamic::render(value, names)))
+            .map(|(id, value)| {
+                format!("{} = {}", names.display(*id), dynamic::render(value, names))
+            })
             .collect::<Vec<_>>()
             .join(", "),
     )

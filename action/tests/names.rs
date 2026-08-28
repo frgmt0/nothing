@@ -1,4 +1,3 @@
-
 use nothing_action::act::{Action, EditState};
 use nothing_action::log::{ActionLog, AuthorId, EditSession};
 use nothing_core::exp::{Exp, Id, Op};
@@ -106,7 +105,10 @@ fn a_rename_never_fails_whatever_the_name() {
     let (mut session, id) = session_with_a_binder_used_forty_times();
     let tree = session.exp();
 
-    for (i, name) in ["total", "x0", "", "total", "items"].into_iter().enumerate() {
+    for (i, name) in ["total", "x0", "", "total", "items"]
+        .into_iter()
+        .enumerate()
+    {
         assert!(
             session.apply(
                 Action::Rename(id, name.to_string()),
@@ -129,7 +131,11 @@ fn undo_walks_a_rename_back_and_redo_replays_it() {
     let after = session.state().render();
 
     assert!(session.undo());
-    assert_eq!(session.state().render(), before, "undo restores the old name");
+    assert_eq!(
+        session.state().render(),
+        before,
+        "undo restores the old name"
+    );
 
     assert!(session.redo());
     assert_eq!(session.state().render(), after, "and redo writes it again");
@@ -255,7 +261,10 @@ fn two_overlays_render_one_ast_under_two_vocabularies_and_both_round_trip() {
     let their_text = render(&program, &theirs);
 
     assert_eq!(my_text, "λf:Num -> Num. λxs:Num. f (xs + 1)");
-    assert_eq!(their_text, "λapply:Num -> Num. λitems:Num. apply (items + 1)");
+    assert_eq!(
+        their_text,
+        "λapply:Num -> Num. λitems:Num. apply (items + 1)"
+    );
     assert_ne!(my_text, their_text, "one AST, two vocabularies");
 
     assert_eq!(

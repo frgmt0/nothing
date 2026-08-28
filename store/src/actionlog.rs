@@ -2,8 +2,8 @@ use nothing_action::act::Action;
 use nothing_action::log::{ActionLog, AuthorId};
 
 use crate::codec::{
-    decode_op, decode_side, decode_ty, encode_op, encode_side, encode_ty, read_bool, read_id,
-    read_i64, read_string, read_u64, read_u8, read_varint, write_bool, write_i64, write_id,
+    decode_op, decode_side, decode_ty, encode_op, encode_side, encode_ty, read_bool, read_i64,
+    read_id, read_string, read_u8, read_u64, read_varint, write_bool, write_i64, write_id,
     write_string, write_u64, write_varint,
 };
 use crate::error::DecodeError;
@@ -153,7 +153,11 @@ mod tests {
     fn a_log_round_trips() {
         let mut log = ActionLog::new();
         log.append(Action::ConstructNum(5), 1_000, AuthorId::new(1));
-        log.append(Action::Rename(Id::from_u128(9), "items".to_string()), 2_000, AuthorId::new(2));
+        log.append(
+            Action::Rename(Id::from_u128(9), "items".to_string()),
+            2_000,
+            AuthorId::new(2),
+        );
         log.append(Action::ConstructBinOp(Op::Add), 3_000, AuthorId::new(3));
 
         let mut buf = Vec::new();

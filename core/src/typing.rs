@@ -1,4 +1,3 @@
-
 use crate::ctx::Ctx;
 use crate::exp::{Exp, Op, Side};
 use crate::ty::{Ty, is_consistent, matched_arrow, matched_prod};
@@ -35,12 +34,10 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
     match exp {
         Exp::Var(id) => ctx.lookup(id),
 
-
         Exp::Lam(id, ann, body) => {
             let body_ty = syn(&ctx.extend(*id, ann.clone()), body)?;
             Some(Ty::Arrow(Box::new(ann.clone()), Box::new(body_ty)))
         }
-
 
         Exp::Ap(fun, arg) => {
             let fun_ty = syn(ctx, fun)?;
@@ -63,7 +60,6 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
                 None
             }
         }
-
 
         Exp::If(cond, then, else_) => {
             if !ana(ctx, cond, &Ty::Bool) {
@@ -97,8 +93,6 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
         Exp::EmptyHole(_) => Some(Ty::Hole),
 
         Exp::NonEmptyHole(_, inner) => {
-
-
             syn(ctx, inner)?;
             Some(Ty::Hole)
         }
@@ -107,8 +101,6 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
 
 pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
     match exp {
-
-
         Exp::Lam(id, ann, body) => match matched_arrow(ty) {
             Some((in_ty, out_ty)) => {
                 is_consistent(ann, &in_ty) && ana(&ctx.extend(*id, ann.clone()), body, &out_ty)
@@ -116,23 +108,19 @@ pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
             None => false,
         },
 
-
         Exp::If(cond, then, else_) => {
             ana(ctx, cond, &Ty::Bool) && ana(ctx, then, ty) && ana(ctx, else_, ty)
         }
-
 
         Exp::Let(id, bound, body) => match syn(ctx, bound) {
             Some(bound_ty) => ana(&ctx.extend(*id, bound_ty), body, ty),
             None => false,
         },
 
-
         Exp::Pair(fst, snd) => match matched_prod(ty) {
             Some((l, r)) => ana(ctx, fst, &l) && ana(ctx, snd, &r),
             None => false,
         },
-
 
         _ => match syn(ctx, exp) {
             Some(syn_ty) => is_consistent(&syn_ty, ty),
@@ -166,7 +154,6 @@ mod tests {
         HoleId::from_u128(n)
     }
 
-
     #[test]
     fn syn_var() {
         let ctx = Ctx::empty().extend(x(), Ty::Bool);
@@ -177,10 +164,8 @@ mod tests {
 
     #[test]
     fn syn_lam_via_annotation() {
-
         let e = Exp::lam(x(), Ty::Num, Exp::var(x()));
         assert_eq!(syn(&Ctx::empty(), &e), Some(arrow(Ty::Num, Ty::Num)));
-
 
         let e = Exp::lam(x(), Ty::Hole, Exp::var(x()));
         assert_eq!(syn(&Ctx::empty(), &e), Some(arrow(Ty::Hole, Ty::Hole)));
@@ -188,21 +173,17 @@ mod tests {
 
     #[test]
     fn syn_ap() {
-
         let f = Exp::lam(x(), Ty::Num, Exp::var(x()));
         let e = Exp::ap(f, Exp::num(1));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Num));
-
 
         let ctx = Ctx::empty().extend(x(), Ty::Hole);
         let e = Exp::ap(Exp::var(x()), Exp::num(1));
         assert_eq!(syn(&ctx, &e), Some(Ty::Hole));
 
-
         let f = Exp::lam(x(), Ty::Num, Exp::var(x()));
         let e = Exp::ap(f, Exp::bool_(true));
         assert_eq!(syn(&Ctx::empty(), &e), None);
-
 
         let e = Exp::ap(Exp::num(1), Exp::num(2));
         assert_eq!(syn(&Ctx::empty(), &e), None);
@@ -220,18 +201,14 @@ mod tests {
 
     #[test]
     fn syn_bin_op() {
-
         let e = Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Num));
-
 
         let e = Exp::bin_op(Op::Lt, Exp::num(1), Exp::num(2));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Bool));
 
-
         let e = Exp::bin_op(Op::Mul, Exp::num(1), Exp::empty_hole(h(0)));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Num));
-
 
         let e = Exp::bin_op(Op::Sub, Exp::num(1), Exp::bool_(true));
         assert_eq!(syn(&Ctx::empty(), &e), None);
@@ -239,7 +216,6 @@ mod tests {
 
     #[test]
     fn syn_let() {
-
         let e = Exp::let_(
             x(),
             Exp::num(1),
@@ -247,10 +223,8 @@ mod tests {
         );
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Num));
 
-
         let e = Exp::let_(x(), Exp::bool_(true), Exp::var(x()));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Bool));
-
 
         assert_eq!(syn(&Ctx::empty(), &Exp::var(x())), None);
     }
@@ -270,31 +244,25 @@ mod tests {
         );
         assert_eq!(syn(&Ctx::empty(), &Exp::proj(Side::R, p)), Some(Ty::Bool));
 
-
         let ctx = Ctx::empty().extend(x(), Ty::Hole);
         assert_eq!(
             syn(&ctx, &Exp::proj(Side::R, Exp::var(x()))),
             Some(Ty::Hole)
         );
 
-
         assert_eq!(syn(&Ctx::empty(), &Exp::proj(Side::L, Exp::num(1))), None);
     }
 
     #[test]
     fn syn_if() {
-
         let e = Exp::if_(Exp::bool_(true), Exp::num(1), Exp::num(2));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Num));
-
 
         let e = Exp::if_(Exp::bool_(true), Exp::empty_hole(h(0)), Exp::num(2));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Num));
 
-
         let e = Exp::if_(Exp::bool_(true), Exp::num(1), Exp::bool_(true));
         assert_eq!(syn(&Ctx::empty(), &e), None);
-
 
         let e = Exp::if_(Exp::num(0), Exp::num(1), Exp::num(2));
         assert_eq!(syn(&Ctx::empty(), &e), None);
@@ -307,21 +275,16 @@ mod tests {
 
     #[test]
     fn syn_non_empty_hole() {
-
-
         let e = Exp::non_empty_hole(h(1), Exp::bool_(true));
         assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Hole));
 
-
         let e = Exp::non_empty_hole(h(1), Exp::var(x()));
         assert_eq!(syn(&Ctx::empty(), &e), None);
-
 
         let ctx = Ctx::empty().extend(x(), Ty::Num);
         let e = Exp::non_empty_hole(h(1), Exp::var(x()));
         assert_eq!(syn(&ctx, &e), Some(Ty::Hole));
     }
-
 
     #[test]
     fn ana_lam_against_arrow_bool_and_hole() {
@@ -345,20 +308,16 @@ mod tests {
 
     #[test]
     fn ana_lam_annotation_must_be_consistent_with_input() {
-
         let lam = Exp::lam(x(), Ty::Bool, Exp::num(1));
         assert!(!ana(&Ctx::empty(), &lam, &arrow(Ty::Num, Ty::Num)));
 
-
         assert!(ana(&Ctx::empty(), &lam, &arrow(Ty::Bool, Ty::Num)));
-
 
         assert!(ana(&Ctx::empty(), &lam, &arrow(Ty::Hole, Ty::Num)));
     }
 
     #[test]
     fn ana_lam_body_is_checked_against_the_output_side() {
-
         let lam = Exp::lam(x(), Ty::Num, Exp::var(x()));
         assert!(!ana(&Ctx::empty(), &lam, &arrow(Ty::Num, Ty::Bool)));
     }
@@ -372,14 +331,12 @@ mod tests {
         assert!(ana(&ctx, &e, &Ty::Hole));
         assert!(!ana(&ctx, &e, &Ty::Bool));
 
-
         let e = Exp::if_(
             Exp::bool_(true),
             Exp::lam(x(), Ty::Hole, Exp::var(x())),
             Exp::lam(x(), Ty::Num, Exp::var(x())),
         );
         assert!(ana(&ctx, &e, &arrow(Ty::Num, Ty::Num)));
-
 
         let e = Exp::if_(Exp::num(0), Exp::num(1), Exp::num(2));
         assert!(!ana(&ctx, &e, &Ty::Num));
@@ -428,7 +385,6 @@ mod tests {
         assert!(!ana(&ctx, &e, &Ty::Bool));
     }
 
-
     #[test]
     fn join_prefers_the_more_precise_type() {
         assert_eq!(join(&Ty::Hole, &Ty::Num), Some(Ty::Num));
@@ -444,7 +400,6 @@ mod tests {
         );
         assert_eq!(join(&Ty::Num, &Ty::Bool), None);
     }
-
 
     #[test]
     fn is_well_typed_on_a_program_with_both_hole_kinds() {
@@ -467,7 +422,6 @@ mod tests {
 
     #[test]
     fn is_well_typed_rejects_a_program_that_does_not_synthesise() {
-
         assert!(!is_well_typed(&Exp::var(x())));
 
         assert!(!is_well_typed(&Exp::bin_op(
@@ -479,8 +433,6 @@ mod tests {
 
     #[test]
     fn is_well_typed_runs_in_the_empty_context() {
-
-
         let body = Exp::var(x());
         assert!(!is_well_typed(&body));
         assert!(is_well_typed(&Exp::let_(x(), Exp::num(1), body)));

@@ -148,12 +148,7 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
                 let author = author_of(session, params);
                 let applied = session.apply_as(action.clone(), author);
                 if applied {
-                    ok(
-                        id,
-                        true,
-                        session,
-                        vec![("action", action_json(&action))],
-                    )
+                    ok(id, true, session, vec![("action", action_json(&action))])
                 } else {
                     Json::Obj(vec![
                         ("id".to_string(), id.cloned().unwrap_or(Json::Null)),
@@ -171,7 +166,9 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
         },
 
         "script" => {
-            let Some(items) = params.get("steps").and_then(|v| v.as_arr().map(<[Json]>::to_vec))
+            let Some(items) = params
+                .get("steps")
+                .and_then(|v| v.as_arr().map(<[Json]>::to_vec))
             else {
                 return Outcome {
                     value: err(id, "`script` needs a `steps` array", session),
@@ -210,7 +207,12 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
                     }
                 }
             }
-            ok(id, all_applied, session, vec![("steps", Json::arr(results))])
+            ok(
+                id,
+                all_applied,
+                session,
+                vec![("steps", Json::arr(results))],
+            )
         }
 
         "hole_context" => ok(
@@ -271,7 +273,12 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
 
         "provenance" => {
             let map = provenance_of(session.base(), &session.applied_entries());
-            ok(id, false, session, vec![("provenance", provenance_json(&map))])
+            ok(
+                id,
+                false,
+                session,
+                vec![("provenance", provenance_json(&map))],
+            )
         }
 
         "annotate" => {
@@ -336,6 +343,41 @@ pub fn handle_line(session: &mut AgentSession, line: &str) -> Option<Outcome> {
     }
 }
 
+pub fn author_from_args(args: &[String]) -> AuthorId {
+    let mut author = 1u64;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--author" {
+            if let Some(value) = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()) {
+                author = value;
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    AuthorId::new(author)
+}
+
+pub fn run_stdio<R: std::io::BufRead, W: std::io::Write>(
+    session: &mut AgentSession,
+    input: R,
+    mut output: W,
+) -> std::io::Result<()> {
+    for line in input.lines() {
+        let line = line?;
+        let Some(outcome) = handle_line(session, &line) else {
+            continue;
+        };
+        writeln!(output, "{}", outcome.value)?;
+        output.flush()?;
+        if outcome.quit {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,12 +407,21 @@ mod tests {
             let out = handle(&mut s, &request(text));
             assert!(out.value.get("applied").is_some(), "{text}");
             let state = out.value.get("state").expect(text);
-            assert!(state.get("render").and_then(Json::as_str).is_some(), "{text}");
             assert!(
-                state.get("render_with_cursor").and_then(Json::as_str).is_some(),
+                state.get("render").and_then(Json::as_str).is_some(),
                 "{text}"
             );
-            assert!(state.get("cursor_path").and_then(Json::as_arr).is_some(), "{text}");
+            assert!(
+                state
+                    .get("render_with_cursor")
+                    .and_then(Json::as_str)
+                    .is_some(),
+                "{text}"
+            );
+            assert!(
+                state.get("cursor_path").and_then(Json::as_arr).is_some(),
+                "{text}"
+            );
         }
     }
 
@@ -378,10 +429,15 @@ mod tests {
     fn a_step_string_and_a_structured_action_agree() {
         let mut a = session();
         let mut b = session();
-        handle(&mut a, &request(r#"{"method":"apply","params":{"step":"construct-num 7"}}"#));
+        handle(
+            &mut a,
+            &request(r#"{"method":"apply","params":{"step":"construct-num 7"}}"#),
+        );
         handle(
             &mut b,
-            &request(r#"{"method":"apply","params":{"action":{"action":"ConstructNum","value":7}}}"#),
+            &request(
+                r#"{"method":"apply","params":{"action":{"action":"ConstructNum","value":7}}}"#,
+            ),
         );
         assert_eq!(a.state().render(), "7");
         assert_eq!(a.state().render(), b.state().render());
@@ -390,7 +446,10 @@ mod tests {
     #[test]
     fn an_action_that_does_not_apply_answers_ok_but_not_applied() {
         let mut s = session();
-        let out = handle(&mut s, &request(r#"{"method":"apply","params":{"step":"move-parent"}}"#));
+        let out = handle(
+            &mut s,
+            &request(r#"{"method":"apply","params":{"step":"move-parent"}}"#),
+        );
         assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(true));
         assert_eq!(out.value.get("applied").unwrap().as_bool(), Some(false));
         assert_eq!(s.log().len(), 0);
@@ -399,7 +458,10 @@ mod tests {
     #[test]
     fn an_unparseable_step_answers_not_ok() {
         let mut s = session();
-        let out = handle(&mut s, &request(r#"{"method":"apply","params":{"step":"frobnicate"}}"#));
+        let out = handle(
+            &mut s,
+            &request(r#"{"method":"apply","params":{"step":"frobnicate"}}"#),
+        );
         assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(false));
         assert!(
             out.value
@@ -466,11 +528,20 @@ mod tests {
     #[test]
     fn hole_context_comes_back_with_constructions() {
         let mut s = session();
-        handle(&mut s, &request(r#"{"method":"apply","params":{"step":"construct-if"}}"#));
+        handle(
+            &mut s,
+            &request(r#"{"method":"apply","params":{"step":"construct-if"}}"#),
+        );
         let out = handle(&mut s, &request(r#"{"method":"hole_context"}"#));
         let hc = out.value.get("hole_context").unwrap();
         assert_eq!(hc.get("expected_ty_text").unwrap().as_str(), Some("Bool"));
-        assert!(!hc.get("constructions").unwrap().as_arr().unwrap().is_empty());
+        assert!(
+            !hc.get("constructions")
+                .unwrap()
+                .as_arr()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -483,22 +554,33 @@ mod tests {
         let mut s = session();
         handle(
             &mut s,
-            &request(r#"{"method":"script","params":{"steps":["construct-num 1","construct-binop add","construct-num 2"]}}"#),
+            &request(
+                r#"{"method":"script","params":{"steps":["construct-num 1","construct-binop add","construct-num 2"]}}"#,
+            ),
         );
         let out = handle(
             &mut s,
-            &request(&format!(r#"{{"method":"save","params":{{"path":"{path}"}}}}"#)),
+            &request(&format!(
+                r#"{{"method":"save","params":{{"path":"{path}"}}}}"#
+            )),
         );
         assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(true));
 
         let mut fresh = session();
         let out = handle(
             &mut fresh,
-            &request(&format!(r#"{{"method":"load","params":{{"path":"{path}"}}}}"#)),
+            &request(&format!(
+                r#"{{"method":"load","params":{{"path":"{path}"}}}}"#
+            )),
         );
         assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(true));
         assert_eq!(
-            out.value.get("state").unwrap().get("render").unwrap().as_str(),
+            out.value
+                .get("state")
+                .unwrap()
+                .get("render")
+                .unwrap()
+                .as_str(),
             Some("1 + 2")
         );
         std::fs::remove_file(&path).ok();
@@ -517,10 +599,18 @@ mod tests {
     #[test]
     fn reset_returns_the_empty_program() {
         let mut s = session();
-        handle(&mut s, &request(r#"{"method":"apply","params":{"step":"construct-num 5"}}"#));
+        handle(
+            &mut s,
+            &request(r#"{"method":"apply","params":{"step":"construct-num 5"}}"#),
+        );
         let out = handle(&mut s, &request(r#"{"method":"reset"}"#));
         assert_eq!(
-            out.value.get("state").unwrap().get("render").unwrap().as_str(),
+            out.value
+                .get("state")
+                .unwrap()
+                .get("render")
+                .unwrap()
+                .as_str(),
             Some("⦇⦈")
         );
     }

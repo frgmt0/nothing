@@ -8,6 +8,6 @@ pub mod session;
 
 pub use holectx::{Binding, Construction, HoleContext, hole_context};
 pub use json::Json;
-pub use protocol::{Outcome, handle, handle_line};
+pub use protocol::{Outcome, author_from_args, handle, handle_line, run_stdio};
 pub use provenance::{Palette, Provenance, annotate, provenance_of};
 pub use session::AgentSession;

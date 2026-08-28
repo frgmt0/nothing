@@ -1,4 +1,3 @@
-
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nothing_action::act::Action;
 use nothing_core::exp::{Exp, Op, Side};
@@ -13,7 +12,6 @@ pub fn handle_key(key: KeyEvent, state: AppState) -> AppState {
         return state;
     }
     let state = state.clear_hint();
-
 
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('z') {
@@ -36,9 +34,7 @@ fn dispatch(key: KeyEvent, state: AppState) -> AppState {
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match (key.code, ctrl) {
-
         (KeyCode::Char('q'), true) => quit(state),
-
 
         (KeyCode::Down, false) => {
             or_hint(state.move_down(), state, "nothing below: this is a leaf")
@@ -49,21 +45,17 @@ fn dispatch(key: KeyEvent, state: AppState) -> AppState {
         (KeyCode::Tab, false) => or_hint(state.move_to_hole(true), state, NOTHING_UNFINISHED),
         (KeyCode::BackTab, _) => or_hint(state.move_to_hole(false), state, NOTHING_UNFINISHED),
 
-
         (KeyCode::Backspace, false) => backspace(state),
         (KeyCode::Delete, false) => delete(state),
         (KeyCode::Enter, false) => enter(state),
 
-
         (KeyCode::Esc, false) => end_run(state),
-
 
         (KeyCode::Char(c), false) => printable(c, state),
 
         _ => unbound(key, state),
     }
 }
-
 
 fn printable(c: char, state: AppState) -> AppState {
     match state.slot {
@@ -74,13 +66,9 @@ fn printable(c: char, state: AppState) -> AppState {
 }
 
 fn node_key(c: char, state: AppState) -> AppState {
-
-
     if matches!(state.focus(), Exp::NonEmptyHole(..)) && c != '!' {
         return match state.apply_actions(&[Action::MoveChild(0)]) {
             Some(mut inner) => {
-
-
                 inner.entry = state.entry.clone();
                 inner.entry_committed = state.entry_committed;
                 node_key(c, inner)
@@ -89,11 +77,9 @@ fn node_key(c: char, state: AppState) -> AppState {
         };
     }
 
-
     if !state.entry.is_empty() && is_name_char(c) {
         return name_run(c, state);
     }
-
 
     let pending = (!state.entry_committed && !state.entry.is_empty()).then(|| state.entry.clone());
     let mut state = state;
@@ -117,7 +103,6 @@ fn node_key(c: char, state: AppState) -> AppState {
         '[' => wrap(state, PREC_APP, Action::ConstructProj(Side::L), "fst"),
         ']' => wrap(state, PREC_APP, Action::ConstructProj(Side::R), "snd"),
 
-
         '!' => wrap(
             state,
             PREC_ATOM,
@@ -136,8 +121,6 @@ fn binder_name_key(c: char, state: AppState) -> AppState {
     match c {
         ':' if matches!(state.focus(), Exp::Lam(..)) => to_annotation(state),
         '=' if matches!(state.focus(), Exp::Let(..)) => {
-
-
             match state.apply_actions(&[Action::MoveChild(0)]) {
                 Some(next) => next,
                 None => state.with_hint("this let has no bound expression"),
@@ -156,8 +139,6 @@ fn annotation_key(c: char, state: AppState) -> AppState {
         return to_body(state);
     }
     if c == ':' {
-
-
         return state.with_hint("already in the annotation slot");
     }
     match annot::accept(&state.entry, c) {
@@ -170,7 +151,6 @@ fn annotation_key(c: char, state: AppState) -> AppState {
         }
     }
 }
-
 
 fn digit(c: char, state: AppState) -> AppState {
     let d = i64::from(c.to_digit(10).expect("matched against 0-9"));
@@ -214,8 +194,6 @@ fn name_run(c: char, state: AppState) -> AppState {
 fn commit_run(buffer: String, state: AppState) -> AppState {
     let committed = state.entry_committed;
     let Some(candidate) = complete::best(&state, &buffer) else {
-
-
         let mut next = match (committed, state.apply_actions(&[Action::Delete])) {
             (true, Some(deleted)) => deleted,
             _ => state,
@@ -289,7 +267,6 @@ fn set_ann(buffer: String, state: AppState) -> AppState {
             next
         }
 
-
         None => {
             let mut next = state;
             next.entry = buffer;
@@ -298,7 +275,6 @@ fn set_ann(buffer: String, state: AppState) -> AppState {
         }
     }
 }
-
 
 fn wrap(state: AppState, prec: Prec, action: Action, what: &str) -> AppState {
     let mut actions = state.climb_actions(prec);
@@ -331,7 +307,6 @@ fn operator(op: Op, state: AppState) -> AppState {
     )
 }
 
-
 fn to_annotation(state: AppState) -> AppState {
     if !matches!(state.focus(), Exp::Lam(..)) {
         return state.with_hint("annotations live on lambdas");
@@ -356,7 +331,6 @@ fn exit_and_reprocess(c: char, state: AppState) -> AppState {
         None => state.with_hint(format!("`{c}` means nothing in this slot")),
     }
 }
-
 
 fn backspace(state: AppState) -> AppState {
     match state.slot {
@@ -425,8 +399,6 @@ fn enter(state: AppState) -> AppState {
         return match state.apply_actions(&actions) {
             Some(next) => next,
             None => {
-
-
                 let expected = match state.apply_actions(&ups) {
                     Some(wrapper) => wrapper.expected_ty().to_string(),
                     None => "its context".to_string(),
@@ -442,7 +414,6 @@ fn enter(state: AppState) -> AppState {
 }
 
 const NOTHING_UNFINISHED: &str = "nothing unfinished: this program has no holes";
-
 
 fn quit(mut state: AppState) -> AppState {
     state.quit = true;
@@ -519,7 +490,6 @@ mod tests {
         type_chars(text, AppState::empty()).text()
     }
 
-
     #[test]
     fn one_plus_two_is_three_keystrokes() {
         let state = type_chars("1+2", AppState::empty());
@@ -528,24 +498,20 @@ mod tests {
         assert_eq!(state.actions().len(), 3, "no hidden actions");
     }
 
-
     #[test]
     fn digits_extend_the_focused_number() {
         assert_eq!(typed("427"), "427");
         assert_eq!(typed("1+23"), "1 + 23");
 
-
         let state = type_chars("1+2", AppState::empty());
         let state = handle_key(key(KeyCode::Up), state);
         assert_eq!(type_chars("9", state).text(), "9");
-
 
         assert_eq!(typed("1+2 3"), "1 + ⦇2⦈ 3");
     }
 
     #[test]
     fn a_digit_typed_a_week_later_still_extends_the_number() {
-
         let state = type_chars("42", AppState::empty());
         let state = handle_key(key(KeyCode::Esc), state);
         assert_eq!(type_chars("7", state).text(), "427");
@@ -571,7 +537,6 @@ mod tests {
 
     #[test]
     fn backspace_ascends_out_of_an_empty_hole_before_deleting_anything() {
-
         let state = type_chars("1+", AppState::empty());
         assert!(matches!(state.focus(), Exp::EmptyHole(_)));
         let up = handle_key(key(KeyCode::Backspace), state);
@@ -590,18 +555,10 @@ mod tests {
         assert_eq!(state.text(), "λx0:Num. x0");
         let state = handle_key(key(KeyCode::Backspace), state);
         assert_eq!(state.entry, "x", "one character of the run is gone");
-        assert_eq!(
-            state.text(),
-            "λx0:Num. x0",
-            "and `x` still names x0"
-        );
+        assert_eq!(state.text(), "λx0:Num. x0", "and `x` still names x0");
         let state = handle_key(key(KeyCode::Backspace), state);
         assert!(state.entry.is_empty());
-        assert_eq!(
-            state.text(),
-            "λx0:Num. ⦇⦈",
-            "the run wrote nothing"
-        );
+        assert_eq!(state.text(), "λx0:Num. ⦇⦈", "the run wrote nothing");
     }
 
     #[test]
@@ -633,11 +590,8 @@ mod tests {
         assert_eq!(index_path(state.zipper()), vec![0, 1], "the then-branch");
     }
 
-
     #[test]
     fn a_name_run_commits_live_and_refines() {
-
-
         let state = type_chars("\\x0:n.\\x1:n.", AppState::empty());
         let after_x = type_chars("x", state);
         assert!(
@@ -666,8 +620,6 @@ mod tests {
 
     #[test]
     fn an_unresolved_run_becomes_the_new_binders_name() {
-
-
         let state = type_chars("total7;", AppState::empty());
         assert_eq!(state.text(), "let total7 = ⦇⦈ in ⦇⦈");
         assert_eq!(state.slot, Slot::BinderName);
@@ -681,20 +633,17 @@ mod tests {
         assert_eq!(typed("?t"), "if true then ⦇⦈ else ⦇⦈");
     }
 
-
     #[test]
     fn operators_climb_so_left_to_right_typing_means_what_it_says() {
         assert_eq!(typed("1*2+3"), "1 * 2 + 3");
         assert_eq!(typed("1+2*3"), "1 + 2 * 3");
         assert_eq!(typed("1+2+3"), "1 + 2 + 3");
 
-
         assert_eq!(typed("1<2=3"), "⦇1 < 2⦈ == 3");
     }
 
     #[test]
     fn climbing_never_crosses_a_binder_or_a_conditional() {
-
         let state = type_chars("?t", AppState::empty());
         let state = handle_key(key(KeyCode::Tab), state);
         assert_eq!(
@@ -706,22 +655,17 @@ mod tests {
 
     #[test]
     fn an_empty_hole_wraps_in_place_rather_than_climbing() {
-
-
         assert_eq!(typed("1+*2"), "1 + 2 * ⦇⦈");
     }
 
     #[test]
     fn application_climbs_left_associatively() {
-
         let state = type_chars("\\x0:n>n>n.x0 1 2", AppState::empty());
         assert_eq!(state.text(), "λx0:Num -> Num -> Num. x0 1 2");
     }
 
     #[test]
     fn every_form_key_builds_its_form() {
-
-
         assert_eq!(typed("1 "), "⦇1⦈ ⦇⦈");
         assert_eq!(typed("\\"), "λx0:?. ⦇⦈");
         assert_eq!(typed("1?"), "if ⦇1⦈ then ⦇⦈ else ⦇⦈");
@@ -731,7 +675,6 @@ mod tests {
         assert_eq!(typed("1]"), "snd ⦇1⦈");
         assert_eq!(typed("1!"), "⦇1⦈");
     }
-
 
     #[test]
     fn a_lambda_is_named_and_annotated_from_the_slots() {
@@ -759,18 +702,12 @@ mod tests {
 
     #[test]
     fn an_annotation_that_would_break_the_body_declines_visibly() {
-
-
         let state = type_chars("\\x0:.x0+1", AppState::empty());
         assert_eq!(state.text(), "λx0:?. x0 + 1");
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Up), state);
         let state = type_chars(":b", state);
-        assert_eq!(
-            state.text(),
-            "λx0:?. x0 + 1",
-            "the program is untouched"
-        );
+        assert_eq!(state.text(), "λx0:?. x0 + 1", "the program is untouched");
         assert_eq!(state.slot, Slot::Annotation, "the slot stays open");
         assert!(state.hint.unwrap().contains("Bool"));
     }
@@ -785,8 +722,6 @@ mod tests {
 
     #[test]
     fn a_character_a_slot_does_not_understand_exits_and_is_reprocessed() {
-
-
         let state = type_chars("\\x0:n.1", AppState::empty());
         let state = handle_key(key(KeyCode::Up), state);
         let state = type_chars(":", state);
@@ -794,10 +729,8 @@ mod tests {
         assert_eq!(state.text(), "λx0:Num. 1 + ⦇⦈");
     }
 
-
     #[test]
     fn a_type_inconsistent_entry_is_quarantined_rather_than_refused() {
-
         assert_eq!(typed("t<"), "⦇true⦈ < ⦇⦈");
         assert_eq!(typed("1 "), "⦇1⦈ ⦇⦈");
     }
@@ -806,7 +739,6 @@ mod tests {
     fn a_non_empty_hole_is_transparent_to_typing() {
         let state = type_chars("1!", AppState::empty());
         assert_eq!(state.text(), "⦇1⦈");
-
 
         let state = type_chars("2", state);
         assert_eq!(state.text(), "⦇12⦈");
@@ -817,9 +749,7 @@ mod tests {
 
     #[test]
     fn enter_finishes_a_quarantined_expression_that_now_fits() {
-
         let state = AppState::with_names(examples::add_with_non_empty_hole(), examples::names());
-
 
         let state = handle_key(key(KeyCode::Tab), state);
         assert!(matches!(state.focus(), Exp::NonEmptyHole(..)));
@@ -839,8 +769,6 @@ mod tests {
 
     #[test]
     fn enter_finishes_the_quarantine_the_cursor_is_inside() {
-
-
         let state = AppState::with_names(examples::add_with_non_empty_hole(), examples::names());
         let state = handle_key(key(KeyCode::Tab), state);
         let state = type_chars("2", state);
@@ -850,7 +778,6 @@ mod tests {
         let finished = handle_key(key(KeyCode::Enter), state.clone());
         assert_eq!(finished.text(), "1 + 2", "one key, not three");
         assert!(matches!(finished.focus(), Exp::Num(2)), "cursor kept");
-
 
         let walked = handle_key(
             key(KeyCode::Enter),
@@ -862,8 +789,6 @@ mod tests {
 
     #[test]
     fn enter_inside_a_quarantine_that_does_not_fit_says_so_instead_of_jumping() {
-
-
         let state = type_chars("1?", AppState::empty());
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Down), state);
@@ -885,8 +810,6 @@ mod tests {
 
     #[test]
     fn tab_walks_quarantines_too_and_says_when_nothing_is_left() {
-
-
         let state = AppState::with_names(examples::add_with_non_empty_hole(), examples::names());
         let tabbed = handle_key(key(KeyCode::Tab), state);
         assert!(
@@ -895,22 +818,17 @@ mod tests {
         );
         assert_eq!(tabbed.hint, None);
 
-
         let done = AppState::with_names(examples::increment_applied(), examples::names());
         let stuck = handle_key(key(KeyCode::Tab), done.clone());
         assert_eq!(stuck.program(), done.program());
         assert_eq!(stuck.hint.as_deref(), Some(NOTHING_UNFINISHED));
     }
 
-
     #[test]
     fn two_binders_may_wear_the_same_display_name_without_capture() {
-
-
         let state = type_chars("\\x0:n.\\x1:.x0+1", AppState::empty());
         assert_eq!(state.text(), "λx0:Num. λx1:?. x0 + 1");
         let before = state.program();
-
 
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Up), state);
@@ -931,7 +849,6 @@ mod tests {
             "renaming is a name-table write: the tree is untouched"
         );
 
-
         let (outer, inner, used) = match before {
             Exp::Lam(outer, _, body) => match *body {
                 Exp::Lam(inner, _, body) => match *body {
@@ -951,8 +868,6 @@ mod tests {
 
     #[test]
     fn naming_a_binder_what_it_is_already_called_is_not_a_capture() {
-
-
         let state = type_chars("\\x0:n.\\x1:.x0+1", AppState::empty());
         let state = handle_key(key(KeyCode::Up), state);
         let state = handle_key(key(KeyCode::Up), state);
@@ -972,8 +887,6 @@ mod tests {
 
     #[test]
     fn renaming_a_binder_renames_every_reference_to_it_at_once() {
-
-
         let state = type_chars("\\x1:n.x1", AppState::empty());
         let before = state.program();
         let state = handle_key(key(KeyCode::Up), state);
@@ -985,11 +898,8 @@ mod tests {
         assert_eq!(after.program(), before, "and it does not touch the tree");
     }
 
-
     #[test]
     fn one_undo_undoes_one_keystroke_however_many_actions_it_expanded_to() {
-
-
         let state = type_chars("1<2", AppState::empty());
         let before = state.program();
         let with_if = type_chars("?", state);
@@ -1034,7 +944,6 @@ mod tests {
         assert_eq!(state.slot, Slot::BinderName, "still naming the binder");
     }
 
-
     #[test]
     fn every_printable_key_leaves_a_well_typed_program() {
         use nothing_core::typing::is_well_typed;
@@ -1071,7 +980,6 @@ mod tests {
         }
         assert!(nothing_core::typing::is_well_typed(&state.program()));
     }
-
 
     #[test]
     fn control_q_quits_and_nothing_else_does() {

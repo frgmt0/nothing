@@ -14,9 +14,11 @@ ratatui = "0.30.2"
 # produces.
 crossterm = "0.29.0"
 
-# The editor. `src/bin/nothing.rs` is a shim: everything it does beyond
-# choosing the start-up program lives in the library, where it is tested
-# without a terminal.
+# A demo entry point that opens the embedded factorial fixture with no file
+# argument. `nothing edit <file>` in the `cli` crate is the product binary;
+# this shim stays for exercising the TUI standalone. Everything it does
+# beyond choosing the start-up program lives in the library, where it is
+# tested without a terminal.
 [[bin]]
-name = "nothing"
+name = "nothing-tui-demo"
 path = "src/bin/nothing.rs"

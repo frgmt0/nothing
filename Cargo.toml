@@ -9,6 +9,7 @@ members = [
     "bench",
     "merge",
     "agentapi",
+    "cli",
 ]
 
 [workspace.package]

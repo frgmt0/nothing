@@ -52,7 +52,11 @@ fn a_program_against_itself_with_one_renamed_variable_is_exactly_one_rename() {
     let ops = diff(&base, &renamed);
     assert_eq!(ops.len(), 1, "expected exactly one operation, got {ops:#?}");
     match &ops[0] {
-        Operation::Rename { id: target, from, to } => {
+        Operation::Rename {
+            id: target,
+            from,
+            to,
+        } => {
             assert_eq!(*target, id(10));
             assert_eq!(from.as_deref(), Some("a"));
             assert_eq!(to, "value");
@@ -86,11 +90,7 @@ fn a_renamed_binder_used_in_forty_places_is_still_one_operation() {
 #[test]
 fn moving_a_function_to_a_different_position_is_a_one_operation_diff() {
     let f = id(20);
-    let function = Exp::lam(
-        f,
-        Ty::Num,
-        Exp::bin_op(Op::Mul, Exp::var(f), Exp::var(f)),
-    );
+    let function = Exp::lam(f, Ty::Num, Exp::bin_op(Op::Mul, Exp::var(f), Exp::var(f)));
     let mut names = NameTable::new();
     names.set(f, "n");
 
@@ -98,10 +98,7 @@ fn moving_a_function_to_a_different_position_is_a_one_operation_diff() {
         Exp::pair(function.clone(), Exp::empty_hole(hole(1))),
         names.clone(),
     );
-    let after = Version::new(
-        Exp::pair(Exp::empty_hole(hole(2)), function.clone()),
-        names,
-    );
+    let after = Version::new(Exp::pair(Exp::empty_hole(hole(2)), function.clone()), names);
 
     let ops = diff(&before, &after);
     assert_eq!(ops.len(), 1, "expected one operation, got {ops:#?}");
@@ -177,10 +174,8 @@ fn a_move_is_not_reported_as_a_delete_plus_an_insert() {
     );
     let ops = diff(&before, &after);
     assert!(
-        !ops.iter().any(|op| matches!(
-            op,
-            Operation::DeleteToHole { .. } | Operation::Fill { .. }
-        )),
+        !ops.iter()
+            .any(|op| matches!(op, Operation::DeleteToHole { .. } | Operation::Fill { .. })),
         "the move was reported as a delete plus an insert: {ops:#?}"
     );
 }

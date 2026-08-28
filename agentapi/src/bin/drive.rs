@@ -33,7 +33,9 @@ impl Editor {
 
     fn request(&mut self, value: &Json) -> Result<Json, String> {
         writeln!(self.stdin, "{value}").map_err(|e| format!("cannot write: {e}"))?;
-        self.stdin.flush().map_err(|e| format!("cannot flush: {e}"))?;
+        self.stdin
+            .flush()
+            .map_err(|e| format!("cannot flush: {e}"))?;
         let mut reply = String::new();
         let read = self
             .stdout
@@ -197,7 +199,9 @@ fn prompt(goal: &str, target: &str, state: &Json, context: &Json, history: &[Str
     let mut out = String::new();
     out.push_str("You are editing a program in a structural editor.\n\n");
     out.push_str(&format!("Goal: {goal}\n"));
-    out.push_str(&format!("The finished program must render exactly as:\n  {target}\n\n"));
+    out.push_str(&format!(
+        "The finished program must render exactly as:\n  {target}\n\n"
+    ));
     out.push_str(&format!(
         "Current program (cursor between » and «):\n  {}\n\n",
         text(state, &["render_with_cursor"])
@@ -209,7 +213,7 @@ fn prompt(goal: &str, target: &str, state: &Json, context: &Json, history: &[Str
             out.push_str(&format!("  {line}\n"));
         }
     }
-    out.push_str("\n");
+    out.push('\n');
     out.push_str(RULES);
     out.push('\n');
     out
@@ -317,11 +321,11 @@ fn main() {
         }
     };
 
-    if let Some(parent) = options.transcript.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("error: cannot create {}: {e}", parent.display());
-            std::process::exit(1);
-        }
+    if let Some(parent) = options.transcript.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        eprintln!("error: cannot create {}: {e}", parent.display());
+        std::process::exit(1);
     }
 
     let mut lines: Vec<String> = Vec::new();
@@ -447,7 +451,10 @@ fn main() {
                 break;
             }
         };
-        let applied = outcome.get("applied").and_then(Json::as_bool).unwrap_or(false);
+        let applied = outcome
+            .get("applied")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
         let error = outcome
             .get("error")
             .and_then(Json::as_str)
@@ -462,7 +469,10 @@ fn main() {
             history.push(format!("{action}   ->   REFUSED ({error})"));
         }
 
-        println!("{step:>3}  {action:<28} {}", if applied { &after } else { "refused" });
+        println!(
+            "{step:>3}  {action:<28} {}",
+            if applied { &after } else { "refused" }
+        );
 
         lines.push(
             Json::obj(vec![
@@ -524,7 +534,8 @@ fn main() {
             ),
             (
                 "log",
-                log.and_then(|l| l.get("log").cloned()).unwrap_or(Json::Null),
+                log.and_then(|l| l.get("log").cloned())
+                    .unwrap_or(Json::Null),
             ),
             (
                 "provenance",

@@ -181,12 +181,17 @@ fn the_hole_context_query_answers_over_the_wire() {
         driver.step(step);
     }
     let reply = driver.request(r#"{"method":"hole_context"}"#);
-    let context = reply.get("hole_context").expect("a hole context comes back");
+    let context = reply
+        .get("hole_context")
+        .expect("a hole context comes back");
     assert_eq!(
         context.get("expected_ty_text").and_then(Json::as_str),
         Some("Num")
     );
-    assert_eq!(context.get("at_empty_hole").and_then(Json::as_bool), Some(true));
+    assert_eq!(
+        context.get("at_empty_hole").and_then(Json::as_bool),
+        Some(true)
+    );
 
     let offered: Vec<String> = context
         .get("constructions")
@@ -196,7 +201,10 @@ fn the_hole_context_query_answers_over_the_wire() {
         .filter_map(|c| c.get("step").and_then(Json::as_str))
         .map(str::to_string)
         .collect();
-    assert!(offered.iter().any(|s| s == "construct-var n"), "{offered:?}");
+    assert!(
+        offered.iter().any(|s| s == "construct-var n"),
+        "{offered:?}"
+    );
     assert!(
         !offered.iter().any(|s| s.starts_with("construct-bool")),
         "a Num hole offered a boolean: {offered:?}"
@@ -210,7 +218,11 @@ fn the_hole_context_query_answers_over_the_wire() {
             .and_then(Json::as_i64)
             .unwrap();
         let reply = driver.step(step);
-        assert_eq!(reply.get("applied").and_then(Json::as_bool), Some(true), "{step}");
+        assert_eq!(
+            reply.get("applied").and_then(Json::as_bool),
+            Some(true),
+            "{step}"
+        );
         let after_holes = reply
             .get("state")
             .and_then(|s| s.get("non_empty_holes"))
@@ -255,14 +267,22 @@ fn save_and_load_work_over_the_wire() {
     let reply = writer.request(&format!(
         r#"{{"method":"save","params":{{"path":"{path}"}}}}"#
     ));
-    assert_eq!(reply.get("ok").and_then(Json::as_bool), Some(true), "{reply}");
+    assert_eq!(
+        reply.get("ok").and_then(Json::as_bool),
+        Some(true),
+        "{reply}"
+    );
     writer.finish();
 
     let mut reader = Driver::start();
     let reply = reader.request(&format!(
         r#"{{"method":"load","params":{{"path":"{path}"}}}}"#
     ));
-    assert_eq!(reply.get("ok").and_then(Json::as_bool), Some(true), "{reply}");
+    assert_eq!(
+        reply.get("ok").and_then(Json::as_bool),
+        Some(true),
+        "{reply}"
+    );
     assert_eq!(render_of(&reply), fixture_expected("factorial"));
     reader.finish();
     std::fs::remove_file(&path).ok();

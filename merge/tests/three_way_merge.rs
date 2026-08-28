@@ -30,11 +30,21 @@ fn names() -> NameTable {
 #[test]
 fn two_branches_editing_different_fields_of_one_record_merge_with_zero_conflicts() {
     let base = Version::new(
-        record(Exp::num(1), Exp::bool_(true), Exp::num(3), Exp::bool_(false)),
+        record(
+            Exp::num(1),
+            Exp::bool_(true),
+            Exp::num(3),
+            Exp::bool_(false),
+        ),
         names(),
     );
     let ours = Version::new(
-        record(Exp::num(42), Exp::bool_(true), Exp::num(3), Exp::bool_(false)),
+        record(
+            Exp::num(42),
+            Exp::bool_(true),
+            Exp::num(3),
+            Exp::bool_(false),
+        ),
         names(),
     );
     let theirs = Version::new(
@@ -51,7 +61,12 @@ fn two_branches_editing_different_fields_of_one_record_merge_with_zero_conflicts
     assert_eq!(outcome.conflicts.len(), 0);
     assert_eq!(
         outcome.merged.exp,
-        record(Exp::num(42), Exp::bool_(true), Exp::num(3), Exp::bool_(true))
+        record(
+            Exp::num(42),
+            Exp::bool_(true),
+            Exp::num(3),
+            Exp::bool_(true)
+        )
     );
     assert!(outcome.merged.is_well_typed());
     assert!(outcome.repairs.is_empty());
@@ -70,10 +85,7 @@ fn two_branches_editing_the_two_halves_of_one_pair_merge_with_zero_conflicts() {
 
 #[test]
 fn two_branches_changing_the_same_expression_produce_exactly_one_conflict_with_both_alternatives() {
-    let base = Version::new(
-        Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)),
-        names(),
-    );
+    let base = Version::new(Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)), names());
     let ours = Version::new(Exp::bin_op(Op::Add, Exp::num(1), Exp::num(3)), names());
     let theirs = Version::new(Exp::bin_op(Op::Add, Exp::num(1), Exp::num(4)), names());
 
@@ -91,10 +103,21 @@ fn two_branches_changing_the_same_expression_produce_exactly_one_conflict_with_b
     assert_eq!(conflict.ours_text, "3");
     assert_eq!(conflict.theirs_text, "4");
     assert!(conflict.site.contains("right operand"), "{}", conflict.site);
-    assert!(conflict.why.contains("replaces `2` with `3`"), "{}", conflict.why);
-    assert!(conflict.why.contains("replaces `2` with `4`"), "{}", conflict.why);
+    assert!(
+        conflict.why.contains("replaces `2` with `3`"),
+        "{}",
+        conflict.why
+    );
+    assert!(
+        conflict.why.contains("replaces `2` with `4`"),
+        "{}",
+        conflict.why
+    );
 
-    assert_eq!(outcome.merged.exp, base.exp, "a conflict leaves the base alone");
+    assert_eq!(
+        outcome.merged.exp, base.exp,
+        "a conflict leaves the base alone"
+    );
     assert!(outcome.merged.is_well_typed());
 }
 
@@ -103,7 +126,11 @@ fn a_conflict_report_names_the_program_position_and_both_alternatives() {
     let base = Version::new(
         Exp::let_(
             id(1),
-            Exp::lam(id(10), Ty::Num, Exp::bin_op(Op::Mul, Exp::var(id(10)), Exp::num(2))),
+            Exp::lam(
+                id(10),
+                Ty::Num,
+                Exp::bin_op(Op::Mul, Exp::var(id(10)), Exp::num(2)),
+            ),
             Exp::ap(Exp::var(id(1)), Exp::num(5)),
         ),
         names(),
@@ -111,7 +138,11 @@ fn a_conflict_report_names_the_program_position_and_both_alternatives() {
     let ours = Version::new(
         Exp::let_(
             id(1),
-            Exp::lam(id(10), Ty::Num, Exp::bin_op(Op::Mul, Exp::var(id(10)), Exp::num(3))),
+            Exp::lam(
+                id(10),
+                Ty::Num,
+                Exp::bin_op(Op::Mul, Exp::var(id(10)), Exp::num(3)),
+            ),
             Exp::ap(Exp::var(id(1)), Exp::num(5)),
         ),
         names(),
@@ -119,7 +150,11 @@ fn a_conflict_report_names_the_program_position_and_both_alternatives() {
     let theirs = Version::new(
         Exp::let_(
             id(1),
-            Exp::lam(id(10), Ty::Num, Exp::bin_op(Op::Mul, Exp::var(id(10)), Exp::num(7))),
+            Exp::lam(
+                id(10),
+                Ty::Num,
+                Exp::bin_op(Op::Mul, Exp::var(id(10)), Exp::num(7)),
+            ),
             Exp::ap(Exp::var(id(1)), Exp::num(5)),
         ),
         names(),
@@ -136,12 +171,20 @@ fn a_conflict_report_names_the_program_position_and_both_alternatives() {
 #[test]
 fn a_rename_never_conflicts_with_a_structural_edit() {
     let base = Version::new(
-        Exp::let_(id(1), Exp::num(1), Exp::bin_op(Op::Add, Exp::var(id(1)), Exp::num(2))),
+        Exp::let_(
+            id(1),
+            Exp::num(1),
+            Exp::bin_op(Op::Add, Exp::var(id(1)), Exp::num(2)),
+        ),
         names(),
     );
     let ours = Version::new(base.exp.clone(), base.names.with(id(1), "total"));
     let theirs = Version::new(
-        Exp::let_(id(1), Exp::num(1), Exp::bin_op(Op::Add, Exp::var(id(1)), Exp::num(99))),
+        Exp::let_(
+            id(1),
+            Exp::num(1),
+            Exp::bin_op(Op::Add, Exp::var(id(1)), Exp::num(99)),
+        ),
         names(),
     );
     let outcome = merge(&base, &ours, &theirs);
@@ -205,7 +248,11 @@ fn a_reorder_and_an_edit_inside_a_reordered_binding_merge_cleanly() {
         Exp::let_(
             first,
             first_body,
-            Exp::let_(second, second_body, Exp::bin_op(Op::Add, Exp::var(f), Exp::var(g))),
+            Exp::let_(
+                second,
+                second_body,
+                Exp::bin_op(Op::Add, Exp::var(f), Exp::var(g)),
+            ),
         )
     };
     let base = Version::new(chain(f, Exp::num(1), g, Exp::num(2)), names());

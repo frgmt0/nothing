@@ -2,7 +2,7 @@ use nothing_action::generate::well_typed_exp;
 use nothing_action::log::ActionLog;
 use nothing_core::names::NameTable;
 use nothing_store::content_hash;
-use nothing_store::document::{decode_document, encode_document, Document};
+use nothing_store::document::{Document, decode_document, encode_document};
 
 #[test]
 fn ten_thousand_random_well_typed_programs_round_trip_through_serialisation() {
@@ -15,7 +15,10 @@ fn ten_thousand_random_well_typed_programs_round_trip_through_serialisation() {
             panic!("seed {seed} failed to decode: {e:?}");
         });
 
-        assert_eq!(decoded.exp, exp, "seed {seed} did not round-trip structurally");
+        assert_eq!(
+            decoded.exp, exp,
+            "seed {seed} did not round-trip structurally"
+        );
         assert_eq!(
             content_hash(&decoded.exp),
             content_hash(&exp),

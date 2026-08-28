@@ -6,7 +6,7 @@ pub mod json;
 pub mod names;
 pub mod nodes;
 
-pub use document::{decode_document, encode_document, Document};
+pub use document::{Document, decode_document, encode_document};
 pub use error::DecodeError;
 pub use json::to_debug_json;
 pub use nodes::content_hash;

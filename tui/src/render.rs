@@ -1,4 +1,3 @@
-
 use nothing_action::cursor_render::{CURSOR_CLOSE, CURSOR_OPEN, render_with_cursor};
 use nothing_core::exp::Exp;
 use nothing_core::render::{PREC_BINDER, PREC_CMP, render_id, render_prec};
@@ -38,7 +37,6 @@ fn slot_marked(state: &AppState) -> Option<String> {
         _ => return None,
     };
 
-
     let full = render_with_cursor(state.zipper(), names);
     let open = full.find(CURSOR_OPEN)?;
     let close = full.rfind(CURSOR_CLOSE)?;
@@ -54,7 +52,6 @@ fn slot_marked(state: &AppState) -> Option<String> {
         &full[close + CURSOR_CLOSE.len()..]
     ))
 }
-
 
 fn columns(text: &str) -> usize {
     Span::raw(text).width()
@@ -85,7 +82,6 @@ pub fn wrap_lines(text: &str, width: usize) -> Vec<String> {
                 used = 0;
                 continue;
             }
-
 
             let (head, tail) = split_at_width(token, width);
             lines.push(head.to_string());
@@ -152,7 +148,6 @@ fn focus_spans(lines: &[String]) -> Vec<Line<'static>> {
                 };
                 let (chunk, tail) = rest.split_at(at + marker.len());
                 if inside {
-
                     spans.push(styled(chunk, true, focus));
                 } else {
                     let (before, open) = chunk.split_at(at);
@@ -192,8 +187,6 @@ pub fn status_line(state: &AppState) -> String {
             "does not fit yet"
         });
     } else if let Some(fits) = state.enclosing_finishes() {
-
-
         line.push_str(" · ");
         line.push_str(if fits {
             "inside ⦇⦈ · fits now — press Enter"
@@ -201,7 +194,6 @@ pub fn status_line(state: &AppState) -> String {
             "inside ⦇⦈ · does not fit yet"
         });
     }
-
 
     match state.quarantines() {
         0 => {}
@@ -242,8 +234,6 @@ fn entry_line(state: &AppState) -> Option<String> {
         line.push_str(&format!(
             " · {}",
             if offers.is_empty() {
-
-
                 "unresolved".to_string()
             } else {
                 offers.join("  ")
@@ -280,12 +270,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Constraint::Min(3),
         Constraint::Length(1),
         Constraint::Length(1),
-
-
         Constraint::Length(2),
     ])
     .areas(frame.area());
-
 
     let inner = Block::bordered()
         .padding(Padding::horizontal(1))
@@ -450,7 +437,6 @@ mod tests {
 
     #[test]
     fn a_slot_inside_parentheses_keeps_them() {
-
         let state = example(examples::identity_hole_annotated_applied())
             .move_down()
             .unwrap()
@@ -497,7 +483,6 @@ mod tests {
         use crate::keys::{handle_key, key};
         use ratatui::crossterm::event::KeyCode;
 
-
         let state = "\\x0:n>n.\\x1:b.\\x2:(n>n)>n.x2 x"
             .chars()
             .fold(AppState::empty(), |state, c| {
@@ -528,7 +513,6 @@ mod tests {
 
         let function = screen.find("‹x0").expect("x0 on screen");
 
-
         let boolean = screen.find("x1:Bool ✗").expect("x1 offered on screen");
         assert!(
             function < boolean,
@@ -540,7 +524,6 @@ mod tests {
     fn the_status_line_marks_a_quarantine_and_says_when_it_fits() {
         use crate::keys::{handle_key, key};
         use ratatui::crossterm::event::KeyCode;
-
 
         let state = example(examples::add_with_non_empty_hole())
             .apply_actions(&[nothing_action::act::Action::MoveChild(1)])
@@ -579,7 +562,6 @@ mod tests {
         assert!(screen.contains("⦇⦈«"), "{screen}");
     }
 
-
     #[test]
     fn wrapping_neither_adds_nor_loses_a_character() {
         let text = program_line(&AppState::factorial());
@@ -587,8 +569,6 @@ mod tests {
             let lines = wrap_lines(&text, width);
             assert_eq!(lines.concat(), text, "width {width} changed the text");
             for line in &lines {
-
-
                 assert!(
                     columns(line.trim_end_matches(' ')) <= width.max(1),
                     "width {width}: `{line}` is too wide"
@@ -607,7 +587,6 @@ mod tests {
 
     #[test]
     fn the_window_follows_the_cursor() {
-
         assert_eq!(scroll_offset(3, 10, Some(2)), 0, "it all fits");
         assert_eq!(scroll_offset(40, 10, Some(0)), 0);
         assert_eq!(scroll_offset(40, 10, Some(20)), 12, "one line of context");
@@ -627,7 +606,6 @@ mod tests {
         use crate::keys::{handle_key, key};
         use ratatui::crossterm::event::KeyCode;
 
-
         let mut state = "1".chars().fold(AppState::empty(), |state, c| {
             handle_key(key(KeyCode::Char(c)), state)
         });
@@ -642,7 +620,6 @@ mod tests {
             );
         }
 
-
         let screen = render_to_string(&state, 46, 8);
         assert!(screen.contains(CURSOR_OPEN), "{screen}");
         assert!(screen.contains("lines "), "{screen}");
@@ -650,8 +627,6 @@ mod tests {
 
     #[test]
     fn a_terminal_too_small_for_anything_still_draws() {
-
-
         for width in 1..14u16 {
             for height in 1..9u16 {
                 let _ = render_to_string(&AppState::factorial(), width, height);
@@ -665,7 +640,6 @@ mod tests {
         assert!(screen.contains(" nothing "), "{screen}");
         assert!(!screen.contains("lines "), "{screen}");
     }
-
 
     fn render_styles(state: &AppState, width: u16, height: u16) -> ratatui::buffer::Buffer {
         let backend = ratatui::backend::TestBackend::new(width, height);
@@ -704,7 +678,6 @@ mod tests {
         use crate::keys::{handle_key, key};
         use ratatui::crossterm::event::KeyCode;
 
-
         let wrapper = handle_key(
             key(KeyCode::Tab),
             example(examples::add_with_non_empty_hole()),
@@ -726,7 +699,6 @@ mod tests {
         assert!(lit(&wrapper).contains('⦇'), "{}", lit(&wrapper));
         assert!(!lit(&contents).contains('⦇'), "{}", lit(&contents));
     }
-
 
     #[test]
     fn the_status_line_answers_from_inside_a_quarantine() {

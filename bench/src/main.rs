@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 
 use nothing_action::script::{parse_script, replay_script};

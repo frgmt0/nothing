@@ -40,9 +40,7 @@ pub fn rebuild(chain: &Chain) -> Exp {
 
 pub fn spine_path(chain_root: &[usize], index: usize) -> Path {
     let mut out = chain_root.to_vec();
-    for _ in 0..index {
-        out.push(1);
-    }
+    out.extend(std::iter::repeat_n(1, index));
     out
 }
 
@@ -136,8 +134,14 @@ mod tests {
             Exp::num(11),
             Exp::let_(id(2), Exp::num(22), Exp::num(33)),
         );
-        assert_eq!(crate::path::at(&e, &bound_path(&[], 0)), Some(&Exp::num(11)));
-        assert_eq!(crate::path::at(&e, &bound_path(&[], 1)), Some(&Exp::num(22)));
+        assert_eq!(
+            crate::path::at(&e, &bound_path(&[], 0)),
+            Some(&Exp::num(11))
+        );
+        assert_eq!(
+            crate::path::at(&e, &bound_path(&[], 1)),
+            Some(&Exp::num(22))
+        );
         assert_eq!(crate::path::at(&e, &tail_path(&[], 2)), Some(&Exp::num(33)));
     }
 

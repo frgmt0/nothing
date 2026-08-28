@@ -1,4 +1,3 @@
-
 use nothing_action::script::replay_script;
 use nothing_core::exp::{Exp, HoleId, Id};
 use nothing_core::typing::is_well_typed;

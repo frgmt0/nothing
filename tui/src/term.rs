@@ -1,4 +1,3 @@
-
 use std::io::{self, Stdout, stdout};
 
 use crossterm::event::{self, Event};
@@ -11,7 +10,7 @@ use crate::app::AppState;
 use crate::keys::handle_key;
 use crate::render::draw;
 
-pub fn run(state: AppState) -> io::Result<()> {
+pub fn run(state: AppState) -> io::Result<AppState> {
     install_panic_hook();
     let mut terminal = ratatui::try_init()?;
     let result = event_loop(&mut terminal, state);
@@ -23,16 +22,15 @@ pub fn run(state: AppState) -> io::Result<()> {
 fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     mut state: AppState,
-) -> io::Result<()> {
+) -> io::Result<AppState> {
     loop {
         terminal.draw(|frame| draw(frame, &state))?;
-
 
         if let Event::Key(key) = event::read()? {
             state = handle_key(key, state);
         }
         if state.quit {
-            return Ok(());
+            return Ok(state);
         }
     }
 }

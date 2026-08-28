@@ -197,7 +197,12 @@ impl AgentSession {
     }
 
     pub fn applied_entries(&self) -> Vec<LogEntry> {
-        self.log.entries().iter().take(self.cursor).cloned().collect()
+        self.log
+            .entries()
+            .iter()
+            .take(self.cursor)
+            .cloned()
+            .collect()
     }
 }
 
@@ -238,10 +243,7 @@ mod tests {
     fn built() -> AgentSession {
         let mut session = AgentSession::new(AuthorId::new(1));
         for step in factorial_script() {
-            assert!(
-                session.apply_text(step).unwrap(),
-                "`{step}` did not apply"
-            );
+            assert!(session.apply_text(step).unwrap(), "`{step}` did not apply");
         }
         session
     }
@@ -249,7 +251,10 @@ mod tests {
     #[test]
     fn a_session_builds_the_factorial_fixture() {
         let session = built();
-        assert_eq!(session.state().render(), "λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈");
+        assert_eq!(
+            session.state().render(),
+            "λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈"
+        );
         assert!(is_well_typed(&session.exp()));
         assert_eq!(session.log().len(), factorial_script().len());
     }

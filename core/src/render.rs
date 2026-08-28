@@ -1,4 +1,3 @@
-
 use std::fmt::Write as _;
 
 use crate::exp::{Exp, Id, Op, Side};
@@ -69,12 +68,10 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
         Exp::NonEmptyHole(_, e) => {
             out.push('⦇');
 
-
             fmt_prec(e, PREC_BINDER, names, out);
             out.push('⦈');
         }
         Exp::Pair(a, b) => {
-
             out.push('(');
             fmt_prec(a, PREC_BINDER, names, out);
             out.push_str(", ");
@@ -87,19 +84,15 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
                 Side::R => "snd ",
             });
 
-
             fmt_prec(e, PREC_ATOM, names, out);
         }
         Exp::Ap(f, a) => {
-
-
             fmt_prec(f, PREC_APP, names, out);
             out.push(' ');
             fmt_prec(a, PREC_ATOM, names, out);
         }
         Exp::BinOp(op, l, r) => {
             let p = op_prec(*op);
-
 
             fmt_prec(l, p, names, out);
             write!(out, " {} ", op_str(*op)).unwrap();
@@ -108,12 +101,10 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
         Exp::If(c, t, e) => {
             out.push_str("if ");
 
-
             fmt_prec(c, PREC_CMP, names, out);
             out.push_str(" then ");
             fmt_prec(t, PREC_CMP, names, out);
             out.push_str(" else ");
-
 
             fmt_prec(e, PREC_BINDER, names, out);
         }
@@ -167,10 +158,8 @@ mod tests {
         names
     }
 
-
     #[test]
     fn mul_binds_tighter_than_add_no_parens_needed() {
-
         let e = Exp::bin_op(
             Op::Add,
             Exp::num(1),
@@ -181,7 +170,6 @@ mod tests {
 
     #[test]
     fn add_under_mul_needs_parens() {
-
         let e = Exp::bin_op(
             Op::Mul,
             Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)),
@@ -192,7 +180,6 @@ mod tests {
 
     #[test]
     fn left_associative_chain_no_parens() {
-
         let e = Exp::bin_op(
             Op::Add,
             Exp::bin_op(Op::Sub, Exp::num(1), Exp::num(2)),
@@ -203,7 +190,6 @@ mod tests {
 
     #[test]
     fn right_nested_same_precedence_needs_parens() {
-
         let e = Exp::bin_op(
             Op::Sub,
             Exp::num(1),
@@ -244,12 +230,7 @@ mod tests {
     fn nested_lambda_in_binop_gets_parens() {
         let x = x(0);
 
-
-        let e = Exp::bin_op(
-            Op::Add,
-            Exp::num(1),
-            Exp::lam(x, Ty::Num, Exp::var(x)),
-        );
+        let e = Exp::bin_op(Op::Add, Exp::num(1), Exp::lam(x, Ty::Num, Exp::var(x)));
         assert_eq!(render(&e, &names()), "1 + (λx0:Num. x0)");
     }
 
@@ -275,7 +256,6 @@ mod tests {
             "λx0:Num. let x0 = x0 in if x0 < 1 then 1 else x0"
         );
     }
-
 
     #[test]
     fn the_projection_takes_every_name_from_the_table() {
@@ -313,7 +293,10 @@ mod tests {
 
     #[test]
     fn empty_hole_renders_bare_brackets() {
-        assert_eq!(render(&Exp::empty_hole(HoleId::from_u128(0)), &names()), "⦇⦈");
+        assert_eq!(
+            render(&Exp::empty_hole(HoleId::from_u128(0)), &names()),
+            "⦇⦈"
+        );
     }
 
     #[test]
@@ -324,7 +307,6 @@ mod tests {
 
     #[test]
     fn hole_contents_never_get_extra_parens_from_context() {
-
         let e = Exp::bin_op(
             Op::Add,
             Exp::num(1),
@@ -332,7 +314,6 @@ mod tests {
         );
         assert_eq!(render(&e, &names()), "1 + ⦇true⦈");
     }
-
 
     #[test]
     fn pair_and_types_render() {
@@ -347,13 +328,10 @@ mod tests {
         assert_eq!(render(&e, &names()), "λx0:?. x0");
     }
 
-
     use crate::examples::*;
 
     #[test]
     fn all_ten_examples_render_legibly() {
-
-
         let examples: Vec<Exp> = vec![
             let_identity(),
             increment_applied(),
@@ -414,8 +392,6 @@ mod tests {
 
     #[test]
     fn snapshot_square_and_compare() {
-
-
         assert_eq!(
             render(&square_and_compare(), &names()),
             "let x0 = (λx1:Num. x1 * x1) in x0 5 == 25"

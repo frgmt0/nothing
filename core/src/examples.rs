@@ -1,4 +1,3 @@
-
 use crate::exp::{Exp, HoleId, Id, Op, Side};
 use crate::names::NameTable;
 use crate::ty::Ty;
@@ -118,11 +117,13 @@ mod tests {
             ("if_over_pairs_with_hole", if_over_pairs_with_hole()),
         ];
 
-
         assert_eq!(examples.len(), 10, "expected exactly ten example programs");
 
         for (name, exp) in &examples {
-            assert!(is_well_typed(exp), "expected `{name}` to be well-typed: {exp:?}");
+            assert!(
+                is_well_typed(exp),
+                "expected `{name}` to be well-typed: {exp:?}"
+            );
         }
     }
 
@@ -139,9 +140,7 @@ mod tests {
                 Exp::If(c, t, e) => {
                     contains_empty_hole(c) || contains_empty_hole(t) || contains_empty_hole(e)
                 }
-                Exp::Let(_, bound, body) => {
-                    contains_empty_hole(bound) || contains_empty_hole(body)
-                }
+                Exp::Let(_, bound, body) => contains_empty_hole(bound) || contains_empty_hole(body),
                 Exp::Pair(l, r) => contains_empty_hole(l) || contains_empty_hole(r),
                 Exp::Proj(_, e) => contains_empty_hole(e),
             }
@@ -156,7 +155,10 @@ mod tests {
         .filter(|e| contains_empty_hole(e))
         .count();
 
-        assert!(count >= 2, "expected at least two examples with an empty hole");
+        assert!(
+            count >= 2,
+            "expected at least two examples with an empty hole"
+        );
     }
 
     #[test]

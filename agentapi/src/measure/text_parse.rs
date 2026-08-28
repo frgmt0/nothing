@@ -2,7 +2,9 @@ use nothing_action::script::parse_ty;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::names::NameTable;
 
-const KEYWORDS: &[&str] = &["if", "then", "else", "let", "in", "true", "false", "fst", "snd"];
+const KEYWORDS: &[&str] = &[
+    "if", "then", "else", "let", "in", "true", "false", "fst", "snd",
+];
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TextError(pub String);
@@ -161,14 +163,18 @@ impl Parser<'_> {
             return Err(TextError(format!("`{name}` is a keyword, not a name")));
         }
         if !self.eat_symbol(":") {
-            return Err(TextError("a lambda parameter needs `:` and a type".to_string()));
+            return Err(TextError(
+                "a lambda parameter needs `:` and a type".to_string(),
+            ));
         }
         let start = self.pos;
         while matches!(self.peek(), Some(c) if c != '.') {
             self.pos += 1;
         }
         if self.peek() != Some('.') {
-            return Err(TextError("a lambda annotation must end with `.`".to_string()));
+            return Err(TextError(
+                "a lambda annotation must end with `.`".to_string(),
+            ));
         }
         let ty_text: String = self.chars[start..self.pos].iter().collect();
         self.pos += 1;
@@ -389,8 +395,7 @@ mod tests {
 
     fn round_trips(exp: &nothing_core::exp::Exp, names: &NameTable) {
         let text = render(exp, names);
-        let parsed = parse_program(&text)
-            .unwrap_or_else(|e| panic!("`{text}` did not parse: {e}"));
+        let parsed = parse_program(&text).unwrap_or_else(|e| panic!("`{text}` did not parse: {e}"));
         assert_eq!(
             render(&parsed.exp, &parsed.names),
             text,
@@ -433,7 +438,10 @@ mod tests {
     fn a_parsed_program_is_well_typed_when_the_text_describes_one() {
         let parsed = parse_program("λn:Num. if n == 0 then 1 else n * 2").unwrap();
         assert!(is_well_typed(&parsed.exp));
-        assert_eq!(render(&parsed.exp, &parsed.names), "λn:Num. if n == 0 then 1 else n * 2");
+        assert_eq!(
+            render(&parsed.exp, &parsed.names),
+            "λn:Num. if n == 0 then 1 else n * 2"
+        );
     }
 
     #[test]
@@ -498,13 +506,19 @@ mod tests {
     fn application_is_left_associative_and_arguments_are_atoms() {
         let parsed = parse_program("λf:Num -> Num -> Num. f 1 2").unwrap();
         assert!(is_well_typed(&parsed.exp));
-        assert_eq!(render(&parsed.exp, &parsed.names), "λf:Num -> Num -> Num. f 1 2");
+        assert_eq!(
+            render(&parsed.exp, &parsed.names),
+            "λf:Num -> Num -> Num. f 1 2"
+        );
     }
 
     #[test]
     fn newlines_and_extra_spacing_do_not_matter() {
         let parsed = parse_program("λn:Num.\n  if n == 0\n  then 1\n  else n * 2").unwrap();
-        assert_eq!(render(&parsed.exp, &parsed.names), "λn:Num. if n == 0 then 1 else n * 2");
+        assert_eq!(
+            render(&parsed.exp, &parsed.names),
+            "λn:Num. if n == 0 then 1 else n * 2"
+        );
     }
 
     #[test]

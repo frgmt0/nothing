@@ -1,4 +1,3 @@
-
 use std::fmt;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -127,7 +126,6 @@ mod tests {
             let key = parse_key(token).unwrap_or_else(|| panic!("`{token}` did not parse"));
             assert_eq!(key_name(&key), token, "`{token}` did not round trip");
         }
-
 
         assert_eq!(parse_key("TAB"), parse_key("tab"));
         assert_eq!(parse_key("backspace"), parse_key("bksp"));

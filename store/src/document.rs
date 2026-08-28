@@ -6,7 +6,7 @@ use crate::actionlog::{decode_log, encode_log};
 use crate::codec::{read_u8, read_varint, write_varint};
 use crate::error::DecodeError;
 use crate::names::{decode_names, encode_names};
-use crate::nodes::{build_node_table, content_hash, decode_node_table, NodeEntry};
+use crate::nodes::{NodeEntry, build_node_table, content_hash, decode_node_table};
 
 pub const MAGIC: [u8; 4] = *b"NTHG";
 pub const VERSION_MAJOR: u8 = 1;
@@ -40,10 +40,7 @@ fn encode_node_table(buf: &mut Vec<u8>, table: &[NodeEntry]) {
     }
 }
 
-fn decode_node_table_bytes(
-    bytes: &[u8],
-    pos: &mut usize,
-) -> Result<Vec<NodeEntry>, DecodeError> {
+fn decode_node_table_bytes(bytes: &[u8], pos: &mut usize) -> Result<Vec<NodeEntry>, DecodeError> {
     let count = read_varint(bytes, pos)?;
     let mut table = Vec::with_capacity(count as usize);
     for _ in 0..count {

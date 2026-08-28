@@ -119,7 +119,13 @@ fn names_json(names: &NameTable) -> String {
     entries.sort_by_key(|(id, _)| id.as_u128());
     let items: Vec<String> = entries
         .iter()
-        .map(|(id, name)| format!("{{\"id\":{},\"name\":{}}}", escape(&id.to_string()), escape(name)))
+        .map(|(id, name)| {
+            format!(
+                "{{\"id\":{},\"name\":{}}}",
+                escape(&id.to_string()),
+                escape(name)
+            )
+        })
         .collect();
     format!("[{}]", items.join(","))
 }
@@ -197,7 +203,11 @@ mod tests {
 
     #[test]
     fn debug_json_is_well_formed_enough_to_have_balanced_braces() {
-        let doc = Document::new(examples::square_and_compare(), examples::names(), ActionLog::new());
+        let doc = Document::new(
+            examples::square_and_compare(),
+            examples::names(),
+            ActionLog::new(),
+        );
         let json = to_debug_json(&doc);
         let opens = json.matches('{').count();
         let closes = json.matches('}').count();

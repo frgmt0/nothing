@@ -34,7 +34,9 @@ fn is_fully_reduced(v: &Value) -> bool {
 }
 
 fn env_to_dyn_env(env: &IncrEnv) -> Env {
-    env.iter().map(|(id, (v, _))| (*id, value_to_dyn(v))).collect()
+    env.iter()
+        .map(|(id, (v, _))| (*id, value_to_dyn(v)))
+        .collect()
 }
 
 pub fn value_to_dyn(v: &Value) -> Dyn {
@@ -268,10 +270,7 @@ impl IncrEngine {
                     Value::Closure(id, ty, body, cenv) => {
                         if self.fuel == 0 {
                             self.exhausted = true;
-                            Value::Ap(
-                                Box::new(Value::Closure(id, ty, body, cenv)),
-                                Box::new(va),
-                            )
+                            Value::Ap(Box::new(Value::Closure(id, ty, body, cenv)), Box::new(va))
                         } else {
                             self.fuel -= 1;
                             let inner_env = cenv.update(id, (va, va_dig));
@@ -297,7 +296,11 @@ impl IncrEngine {
                 match &vc {
                     Value::Bool(true) => self.eval_node(then, env).0,
                     Value::Bool(false) => self.eval_node(else_, env).0,
-                    _ => Value::If(Box::new(vc), Arc::new((**then).clone()), Arc::new((**else_).clone())),
+                    _ => Value::If(
+                        Box::new(vc),
+                        Arc::new((**then).clone()),
+                        Arc::new((**else_).clone()),
+                    ),
                 }
             }
             Exp::Let(id, bound, body) => {
@@ -498,7 +501,10 @@ mod tests {
 
         let transitive = graph.transitive_dependents(bound_hash);
         assert!(transitive.contains(&var_hash));
-        assert!(transitive.contains(&graph.root), "editing the binding must dirty the whole program");
+        assert!(
+            transitive.contains(&graph.root),
+            "editing the binding must dirty the whole program"
+        );
         assert_eq!(
             transitive.len(),
             5,
@@ -572,7 +578,11 @@ mod tests {
         let x = Id::from_u128(42);
         let mut names = NameTable::new();
         names.set(x, "x");
-        let program = Exp::let_(x, Exp::num(5), Exp::bin_op(Op::Add, Exp::var(x), Exp::num(1)));
+        let program = Exp::let_(
+            x,
+            Exp::num(5),
+            Exp::bin_op(Op::Add, Exp::var(x), Exp::num(1)),
+        );
         let mut state = EditState::with_names(program, names);
 
         let mut engine = IncrEngine::new();
@@ -610,7 +620,11 @@ mod tests {
         match outcome.dyn_result() {
             Dyn::Pair(a, b) => {
                 assert_eq!(**a, Dyn::Num(6), "the first call sees x = 5");
-                assert_eq!(**b, Dyn::Num(11), "the second call sees x = 10, not a cached 6");
+                assert_eq!(
+                    **b,
+                    Dyn::Num(11),
+                    "the second call sees x = 10, not a cached 6"
+                );
             }
             other => panic!("expected a pair of numbers, got {other:?}"),
         }

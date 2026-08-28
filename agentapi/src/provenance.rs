@@ -173,7 +173,9 @@ pub fn provenance_of(base: &EditState, entries: &[LogEntry]) -> Provenance {
         }
 
         for path in unresolved {
-            let Some(node) = at(&new, &path) else { continue };
+            let Some(node) = at(&new, &path) else {
+                continue;
+            };
             let carried = orphans
                 .get_mut(&deep_key(node))
                 .and_then(|available| available.pop());
@@ -489,7 +491,10 @@ mod tests {
         session.set_author(MODEL);
         assert!(session.apply_text("rename total").unwrap());
         let after = provenance_of(session.base(), &session.applied_entries());
-        assert_eq!(before.get(&[]).map(|v| v.author), after.get(&[]).map(|v| v.author));
+        assert_eq!(
+            before.get(&[]).map(|v| v.author),
+            after.get(&[]).map(|v| v.author)
+        );
         let id = session.state().zipper.binder_id().unwrap();
         assert_eq!(after.name_provenance(id).map(|v| v.author), Some(MODEL));
     }
@@ -523,7 +528,11 @@ mod tests {
         );
         assert_eq!(marked, "λn:Num. ⟦n * 2⟧");
 
-        let stripped = marked.replace('⟦', "").replace('⟧', "").replace('⟨', "").replace('⟩', "");
+        let stripped = marked
+            .replace('⟦', "")
+            .replace('⟧', "")
+            .replace('⟨', "")
+            .replace('⟩', "");
         assert_eq!(stripped, render(&session.exp(), session.names()));
     }
 

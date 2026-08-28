@@ -1,4 +1,3 @@
-
 use nothing_action::act::Action;
 
 use crate::app::Slot;
@@ -17,7 +16,6 @@ pub struct Keystroke {
     pub before: Typing,
     pub after: Typing,
 }
-
 
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct History {
@@ -56,8 +54,6 @@ impl History {
     }
 
     pub fn close_keystroke(&mut self, start: usize, before: Typing, after: Typing) {
-
-
         let end = self.applied();
         if end < start || (end == start && before == after) {
             return;

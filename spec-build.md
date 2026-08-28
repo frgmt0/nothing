@@ -31,11 +31,11 @@ Decided now, relitigated only via DECISIONS.md:
 
 Boring. First. A project that cannot release cannot be used.
 
-- [ ] **CI on every push.** GitHub Actions: `cargo build --workspace`, `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`. **Done when** a push with a failing test or a clippy warning goes red.
-- [ ] **Fix the workspace to pass that CI.** Clippy and fmt have never been enforced; there will be a backlog. **Done when** CI is green on main with no allow-attributes added to silence real findings.
-- [ ] **The `nothing` binary.** One bin crate wrapping the existing surfaces as subcommands: `nothing edit <file>`, `nothing run <file>`, `nothing check <file>`, `nothing repl`, `nothing protocol`, `nothing merge <base> <a> <b>`, `nothing --version`. **Done when** every subcommand works against a file produced by `nothing edit`, and `--help` for each fits on one screen.
-- [ ] **Release automation.** Tagged builds produce macOS (arm64) and Linux (x86_64) binaries as CI artifacts. A `CHANGELOG.md` exists with an Unreleased section. **Done when** pushing a tag yields downloadable binaries a fresh machine can run.
-- [ ] **Write the full-thread checklist into `CONTRIBUTING.md`** as a literal copy-paste checklist for adding a language feature, with one checkbox per layer. **Done when** the checklist exists and B2 uses it verbatim four times.
+- [x] **CI on every push.** GitHub Actions: `cargo build --workspace`, `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`. **Done when** a push with a failing test or a clippy warning goes red.
+- [x] **Fix the workspace to pass that CI.** Clippy and fmt have never been enforced; there will be a backlog. **Done when** CI is green on main with no allow-attributes added to silence real findings.
+- [x] **The `nothing` binary.** One bin crate wrapping the existing surfaces as subcommands: `nothing edit <file>`, `nothing run <file>`, `nothing check <file>`, `nothing repl`, `nothing protocol`, `nothing merge <base> <a> <b>`, `nothing --version`. **Done when** every subcommand works against a file produced by `nothing edit`, and `--help` for each fits on one screen.
+- [x] **Release automation.** Tagged builds produce macOS (arm64) and Linux (x86_64) binaries as CI artifacts. A `CHANGELOG.md` exists with an Unreleased section. **Done when** pushing a tag yields downloadable binaries a fresh machine can run.
+- [x] **Write the full-thread checklist into `CONTRIBUTING.md`** as a literal copy-paste checklist for adding a language feature, with one checkbox per layer. **Done when** the checklist exists and B2 uses it verbatim four times.
 
 ---
 
