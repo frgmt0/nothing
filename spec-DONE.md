@@ -192,7 +192,7 @@ Only start this once the core editor is something you use willingly.
 
 Do not skip this. A project without a decision point becomes a hobby that quietly ends.
 
-- [ ] **Write the results essay.** Everything measured: keystroke ratios over time, merge benchmark table, agent invalid-edit rates, what turned out to be wrong. Publish it on the blog. **Done when** it is live.
+- [x] **Write the results essay.** Everything measured: keystroke ratios over time, merge benchmark table, agent invalid-edit rates, what turned out to be wrong. Publish it on the blog. **Done when** it is live.
 - [x] **Pick one of three paths and write down the choice.** (a) Research artifact — polish the calculus, write it up properly, stop. (b) Merge service — extract Phase 9 as a standalone product with a text-language frontend, since the merge engine is valuable without anyone adopting the language. (c) Agent surface — extract Phase 10 as an SDK and integrate it into Beckett. **Done when** `DECISIONS.md` has the choice, the reasoning, and the date.
 
 ---
