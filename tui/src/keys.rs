@@ -22,12 +22,18 @@ pub fn handle_key(key: KeyEvent, state: AppState) -> AppState {
     if ctrl && key.code == KeyCode::Char('r') {
         return or_hint(state.redo(), state, "nothing to redo");
     }
+    if ctrl && key.code == KeyCode::Char('p') {
+        return state.cycle_projection();
+    }
 
     let opened = state.open_keystroke();
     dispatch(key, state).close_keystroke(opened)
 }
 
 fn dispatch(key: KeyEvent, state: AppState) -> AppState {
+    if let Some(next) = crate::projection::active(&state).handle_key(key, state.clone()) {
+        return next;
+    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match (key.code, ctrl) {
 

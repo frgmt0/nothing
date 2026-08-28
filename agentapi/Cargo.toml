@@ -1,0 +1,25 @@
+[package]
+name = "nothing-agentapi"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "protocol"
+path = "src/bin/protocol.rs"
+
+[[bin]]
+name = "drive"
+path = "src/bin/drive.rs"
+
+[[bin]]
+name = "agentbench"
+path = "src/bin/agentbench.rs"
+
+[dependencies]
+nothing-core = { path = "../core" }
+nothing-action = { path = "../action" }
+nothing-store = { path = "../store" }
+nothing-merge = { path = "../merge" }
+
+[dev-dependencies]
+proptest = "1"

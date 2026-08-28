@@ -577,3 +577,64 @@ one keystroke per line):
 Within one or two keystrokes of the hand-counted predictions everywhere, and
 `record` is still the number to watch. These are the editor's own numbers;
 the dated ratios in `bench/RESULTS.md` are written by the benchmark re-run.
+
+---
+
+## Phase 11 — projections
+
+One binding, added on top of everything above rather than into it: `C-p`
+cycles which *projection* renders the focused program. A projection is a
+view of the AST and an edit surface at once — it still turns keys into the
+same `Action`s from §Coverage, just sometimes by a different route.
+
+- **`C-p` cycles `auto → text → state machine → beginner → auto`.** "auto"
+  is not a fourth look, it is the absence of an override: the editor picks
+  a projection by matching the shape of the whole program, currently
+  recognising one shape (a function whose body is two or more chained
+  `if x == k then … else …` tests against its own parameter, ending in a
+  default — the three-case state machine reference program is exactly this
+  shape). A program that does not match renders as text whether or not
+  there is an override. Pressing `C-p` once always **forces text**,
+  because the first thing an override needs to do is get you out of a
+  table you did not ask for; the next three presses walk state machine,
+  beginner, and back to auto. `C-p` is not an `Action` and is not logged —
+  it changes what you see, not the program — so it costs nothing to press
+  and nothing to undo.
+- **The state machine projection is a table, not a diagram of lines.**
+  Each row is `condition  ->  result`; the last row is always `else`, the
+  chain's final default. Moving `↑`/`↓` inside the table moves between
+  rows; `↓`/`↑`/`←`/`→` on a fresh table (nothing selected yet) start on
+  row 0's condition. Landing on a cell moves the *real* cursor to the
+  subexpression that cell displays — the constant a condition compares
+  against, or the row's result — so every other key (digits, `~`, `!`,
+  `Tab`, `Enter`, …) reaches it exactly as it would in the text projection,
+  because it is the same node. `←`/`→` switch between a row's condition
+  and result cell; the `else` row has no condition cell, so `←` on it goes
+  to the result instead of nowhere. Editing a cell is editing the AST:
+  typing `5` on a condition changes which case it matches, typing on a
+  result changes what that case produces, and both show up immediately in
+  the text projection because there is only one program underneath the two
+  views. Pinned by `tui/tests/projections.rs`, which drives an edit through
+  the table and reads it back as text, then the other way around.
+- **The beginner projection is the same AST in sentences.** No operator
+  symbols anywhere — `+` is "the sum of _ and _", `==` is "whether _
+  equals _", `if`/`then`/`else` is "if _ then _ otherwise _", a lambda is
+  "a function taking _ (_) and returning _", an empty hole is `(blank)`
+  and a quarantine is "(not yet fitting: _)". It is read-only in the sense
+  that it adds no new keys: typing still edits the focused node through
+  the ordinary grammar, and the sentence around it changes to match, the
+  same way the text projection's parentheses change when a sibling is
+  added. Snapshotted for all ten `core::examples` plus the factorial and
+  state-machine fixtures in `tui/src/beginner.rs`; whether it actually
+  reads clearly to someone who has never seen the language is a question
+  a test cannot answer and still wants a person to look at it.
+- **Both new projections are the same `Projection` trait as the text one**
+  (`tui/src/projection.rs`): given the state, produce the marked-up text
+  (the cursor is `»…«`, exactly as in the text projection, so the shared
+  wrapping/scrolling/highlighting pipeline in `render.rs` does not need to
+  know which projection it is drawing), and given a keystroke, either
+  handle it in the projection's own vocabulary or hand it back to the
+  ordinary grammar. The text projection's `handle_key` always hands every
+  key back — it has no vocabulary of its own — which is what makes this
+  phase additive: every binding and every test above this line is exactly
+  as it was.

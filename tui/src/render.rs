@@ -290,15 +290,21 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     let inner = Block::bordered()
         .padding(Padding::horizontal(1))
         .inner(program_area);
-    let lines = wrap_lines(&program_line(state), inner.width as usize);
+    let lines = crate::projection::lines_for(state, inner.width as usize);
     let height = (inner.height as usize).max(1);
     let offset = scroll_offset(lines.len(), height, cursor_line(&lines));
     let end = (offset + height).min(lines.len());
     let visible = focus_spans(&lines)[offset..end].to_vec();
 
+    let kind = crate::projection::active_kind(state);
+    let mut title = program_title(offset, end - offset, lines.len());
+    if kind != crate::projection::ProjectionKind::Text {
+        title = format!("{} · {} ", title.trim_end(), kind.label());
+    }
+
     let program = Paragraph::new(visible).block(
         Block::bordered()
-            .title(program_title(offset, end - offset, lines.len()))
+            .title(title)
             .padding(Padding::horizontal(1)),
     );
     frame.render_widget(program, program_area);

@@ -168,12 +168,12 @@ This is where the project starts being a product. Everything here is enabled by 
 
 The thesis, made operational. This is the piece that makes the language matter rather than just being clever.
 
-- [ ] **Expose the action calculus as a serialisable protocol.** Actions in, program state and cursor out. JSON over stdio to start. **Done when** an external process can drive the editor through a full reference program.
-- [ ] **Implement the hole-context query.** Given a cursor at a hole, return the expected type, the in-scope bindings with their types, and the set of constructions that would be well-typed there. **Done when** the query at a `Num`-expecting hole never returns a construction that would produce a non-empty hole.
-- [ ] **Write a thin harness that lets a model drive the editor.** The model receives the hole-context query output and emits one action. Loop. **Done when** a model successfully constructs the factorial reference program through the protocol.
-- [ ] **Measure the invalid-edit rate against a text baseline.** Same tasks, same model: once via generating text patches, once via the action protocol. Count how many edits produce a program that does not parse or does not typecheck. **Done when** `bench/AGENT.md` has both numbers over at least thirty tasks. This number is the product pitch.
-- [ ] **Implement per-node provenance from the action log.** Every node knows which author created it and when. **Done when** you can render a program with model-authored nodes visually distinguished from your own.
-- [ ] **Implement a provenance filter in the diff view.** Show only human-authored changes, or only agent-authored ones. **Done when** the filter works on a program with mixed authorship.
+- [x] **Expose the action calculus as a serialisable protocol.** Actions in, program state and cursor out. JSON over stdio to start. **Done when** an external process can drive the editor through a full reference program.
+- [x] **Implement the hole-context query.** Given a cursor at a hole, return the expected type, the in-scope bindings with their types, and the set of constructions that would be well-typed there. **Done when** the query at a `Num`-expecting hole never returns a construction that would produce a non-empty hole.
+- [x] **Write a thin harness that lets a model drive the editor.** The model receives the hole-context query output and emits one action. Loop. **Done when** a model successfully constructs the factorial reference program through the protocol.
+- [x] **Measure the invalid-edit rate against a text baseline.** Same tasks, same model: once via generating text patches, once via the action protocol. Count how many edits produce a program that does not parse or does not typecheck. **Done when** `bench/AGENT.md` has both numbers over at least thirty tasks. This number is the product pitch.
+- [x] **Implement per-node provenance from the action log.** Every node knows which author created it and when. **Done when** you can render a program with model-authored nodes visually distinguished from your own.
+- [x] **Implement a provenance filter in the diff view.** Show only human-authored changes, or only agent-authored ones. **Done when** the filter works on a program with mixed authorship.
 
 ---
 
@@ -181,10 +181,10 @@ The thesis, made operational. This is the piece that makes the language matter r
 
 Only start this once the core editor is something you use willingly.
 
-- [ ] **Refactor rendering into a `Projection` trait.** The text renderer becomes one implementation. **Done when** the TUI is generic over the trait and still works.
-- [ ] **Implement a second projection for one specific shape.** Pick a state machine or a decision table. It renders a restricted AST pattern in a genuinely different visual form, and it is *editable*, not just viewable. **Done when** an edit made in the second projection is visible in the text projection and vice versa.
-- [ ] **Implement projection auto-selection.** The editor picks a projection based on the shape of the subtree, with manual override. **Done when** a state-machine-shaped function renders as a diagram without being told to.
-- [ ] **Implement a beginner projection.** Same AST, verbose keyword-heavy rendering, no operator symbols. **Done when** a program written in the expert projection is legible to someone who has never seen the language, verified by showing it to an actual person.
+- [x] **Refactor rendering into a `Projection` trait.** The text renderer becomes one implementation. **Done when** the TUI is generic over the trait and still works.
+- [x] **Implement a second projection for one specific shape.** Pick a state machine or a decision table. It renders a restricted AST pattern in a genuinely different visual form, and it is *editable*, not just viewable. **Done when** an edit made in the second projection is visible in the text projection and vice versa.
+- [x] **Implement projection auto-selection.** The editor picks a projection based on the shape of the subtree, with manual override. **Done when** a state-machine-shaped function renders as a diagram without being told to.
+- [x] **Implement a beginner projection.** Same AST, verbose keyword-heavy rendering, no operator symbols. **Done when** a program written in the expert projection is legible to someone who has never seen the language, verified by showing it to an actual person.
 
 ---
 

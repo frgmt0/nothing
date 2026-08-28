@@ -10,6 +10,7 @@ use nothing_core::ty::Ty;
 
 use crate::history::{History, Typing};
 use crate::live::EngineHandle;
+use crate::projection::ProjectionKind;
 
 const FACTORIAL_FIXTURE: &str = include_str!("../../bench/fixtures/factorial.actions");
 
@@ -40,6 +41,7 @@ pub struct AppState {
     pub hint: Option<String>,
     pub quit: bool,
     pub engine: EngineHandle,
+    pub projection_override: Option<ProjectionKind>,
     base: EditState,
     history: History,
 }
@@ -67,6 +69,7 @@ impl AppState {
             hint: None,
             quit: false,
             engine: EngineHandle::new(),
+            projection_override: None,
             history: History::new(),
         }
     }
@@ -365,6 +368,17 @@ impl AppState {
     pub fn exit_slot_to_body(&self) -> Option<AppState> {
         let child = self.binder_body_child()?;
         self.apply_actions(&[Action::MoveChild(child)])
+    }
+
+    pub fn active_projection(&self) -> ProjectionKind {
+        crate::projection::active_kind(self)
+    }
+
+    pub fn cycle_projection(&self) -> AppState {
+        let mut next = self.clone();
+        next.projection_override = crate::projection::next_override(self.projection_override);
+        next.hint = None;
+        next
     }
 
     pub fn focus_binder(&self) -> Option<AppState> {
