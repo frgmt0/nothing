@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 nothing-core = { path = "../core" }
 nothing-action = { path = "../action" }
+nothing-eval = { path = "../eval" }
 ratatui = "0.30.2"
 # Must stay on the version `ratatui` itself re-exports (its default
 # `crossterm` feature selects crossterm 0.29), or the `KeyEvent` the pure key

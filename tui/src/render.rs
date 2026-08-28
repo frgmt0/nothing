@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, Padding, Paragraph, Wrap};
 
 use crate::app::{AppState, Slot};
 use crate::complete;
+use crate::live;
 
 pub fn program_line(state: &AppState) -> String {
     slot_marked(state).unwrap_or_else(|| render_with_cursor(state.zipper(), state.names()))
@@ -275,8 +276,9 @@ fn focus_label(exp: &Exp) -> &'static str {
 }
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
-    let [program_area, status_area, keys_area] = Layout::vertical([
+    let [program_area, value_area, status_area, keys_area] = Layout::vertical([
         Constraint::Min(3),
+        Constraint::Length(1),
         Constraint::Length(1),
 
 
@@ -300,6 +302,10 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
             .padding(Padding::horizontal(1)),
     );
     frame.render_widget(program, program_area);
+    frame.render_widget(
+        Paragraph::new(live::live_line(state)).style(Style::default().add_modifier(Modifier::BOLD)),
+        value_area,
+    );
     frame.render_widget(
         Paragraph::new(status_line(state)).style(Style::default().add_modifier(Modifier::DIM)),
         status_area,
@@ -734,6 +740,48 @@ mod tests {
             "{}",
             status_line(&repaired)
         );
+    }
+
+    #[test]
+    fn the_live_value_is_on_screen_under_the_program_and_follows_every_edit() {
+        use crate::keys::{handle_key, key};
+        use ratatui::crossterm::event::KeyCode;
+
+        let state = "1+2".chars().fold(AppState::empty(), |state, c| {
+            handle_key(key(KeyCode::Char(c)), state)
+        });
+        let state = handle_key(key(KeyCode::Up), state);
+
+        let screen = render_to_string(&state, 60, 10);
+        assert!(screen.contains("»1 + 2«"), "{screen}");
+        assert!(screen.contains("⇒ 3"), "the value is beside it: {screen}");
+
+        let edited = handle_key(key(KeyCode::Down), state);
+        let edited = handle_key(key(KeyCode::Right), edited);
+        let edited = handle_key(key(KeyCode::Char('7')), edited);
+        let edited = handle_key(key(KeyCode::Up), edited);
+        let screen = render_to_string(&edited, 60, 10);
+        assert!(screen.contains("»1 + 27«"), "{screen}");
+        assert!(
+            screen.contains("⇒ 28") && !screen.contains("⇒ 3"),
+            "no run command, and the old value is gone: {screen}"
+        );
+    }
+
+    #[test]
+    fn a_blocked_value_and_an_exhausted_one_read_differently_on_screen() {
+        let blocked = render_to_string(&example(examples::add_with_empty_hole()), 90, 10);
+        assert!(blocked.contains("⇒ 1 + ⦇⦈ · blocked on ⦇⦈#"), "{blocked}");
+
+        let x = nothing_core::exp::Id::from_u128(0x77);
+        let omega = Exp::lam(
+            x,
+            nothing_core::ty::Ty::Hole,
+            Exp::ap(Exp::var(x), Exp::var(x)),
+        );
+        let looping = render_to_string(&AppState::new(Exp::ap(omega.clone(), omega)), 90, 10);
+        assert!(looping.contains("still running after"), "{looping}");
+        assert!(!looping.contains("blocked"), "{looping}");
     }
 
     #[test]

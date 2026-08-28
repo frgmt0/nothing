@@ -542,6 +542,27 @@ friction session (`FRICTION.md`); each is pinned by a test named after it.
    (#13, #19). Neither is a binding change and neither costs a keystroke,
    which is why they are here rather than in the grammar table.
 
+Item 15 is dated **2026-08-28** and belongs to Phase 6.
+
+15. **There is no run key, because there is no run.** A line under the
+   program pane shows the value of the expression the cursor is on,
+   recomputed on every keystroke (`tui/src/live.rs`). It reads `⇒ v` for
+   the focus, or `program ⇒ v` when the focus is a bare hole or mentions a
+   binder from further out and therefore has no value of its own. Three
+   outcomes are visibly different: a value (`⇒ 120`), an indeterminate
+   result — the program ran until it needed a hole and stopped, printing
+   the partially-evaluated expression, which hole it wants, and what was
+   bound where it stopped (`⇒ 1 + ⦇⦈ · blocked on ⦇⦈#a1b2c3d4 · n = 5`) —
+   and exhaustion (`⇒ … still running after 4000 steps`), which exists
+   because recursion arrived in Phase 6 and the editor must not hang on a
+   half-typed loop. A key was considered for "evaluate now" and rejected
+   for the same reason there is no confirm key on a name run: if the value
+   is only correct after you press something, the screen is allowed to lie
+   in between. No binding changed; the reserved characters listed above are
+   still reserved. Pinned by
+   `live::tests::editing_an_expression_updates_its_displayed_value_with_no_run_command`
+   and `render::tests::the_live_value_is_on_screen_under_the_program_and_follows_every_edit`.
+
 Measured, replacing the predicted table's middle column (`tui/tests/keys/`,
 one keystroke per line):
 

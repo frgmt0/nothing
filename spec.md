@@ -126,20 +126,20 @@ Small phase, large consequences. Do it before serialisation, because it changes 
 
 A language you cannot run is a diagram. This phase makes it a language.
 
-- [ ] **Implement a small-step evaluator for the hole-free fragment.** **Done when** all five reference programs evaluate to the expected values.
-- [ ] **Add recursion.** Either a `letrec` form or a fixpoint combinator — pick one, write down why in `DECISIONS.md`. **Done when** factorial actually computes.
-- [ ] **Implement evaluation *around* holes.** A program with holes does not fail to run; it runs until it needs the hole's value, then produces an *indeterminate* result that records what was blocked and in what environment. **Done when** `1 + ⦇⦈` evaluates to an indeterminate value that reports the missing hole rather than panicking.
-- [ ] **Implement hole environment capture.** Each indeterminate result carries the environment at the point of blocking, so the editor can show "here is what was in scope when we got stuck". **Done when** evaluating a hole inside a lambda applied to `5` shows the binding of the parameter to `5`.
-- [ ] **Render live values in the editor next to the expressions that produce them.** **Done when** editing an expression updates its displayed value without any explicit run command.
+- [x] **Implement a small-step evaluator for the hole-free fragment.** **Done when** all five reference programs evaluate to the expected values.
+- [x] **Add recursion.** Either a `letrec` form or a fixpoint combinator — pick one, write down why in `DECISIONS.md`. **Done when** factorial actually computes.
+- [x] **Implement evaluation *around* holes.** A program with holes does not fail to run; it runs until it needs the hole's value, then produces an *indeterminate* result that records what was blocked and in what environment. **Done when** `1 + ⦇⦈` evaluates to an indeterminate value that reports the missing hole rather than panicking.
+- [x] **Implement hole environment capture.** Each indeterminate result carries the environment at the point of blocking, so the editor can show "here is what was in scope when we got stuck". **Done when** evaluating a hole inside a lambda applied to `5` shows the binding of the parameter to `5`.
+- [x] **Render live values in the editor next to the expressions that produce them.** **Done when** editing an expression updates its displayed value without any explicit run command.
 
 ---
 
 ## Phase 7 — Persistence
 
-- [ ] **Design the on-disk format and write it up in `FORMAT.md` before implementing.** Content-addressed nodes, a name table, and an action log. Specify version bytes. **Done when** the document is complete enough that someone else could implement a reader.
-- [ ] **Implement serialisation and deserialisation.** Binary, not JSON — this is not a text format and pretending otherwise invites people to hand-edit it. Provide a debug JSON export separately. **Done when** every example program round-trips byte-identically.
-- [ ] **Implement content addressing for nodes.** Hash each node over its structure and children's hashes, excluding names. Two structurally identical functions with different variable names hash the same. **Done when** that property holds as a test.
-- [ ] **Write a fuzz test over serialisation.** Random well-typed programs, serialise, deserialise, compare. **Done when** 10,000 cases pass.
+- [x] **Design the on-disk format and write it up in `FORMAT.md` before implementing.** Content-addressed nodes, a name table, and an action log. Specify version bytes. **Done when** the document is complete enough that someone else could implement a reader.
+- [x] **Implement serialisation and deserialisation.** Binary, not JSON — this is not a text format and pretending otherwise invites people to hand-edit it. Provide a debug JSON export separately. **Done when** every example program round-trips byte-identically.
+- [x] **Implement content addressing for nodes.** Hash each node over its structure and children's hashes, excluding names. Two structurally identical functions with different variable names hash the same. **Done when** that property holds as a test.
+- [x] **Write a fuzz test over serialisation.** Random well-typed programs, serialise, deserialise, compare. **Done when** 10,000 cases pass.
 
 ---
 

@@ -5,3 +5,8 @@ edition.workspace = true
 
 [dependencies]
 nothing-core = { path = "../core" }
+im = "15"
+
+[dev-dependencies]
+nothing-action = { path = "../action" }
+proptest = "1"

@@ -5,3 +5,9 @@ edition.workspace = true
 
 [dependencies]
 nothing-core = { path = "../core" }
+nothing-action = { path = "../action" }
+uuid = { version = "1.26.0", features = ["v4"] }
+blake3 = "1"
+
+[dev-dependencies]
+proptest = "1"
