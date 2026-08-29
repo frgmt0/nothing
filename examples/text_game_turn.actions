@@ -1,0 +1,362 @@
+# One turn of a text adventure.
+#
+# The rooms are records. A record type is a list of field identities, and
+# identities are not spelled in a `set-ann` (DECISIONS.md, 2026-08-29), so
+# the fields are minted where the record is built: `room` is the one
+# definition in this file that writes a record literal, and `name`, `look`
+# and `exits` come into being there. `look_of` and `exits_of` read them back
+# by name in a different definition, which is what field identities are for.
+#
+# That also decides the shape of the file. A definition wants a type
+# annotation, and there is no way to write the type of a room, so there is
+# no `observatory : <record>` definition; the rooms live in `rooms`, whose
+# type `List ?` can be written down, and `find_room` picks one out with a
+# fold. `here` is a `Str`, so the room the player is standing in is named
+# rather than held.
+#
+# `main` has a command type, so `nothing run` performs it. It prints a
+# banner, then takes two words from standard input and answers each one.
+# `respond` is a chain of string comparisons, because `readline` hands back
+# a `Str` and there is nothing in the language that turns a `Str` into
+# anything else: comparing it is the only thing a program can do with it.
+
+# room : Str -> Str -> Str -> ? = λn:Str. λl:Str. λx:Str. {name = n, look = l, exits = x}
+rename-def room
+set-def-ann Str -> Str -> Str -> ?
+set-doc build a room from its name, what you see in it and where it leads
+construct-lam
+move-parent
+rename n
+set-ann Str
+move-child 0
+construct-lam
+move-parent
+rename l
+set-ann Str
+move-child 0
+construct-lam
+move-parent
+rename x
+set-ann Str
+move-child 0
+construct-record
+rename-field name
+construct-var n
+add-field
+rename-field look
+construct-var l
+add-field
+rename-field exits
+construct-var x
+
+# rooms : List ? = the observatory and the library
+create-definition
+rename-def rooms
+set-def-ann List ?
+set-doc every room in the game
+construct-cons
+construct-ap
+construct-ap
+construct-ap
+construct-var room
+move-parent
+move-child 1
+construct-str "observatory"
+move-parent
+move-parent
+move-child 1
+construct-str "A cold glass dome. The telescope is pointed at nothing in particular."
+move-parent
+move-parent
+move-child 1
+construct-str "north to the library, east to the roof"
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-ap
+construct-var room
+move-parent
+move-child 1
+construct-str "library"
+move-parent
+move-parent
+move-child 1
+construct-str "Shelves of star charts, most of them wrong."
+move-parent
+move-parent
+move-child 1
+construct-str "south to the observatory"
+move-parent
+move-parent
+move-child 1
+construct-nil
+
+# find_room : Str -> ? =
+#   λwanted:Str. fold rooms (room "nowhere" "There is nothing here." "nowhere")
+#                           (λr:?. λacc:?. if r.name == wanted then r else acc)
+#
+# `fold` is the only list eliminator the language has. Everything else that
+# walks a list, in the standard library or here, is written with it.
+create-definition
+rename-def find_room
+set-def-ann Str -> ?
+set-doc the room with this name, or an empty room if there is none
+construct-lam
+move-parent
+rename wanted
+set-ann Str
+move-child 0
+construct-fold
+construct-var rooms
+move-parent
+move-child 1
+construct-ap
+construct-ap
+construct-ap
+construct-var room
+move-parent
+move-child 1
+construct-str "nowhere"
+move-parent
+move-parent
+move-child 1
+construct-str "There is nothing here."
+move-parent
+move-parent
+move-child 1
+construct-str "nowhere"
+move-parent
+move-parent
+move-child 2
+construct-lam
+move-parent
+rename r
+move-child 0
+construct-lam
+move-parent
+rename acc
+move-child 0
+construct-if
+construct-binop eq
+construct-field name
+construct-var r
+move-parent
+move-parent
+move-child 1
+construct-var wanted
+move-parent
+move-parent
+move-child 1
+construct-var r
+move-parent
+move-child 2
+construct-var acc
+
+# look_of : ? -> Str = λr:?. r.look
+create-definition
+rename-def look_of
+set-def-ann ? -> Str
+set-doc what you see in a room
+construct-lam
+move-parent
+rename r
+move-child 0
+construct-field look
+construct-var r
+
+# exits_of : ? -> Str = λr:?. r.exits
+create-definition
+rename-def exits_of
+set-def-ann ? -> Str
+set-doc where a room leads
+construct-lam
+move-parent
+rename r
+move-child 0
+construct-field exits
+construct-var r
+
+# pack : List Str = what the player is carrying
+create-definition
+rename-def pack
+set-def-ann List Str
+set-doc everything in the player's pack
+construct-cons
+construct-str "a brass key"
+move-parent
+move-child 1
+construct-cons
+construct-str "a candle stub"
+move-parent
+move-child 1
+construct-nil
+
+# carrying : Str = "You are carrying " ++ join " and " pack
+create-definition
+rename-def carrying
+set-def-ann Str
+set-doc the pack, written out as a sentence
+construct-str "You are carrying "
+construct-binop concat
+construct-ap
+construct-ap
+construct-var join
+move-parent
+move-child 1
+construct-str " and "
+move-parent
+move-parent
+move-child 1
+construct-var pack
+
+# here : Str = "observatory"
+create-definition
+rename-def here
+set-def-ann Str
+set-doc the room this turn happens in
+construct-str "observatory"
+
+# banner : Str = the line printed before the player types anything
+create-definition
+rename-def banner
+set-def-ann Str
+set-doc the line the game opens with
+construct-str "The observatory. Try look, exits, north or inventory."
+
+# respond : Str -> Str = one command word in, one line of prose out
+create-definition
+rename-def respond
+set-def-ann Str -> Str
+set-doc the game's answer to a single command word
+construct-lam
+move-parent
+rename word
+set-ann Str
+move-child 0
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "look"
+move-parent
+move-parent
+move-child 1
+construct-ap
+construct-var look_of
+move-parent
+move-child 1
+construct-ap
+construct-var find_room
+move-parent
+move-child 1
+construct-var here
+move-parent
+move-parent
+move-parent
+move-child 2
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "exits"
+move-parent
+move-parent
+move-child 1
+construct-ap
+construct-var exits_of
+move-parent
+move-child 1
+construct-ap
+construct-var find_room
+move-parent
+move-child 1
+construct-var here
+move-parent
+move-parent
+move-parent
+move-child 2
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "north"
+move-parent
+move-parent
+move-child 1
+construct-ap
+construct-var look_of
+move-parent
+move-child 1
+construct-ap
+construct-var find_room
+move-parent
+move-child 1
+construct-str "library"
+move-parent
+move-parent
+move-parent
+move-child 2
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "inventory"
+move-parent
+move-parent
+move-child 1
+construct-var carrying
+move-parent
+move-child 2
+construct-str "You cannot "
+construct-binop concat
+construct-var word
+construct-binop concat
+construct-str " here."
+
+# main : Cmd ? = print the banner, then answer two words from standard input
+create-definition
+rename-def main
+set-def-ann Cmd ?
+set-doc write the banner and answer two command words
+construct-print
+construct-var banner
+move-parent
+construct-bind
+move-parent
+rename ignored0
+move-child 1
+construct-readline
+construct-bind
+move-parent
+rename word1
+move-child 1
+construct-print
+construct-ap
+construct-var respond
+move-parent
+move-child 1
+construct-var word1
+move-parent
+move-parent
+construct-bind
+move-parent
+rename ignored1
+move-child 1
+construct-readline
+construct-bind
+move-parent
+rename word2
+move-child 1
+construct-print
+construct-ap
+construct-var respond
+move-parent
+move-child 1
+construct-var word2

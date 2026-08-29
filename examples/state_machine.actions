@@ -1,0 +1,340 @@
+# A turnstile, driven by words read from standard input.
+#
+# The three states are a variant: Locked, Unlocked, Jammed. There is no
+# variant syntax in `set-ann`, because a variant type is a list of
+# constructor identities and identities are not spelled (DECISIONS.md,
+# 2026-08-29). Constructors come into being as match arms, so the first
+# definition in the file is the one that names them: `label` opens a match
+# on a `?` scrutinee, which starts with no arms at all, and `add-arm` mints
+# one identity per state. Everything later in the file aims at those three
+# identities with `set-constructor` rather than minting more.
+#
+# That is also why the starting state is written inline in `main` instead of
+# being its own definition. A definition wants a type annotation, and there
+# is no way to write down the type of `Locked {}`; every definition in this
+# file carries a real annotation, so the one value whose type cannot be
+# spelled lives inside an expression instead.
+#
+# `main` has a command type, so `nothing run` PERFORMS it: `readline` takes
+# a line from standard input, `print` writes one, `bind` sequences them and
+# `let` carries the state from one turn to the next. It reads exactly three
+# words and prints the state it reaches after each.
+
+# label : ? -> Str = λs:?. match s { Locked _ -> "locked" | ... }
+#
+# The parameter stays `?`. The match arms are what mint Locked, Unlocked and
+# Jammed, and every other match and injection in the file points back here.
+rename-def label
+set-def-ann ? -> Str
+set-doc the one-word name of a turnstile state
+construct-lam
+move-parent
+rename s
+move-child 0
+construct-var s
+construct-match
+add-arm
+rename-constructor Locked
+add-arm
+rename-constructor Unlocked
+add-arm
+rename-constructor Jammed
+construct-str "jammed"
+move-parent
+move-child 1
+construct-str "locked"
+move-parent
+move-child 2
+construct-str "unlocked"
+
+# describe : ? -> Str = λs:?. "the turnstile is " ++ label s
+create-definition
+rename-def describe
+set-def-ann ? -> Str
+set-doc a whole sentence about a turnstile state
+construct-lam
+move-parent
+rename s
+move-child 0
+construct-str "the turnstile is "
+construct-binop concat
+construct-ap
+construct-var label
+move-parent
+move-child 1
+construct-var s
+
+# step : ? -> Str -> ? = λs:?. λword:Str. match s { ... }
+#
+# `add-arm` here mints a constructor of its own, which `set-constructor`
+# then throws away by re-aiming the arm at Locked, Unlocked or Jammed. That
+# is the same two-step the state machine fixture in bench/fixtures uses: an
+# arm has to exist before it can be pointed anywhere.
+create-definition
+rename-def step
+set-def-ann ? -> Str -> ?
+set-doc the state a turnstile reaches when it is given a word
+construct-lam
+move-parent
+rename s
+move-child 0
+construct-lam
+move-parent
+rename word
+set-ann Str
+move-child 0
+construct-var s
+construct-match
+add-arm
+set-constructor Locked
+add-arm
+set-constructor Unlocked
+add-arm
+set-constructor Jammed
+
+# Locked: a coin unlocks it, a kick jams it, anything else leaves it locked.
+move-parent
+move-child 1
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "coin"
+move-parent
+move-parent
+move-child 1
+construct-inj
+move-parent
+set-constructor Unlocked
+move-child 0
+construct-record
+remove-field
+move-parent
+move-parent
+move-child 2
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "kick"
+move-parent
+move-parent
+move-child 1
+construct-inj
+move-parent
+set-constructor Jammed
+move-child 0
+construct-record
+remove-field
+move-parent
+move-parent
+move-child 2
+construct-inj
+move-parent
+set-constructor Locked
+move-child 0
+construct-record
+remove-field
+
+# Unlocked: a push locks it again, a kick jams it.
+#
+# From here on `construct-record` writes `{}` on its own and there is no
+# `remove-field` to follow it. Once the Locked arm above is finished, the
+# editor knows what the other arms of this match have to produce, so the
+# expected type at an injection's payload is the empty record rather than a
+# hole, and a record with a field in it would not fit. The Locked arm needed
+# the two-step because it was written first, when nothing was known yet.
+move-parent
+move-parent
+move-parent
+move-parent
+move-child 2
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "push"
+move-parent
+move-parent
+move-child 1
+construct-inj
+move-parent
+set-constructor Locked
+move-child 0
+construct-record
+move-parent
+move-parent
+move-child 2
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "kick"
+move-parent
+move-parent
+move-child 1
+construct-inj
+move-parent
+set-constructor Jammed
+move-child 0
+construct-record
+move-parent
+move-parent
+move-child 2
+construct-inj
+move-parent
+set-constructor Unlocked
+move-child 0
+construct-record
+
+# Jammed: only a fix gets it back to locked.
+move-parent
+move-parent
+move-parent
+move-parent
+move-child 3
+construct-if
+construct-binop eq
+construct-var word
+move-parent
+move-child 1
+construct-str "fix"
+move-parent
+move-parent
+move-child 1
+construct-inj
+move-parent
+set-constructor Locked
+move-child 0
+construct-record
+move-parent
+move-parent
+move-child 2
+construct-inj
+move-parent
+set-constructor Jammed
+move-child 0
+construct-record
+
+# announce : ? -> Cmd ? = λs:?. print (describe s)
+create-definition
+rename-def announce
+set-def-ann ? -> Cmd ?
+set-doc a command that writes out where the turnstile has got to
+construct-lam
+move-parent
+rename s
+move-child 0
+construct-print
+construct-ap
+construct-var describe
+move-parent
+move-child 1
+construct-var s
+
+# main : Cmd ? = three turns, each a readline, a let and an announcement
+create-definition
+rename-def main
+set-def-ann Cmd ?
+set-doc read three words and say where the turnstile is after each
+
+# turn one, starting from Locked
+construct-readline
+construct-bind
+move-parent
+rename word1
+move-child 1
+construct-ap
+construct-ap
+construct-var step
+move-parent
+move-child 1
+construct-inj
+move-parent
+set-constructor Locked
+move-child 0
+construct-record
+remove-field
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-var word1
+move-parent
+construct-let
+move-parent
+rename s1
+move-child 1
+construct-ap
+construct-var announce
+move-parent
+move-child 1
+construct-var s1
+move-parent
+construct-bind
+move-parent
+rename ignored1
+move-child 1
+
+# turn two
+construct-readline
+construct-bind
+move-parent
+rename word2
+move-child 1
+construct-ap
+construct-ap
+construct-var step
+move-parent
+move-child 1
+construct-var s1
+move-parent
+move-parent
+move-child 1
+construct-var word2
+move-parent
+construct-let
+move-parent
+rename s2
+move-child 1
+construct-ap
+construct-var announce
+move-parent
+move-child 1
+construct-var s2
+move-parent
+construct-bind
+move-parent
+rename ignored2
+move-child 1
+
+# turn three
+construct-readline
+construct-bind
+move-parent
+rename word3
+move-child 1
+construct-ap
+construct-ap
+construct-var step
+move-parent
+move-child 1
+construct-var s2
+move-parent
+move-parent
+move-child 1
+construct-var word3
+move-parent
+construct-let
+move-parent
+rename s3
+move-child 1
+construct-ap
+construct-var announce
+move-parent
+move-child 1
+construct-var s3

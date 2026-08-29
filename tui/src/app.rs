@@ -61,6 +61,7 @@ pub struct AppState {
     pub quit: bool,
     pub engine: EngineHandle,
     pub projection_override: Option<ProjectionKind>,
+    pub tutorial: Option<crate::tutorial::Tutorial>,
     base: EditState,
     history: History,
 }
@@ -91,6 +92,7 @@ impl AppState {
             quit: false,
             engine: EngineHandle::new(),
             projection_override: None,
+            tutorial: None,
             history: History::new(),
         }
     }
@@ -567,7 +569,7 @@ fn is_unfinished(exp: &Exp) -> bool {
     matches!(exp, Exp::EmptyHole(_) | Exp::NonEmptyHole(..))
 }
 
-fn children(exp: &Exp) -> Vec<&Exp> {
+pub(crate) fn children(exp: &Exp) -> Vec<&Exp> {
     match exp {
         Exp::Var(_)
         | Exp::Num(_)

@@ -1,0 +1,338 @@
+# A grade calculator.
+#
+# Five scores go in, a letter grade for each and a letter grade for the
+# class come out. Two things about the language shape this program.
+#
+# The first is that there is no division. An average is a total divided by a
+# count, so the program defines `div` by repeated subtraction, the way you
+# would define it if you had only `-` and `<`. Definitions may refer to
+# themselves, which is how `range` is written in the standard library, and
+# that is all the recursion this needs. The `b < 1` guard is there so a zero
+# divisor stops rather than running forever.
+#
+# The second is that there is no number-to-string conversion. A score cannot
+# be printed as text, but a THRESHOLD can: `letter` turns a number into one
+# of five strings by comparing it against 90, 80, 70 and 60. That is the
+# general move for any `nothing` program that has to say something about a
+# number in words.
+#
+# Every expression here is built outside in. `construct-if` on a hole writes
+# the whole conditional and leaves the cursor on the condition; `construct-ap`
+# on a hole writes ⦇⦈ ⦇⦈ and leaves it on the function. Writing the leaf
+# first would put a `Num` where a `Bool` is wanted and earn a non-empty hole.
+
+# scores : List Num = 92 :: 78 :: 85 :: 61 :: 100 :: nil
+rename-def scores
+set-def-ann List Num
+set-doc the five marks this class scored
+construct-cons
+construct-num 92
+move-parent
+move-child 1
+construct-cons
+construct-num 78
+move-parent
+move-child 1
+construct-cons
+construct-num 85
+move-parent
+move-child 1
+construct-cons
+construct-num 61
+move-parent
+move-child 1
+construct-cons
+construct-num 100
+move-parent
+move-child 1
+construct-nil
+
+# div : Num -> Num -> Num =
+#   λa:Num. λb:Num. if b < 1 then 0 else if a < b then 0 else 1 + div (a - b) b
+create-definition
+rename-def div
+set-def-ann Num -> Num -> Num
+set-doc how many whole times b fits inside a, since the language has no division
+construct-lam
+move-parent
+rename a
+set-ann Num
+move-child 0
+construct-lam
+move-parent
+rename b
+set-ann Num
+move-child 0
+construct-if
+construct-binop lt
+construct-var b
+move-parent
+move-child 1
+construct-num 1
+move-parent
+move-parent
+move-child 1
+construct-num 0
+move-parent
+move-child 2
+construct-if
+construct-binop lt
+construct-var a
+move-parent
+move-child 1
+construct-var b
+move-parent
+move-parent
+move-child 1
+construct-num 0
+move-parent
+move-child 2
+construct-binop add
+construct-num 1
+move-parent
+move-child 1
+construct-ap
+construct-ap
+construct-var div
+move-parent
+move-child 1
+construct-binop sub
+construct-var a
+move-parent
+move-child 1
+construct-var b
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-var b
+
+# average : Num = div (sum scores) (length scores)
+create-definition
+rename-def average
+set-def-ann Num
+set-doc the class average, rounded down
+construct-ap
+construct-ap
+construct-var div
+move-parent
+move-child 1
+construct-ap
+construct-var sum
+move-parent
+move-child 1
+construct-var scores
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-ap
+construct-var length
+move-parent
+move-child 1
+construct-var scores
+
+# letter : Num -> Str =
+#   λn:Num. if lte 90 n then "A" else if lte 80 n then "B"
+#           else if lte 70 n then "C" else if lte 60 n then "D" else "F"
+create-definition
+rename-def letter
+set-def-ann Num -> Str
+set-doc the letter grade a mark earns
+construct-lam
+move-parent
+rename n
+set-ann Num
+move-child 0
+construct-if
+construct-ap
+construct-ap
+construct-var lte
+move-parent
+move-child 1
+construct-num 90
+move-parent
+move-parent
+move-child 1
+construct-var n
+move-parent
+move-parent
+move-child 1
+construct-str "A"
+move-parent
+move-child 2
+construct-if
+construct-ap
+construct-ap
+construct-var lte
+move-parent
+move-child 1
+construct-num 80
+move-parent
+move-parent
+move-child 1
+construct-var n
+move-parent
+move-parent
+move-child 1
+construct-str "B"
+move-parent
+move-child 2
+construct-if
+construct-ap
+construct-ap
+construct-var lte
+move-parent
+move-child 1
+construct-num 70
+move-parent
+move-parent
+move-child 1
+construct-var n
+move-parent
+move-parent
+move-child 1
+construct-str "C"
+move-parent
+move-child 2
+construct-if
+construct-ap
+construct-ap
+construct-var lte
+move-parent
+move-child 1
+construct-num 60
+move-parent
+move-parent
+move-child 1
+construct-var n
+move-parent
+move-parent
+move-child 1
+construct-str "D"
+move-parent
+move-child 2
+construct-str "F"
+
+# letters : List Str = map letter scores
+create-definition
+rename-def letters
+set-def-ann List Str
+set-doc a letter grade for every mark, in the order the marks were given
+construct-ap
+construct-ap
+construct-var map
+move-parent
+move-child 1
+construct-var letter
+move-parent
+move-parent
+move-child 1
+construct-var scores
+
+# class_letter : Str = letter average
+create-definition
+rename-def class_letter
+set-def-ann Str
+set-doc the letter grade the class average earns
+construct-ap
+construct-var letter
+move-parent
+move-child 1
+construct-var average
+
+# all_passed : Bool = all (λs:Num. lte 60 s) scores
+create-definition
+rename-def all_passed
+set-def-ann Bool
+set-doc true when nobody scored below 60
+construct-ap
+construct-ap
+construct-var all
+move-parent
+move-child 1
+construct-lam
+move-parent
+rename s
+set-ann Num
+move-child 0
+construct-ap
+construct-ap
+construct-var lte
+move-parent
+move-child 1
+construct-num 60
+move-parent
+move-parent
+move-child 1
+construct-var s
+move-parent
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-var scores
+
+# headline : Str = "class grade: " ++ class_letter
+create-definition
+rename-def headline
+set-def-ann Str
+set-doc the first line of the report
+construct-str "class grade: "
+construct-binop concat
+construct-var class_letter
+
+# roll : Str = "grades: " ++ join ", " letters
+create-definition
+rename-def roll
+set-def-ann Str
+set-doc the second line of the report, one letter per mark
+construct-str "grades: "
+construct-binop concat
+construct-ap
+construct-ap
+construct-var join
+move-parent
+move-child 1
+construct-str ", "
+move-parent
+move-parent
+move-child 1
+construct-var letters
+
+# verdict : Str = if all_passed then "everyone passed" else "someone is below 60"
+create-definition
+rename-def verdict
+set-def-ann Str
+set-doc the third line of the report
+construct-if
+construct-var all_passed
+move-parent
+move-child 1
+construct-str "everyone passed"
+move-parent
+move-child 2
+construct-str "someone is below 60"
+
+# main : Cmd ? = print_all (headline :: roll :: verdict :: nil)
+create-definition
+rename-def main
+set-def-ann Cmd ?
+set-doc write the three-line report
+construct-ap
+construct-var print_all
+move-parent
+move-child 1
+construct-cons
+construct-var headline
+move-parent
+move-child 1
+construct-cons
+construct-var roll
+move-parent
+move-child 1
+construct-cons
+construct-var verdict
+move-parent
+move-child 1
+construct-nil

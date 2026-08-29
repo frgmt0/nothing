@@ -2358,3 +2358,163 @@ Decisions taken while building it, recorded so they are not relitigated:
   byte-identical regardless of worker count. The transcript is flushed after
   every task: an earlier 28-of-32 run was lost entirely because the harness
   only wrote at the end.
+
+### 2026-08-29 — A tutorial step's predicate must be monotone along the path
+
+The tutorial's progress is derived from the document itself, not stored
+anywhere: each step is a predicate over the actual AST, re-evaluated on
+every keystroke, and the highest step whose predicate holds is where the
+tutorial resumes. That design has a requirement it does not announce until
+you try to break it: **once a step's predicate is true, nothing a later step
+does may make it false again.** If a predicate can flip back off, "resume at
+the highest true step" stops being well-defined the moment two different
+histories produce the same document — the file cannot tell you which one
+happened, because there is nothing in it but the document.
+
+The originally planned arc for step 8 (cause a quarantine) and step 9
+(repair it and finish) put the quarantine inside `greet` itself: overwrite
+the string literal in the body with a number, watch the type stop matching,
+then write the string back. That plan fails the requirement exactly. The
+document after "write the string back" is structurally **identical** to the
+document before "overwrite it with a number" — same node, same hash, same
+everything a predicate can read. No predicate derived from the document can
+distinguish "has not caused a quarantine yet" from "caused one and repaired
+it," because those two histories converge on one document. Step 8 and step
+9 would each be true, or each be false, together, forever.
+
+The fix was to move the quarantine to where the repair **adds** structure
+instead of undoing it: `print ⦇greet⦈` becomes `print (greet "world")`. Step
+8's predicate — `main`'s body is `Print(arg)` with `arg` written, and at
+that instant exactly one quarantine exists — is satisfied the moment the
+call is written inside the hole, and stays satisfied after the hole is
+filled in around it, because "the argument is written" does not stop being
+true when it also stops being quarantined. Step 9's predicate — zero
+quarantines, the document well-typed, `main` hole-free with a `Cmd` type —
+is false until the fill happens and then stays true. Neither predicate can
+be un-satisfied by anything the tutorial asks for afterward, so the pair is
+monotone by construction rather than by argument.
+
+**Rejected: store progress in a file, or in the document's own metadata**
+(a doc-table-style entry, or a sidecar). Either would make the tutorial
+resume correctly no matter what the document shape happened to be, which is
+real. It was rejected because it would make the tutorial the one part of
+the product that is stateful in a way nothing else is — every other surface
+in this system derives everything it shows from the document plus the
+prelude, never from a hidden log of what the user has done — and the spec
+asks for nothing surprising to be persisted alongside a `.n` file. A
+tutorial that wrote a second file, or a metadata field only it reads, would
+be exactly that surprise.
+
+**Consequence.** The tutorial resumes correctly from all ten reachable
+documents on the path — asserted exhaustively by a test — including
+quitting mid-quarantine and reopening the file. The general lesson, stated
+so the next step-driven feature does not relearn it the hard way: a
+predicate over *state* used to drive a linear sequence is only safe when
+the sequence is checked, ahead of time, to never let a later step erase the
+evidence an earlier one left behind.
+
+### 2026-08-29 — The tutorial reuses the editor rather than reimplementing it
+
+`nothing tutorial` runs inside the real `AppState`, the real
+`keys::handle_key`, the real `render::draw`, the real `term::run` — the same
+event loop `nothing edit` drives, not a second editor built to look like the
+first one. The alternative was available and even looked cheaper at first
+glance: a purpose-built walkthrough state machine with its own tiny renderer
+and its own key handling, free to assume exactly the nine documents the
+tutorial ever needs to show. It was never seriously in the running, because
+a second editor is a second place for every future feature to be wired into
+— every action, every rendering change, every key added from here on would
+need to ask whether the tutorial's stand-in also needs it, which is the
+kind of drift the full-thread rule exists to prevent applied to the
+product's own onboarding surface.
+
+**What reuse cost:** one optional field on `AppState`, one call at the end
+of `keys::handle_key` (into `tutorial::advance`), one pane added to
+`render::draw`, and a subcommand. No new keys, no new actions, and no
+change to `KEYS.md` — the tutorial teaches the keys the editor already has
+rather than adding any of its own. A document built or repaired inside the
+tutorial is an ordinary document the moment you leave it: it opens under
+`nothing edit`, runs under `nothing run`, and is saved by the same
+`edit::save` every other surface uses.
+
+### 2026-08-29 — The five examples are authored through action scripts, not by hand
+
+`stdlib/std.n` was built by driving the real action calculus through a
+committed action log and asserting the replay reproduces the committed
+document byte for byte (2026-08-29, "What the standard library cost"). The
+five Phase B6 example programs extend that rule to shipped examples: each
+is a commented `.actions` script plus the `.n` document it produces, and
+`cli/tests/examples.rs` replays every script and asserts the result matches
+the committed document exactly. No example was hand-crafted as a binary
+file and then explained after the fact.
+
+The reason is the same reason it mattered for the standard library: a
+hand-written `.n` file is a claim that cannot be checked, and an example
+program is exactly the kind of file a newcomer is going to trust as *the*
+model of idiomatic style. Enforcing authorship through the actual editor
+means an example cannot demonstrate a shape the editor cannot produce.
+
+**The language's current gaps are now visible in five shipped programs,
+not only in the standard library.** With no division, `unit_converter` is
+built entirely from multiplication, and answers Celsius-to-Fahrenheit in
+tenths and miles in hundredths of a kilometre rather than in whole degrees
+or kilometres. With no number-to-string conversion, `grade_calculator`
+writes its own `div` by recursive subtraction and gets from numbers to text
+through `lte` thresholds rather than formatting a number directly. Record
+and variant types cannot be spelled in an annotation (2026-08-29, the
+record and variant entries above), which shapes every one of the eleven-
+and eight-definition examples that use them. This is offered as evidence
+for a v0.2 decision, in the same spirit as the polymorphism-trigger entry
+above ("The `?` mush passed its revisit trigger, with evidence") — it does
+not propose a fix or schedule work, only records that the gap now shows up
+somewhere a beginner is meant to read, not only in library code written by
+whoever built the library.
+
+### 2026-08-29 — CI is split by suite runtime, not by crate
+
+The single CI job had grown to roughly sixty minutes, dominated by the
+10,000-case sensibility proptest. The fix splits it into two jobs, `fast`
+and `slow`, both required, running concurrently. `slow` runs exactly the
+suites that are expensive because they are exhaustive by design —
+sensibility, reachability, and the four deep-term regression suites; `fast`
+runs everything else, including build, clippy, fmt, and every other test
+target.
+
+**The union-is-the-whole-suite property is expressed as code, not as a
+comment.** Both jobs select their targets by explicit `-p <crate> --lib` /
+`--test <name>` / `--bin <name>` invocations rather than by crate, and the
+two lists were built so that together they are exactly the suite `cargo
+test --workspace` ran before the split — no comment asserts this, the job
+definitions themselves are the only place the claim could go wrong, and
+they are legible enough to check by eye against the workspace's test
+targets. Splitting by crate instead was not on the table: several of the
+slow suites live in crates that also contain fast ones (`nothing-action`
+has both `sensibility` and ordinary unit tests), so a crate-level split
+would have put fast tests in the slow job for no reason.
+
+**Rejected: reduce the sensibility proptest's case count to make the job
+faster.** The full-thread rule fixes that number at 10,000 cases, and every
+feature in Phase B2 was measured against a proptest run at exactly that
+count staying green. Turning the knob down to buy CI minutes is precisely
+the kind of drift the rule exists to prevent — a property test is only as
+honest as the search space it actually covers, and shrinking the search
+space to make the pipeline faster is a silent weakening dressed up as
+infrastructure work. The runtime problem was real; the fix had to be to the
+schedule, not to the property.
+
+### 2026-08-29 — Phase B6 is not closed: the beginner-projection test is human-required and unrun
+
+The tutorial, the five examples, and the CI split are all done and tested.
+Phase B6's own done-when also asks for a beginner-projection test: a real
+participant, reading a program through the beginner projection, answering a
+pre-committed question, scored against a pre-committed rubric, with a 2-of-3
+pass bar. `bench/BEGINNER.md` carries that protocol in full — the program,
+the projection, the exact question, the participant criteria, the rubric,
+the pass bar, and the revise-and-retest rule — plus three transcript slots,
+and all three are empty. No participant has gone through it. This is stated
+here as plainly as the equivalent MCP-session gap was stated above (see "The
+MCP server translates; it does not reimplement"): an agent cannot supply a
+human participant any more than it could supply a second Claude Code
+session, and inventing a transcript would close the checkbox by fabricating
+the evidence the checkbox exists to require. Phase B6 remains open until a
+maintainer runs the protocol and commits the result.

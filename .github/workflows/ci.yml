@@ -8,7 +8,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
+  fast:
+    name: fast (everything except the slow suites)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,11 +25,158 @@ jobs:
       - name: cargo build --workspace
         run: cargo build --workspace
 
-      - name: cargo test --workspace
-        run: cargo test --workspace
-
-      - name: cargo clippy --workspace -- -D warnings
-        run: cargo clippy --workspace -- -D warnings
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo fmt --check
         run: cargo fmt --check
+
+      - name: cargo test -p nothing-core --lib
+        run: cargo test -p nothing-core --lib
+
+      - name: cargo test -p nothing-core --test proptest_smoke
+        run: cargo test -p nothing-core --test proptest_smoke
+
+      - name: cargo test -p nothing-action --lib
+        run: cargo test -p nothing-action --lib
+
+      - name: cargo test -p nothing-action --test exhaustive
+        run: cargo test -p nothing-action --test exhaustive
+
+      - name: cargo test -p nothing-action --test names
+        run: cargo test -p nothing-action --test names
+
+      - name: cargo test -p nothing-eval --lib
+        run: cargo test -p nothing-eval --lib
+
+      - name: cargo test -p nothing-eval --test properties
+        run: cargo test -p nothing-eval --test properties
+
+      - name: cargo test -p nothing-eval --test references
+        run: cargo test -p nothing-eval --test references
+
+      - name: cargo test -p nothing-store --lib
+        run: cargo test -p nothing-store --lib
+
+      - name: cargo test -p nothing-store --test fuzz
+        run: cargo test -p nothing-store --test fuzz
+
+      - name: cargo test -p nothing-store --test migration
+        run: cargo test -p nothing-store --test migration
+
+      - name: cargo test -p nothing-store --test round_trip
+        run: cargo test -p nothing-store --test round_trip
+
+      - name: cargo test -p nothing-merge --lib
+        run: cargo test -p nothing-merge --lib
+
+      - name: cargo test -p nothing-merge --test benchmark
+        run: cargo test -p nothing-merge --test benchmark
+
+      - name: cargo test -p nothing-merge --test document_merge
+        run: cargo test -p nothing-merge --test document_merge
+
+      - name: cargo test -p nothing-merge --test merge_preserves_well_typedness
+        run: cargo test -p nothing-merge --test merge_preserves_well_typedness
+
+      - name: cargo test -p nothing-merge --test structural_diff
+        run: cargo test -p nothing-merge --test structural_diff
+
+      - name: cargo test -p nothing-merge --test three_way_merge
+        run: cargo test -p nothing-merge --test three_way_merge
+
+      - name: cargo test -p nothing-agentapi --lib
+        run: cargo test -p nothing-agentapi --lib
+
+      - name: cargo test -p nothing-agentapi --bin agentbench
+        run: cargo test -p nothing-agentapi --bin agentbench
+
+      - name: cargo test -p nothing-agentapi --test live_model
+        run: cargo test -p nothing-agentapi --test live_model
+
+      - name: cargo test -p nothing-agentapi --test protocol_subprocess
+        run: cargo test -p nothing-agentapi --test protocol_subprocess
+
+      - name: cargo test -p nothing-agentapi --test protocol_v1_compat
+        run: cargo test -p nothing-agentapi --test protocol_v1_compat
+
+      - name: cargo test -p nothing-agentapi --test provenance_transcripts
+        run: cargo test -p nothing-agentapi --test provenance_transcripts
+
+      - name: cargo test -p nothing-tui --lib
+        run: cargo test -p nothing-tui --lib
+
+      - name: cargo test -p nothing-tui --test definitions
+        run: cargo test -p nothing-tui --test definitions
+
+      - name: cargo test -p nothing-tui --test matrix
+        run: cargo test -p nothing-tui --test matrix
+
+      - name: cargo test -p nothing-tui --test movement
+        run: cargo test -p nothing-tui --test movement
+
+      - name: cargo test -p nothing-tui --test projections
+        run: cargo test -p nothing-tui --test projections
+
+      - name: cargo test -p nothing-tui --test references
+        run: cargo test -p nothing-tui --test references
+
+      - name: cargo test -p nothing-bench --bin nothing-bench
+        run: cargo test -p nothing-bench --bin nothing-bench
+
+      - name: cargo test -p nothing-cli --bin nothing
+        run: cargo test -p nothing-cli --bin nothing
+
+      - name: cargo test -p nothing-cli --test authoring
+        run: cargo test -p nothing-cli --test authoring
+
+      - name: cargo test -p nothing-cli --test git_integration
+        run: cargo test -p nothing-cli --test git_integration
+
+      - name: cargo test -p nothing-cli --test mcp
+        run: cargo test -p nothing-cli --test mcp
+
+      - name: cargo test -p nothing-cli --test stdlib
+        run: cargo test -p nothing-cli --test stdlib
+
+      - name: cargo test -p nothing-cli --test subcommands
+        run: cargo test -p nothing-cli --test subcommands
+
+      - name: cargo test -p nothing-cli --test tutorial
+        run: cargo test -p nothing-cli --test tutorial
+
+      - name: cargo test -p nothing-cli --test examples
+        run: cargo test -p nothing-cli --test examples
+
+      - name: cargo test -p nothing-stdlib --lib
+        run: cargo test -p nothing-stdlib --lib
+
+  slow:
+    name: slow (sensibility, reachability, deep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test -p nothing-action --test sensibility
+        run: cargo test -p nothing-action --test sensibility
+
+      - name: cargo test -p nothing-action --test reachability
+        run: cargo test -p nothing-action --test reachability
+
+      - name: cargo test -p nothing-eval --test deep_programs
+        run: cargo test -p nothing-eval --test deep_programs
+
+      - name: cargo test -p nothing-store --test deep_documents
+        run: cargo test -p nothing-store --test deep_documents
+
+      - name: cargo test -p nothing-merge --test deep_versions
+        run: cargo test -p nothing-merge --test deep_versions
+
+      - name: cargo test -p nothing-cli --test deep_programs
+        run: cargo test -p nothing-cli --test deep_programs

@@ -59,6 +59,8 @@ fn slot_marked(state: &AppState) -> Option<String> {
 
 pub const DEF_PANE_WIDTH: u16 = 22;
 
+pub const TUTORIAL_PANE_WIDTH: u16 = 34;
+
 pub fn definition_lines(state: &AppState) -> Vec<String> {
     let names = state.names();
     let current = state.definition_id();
@@ -241,14 +243,14 @@ pub fn status_line(state: &AppState) -> String {
     if matches!(state.focus(), Exp::NonEmptyHole(..)) {
         line.push_str(" · ");
         line.push_str(if state.finishes() {
-            "fits now — press Enter"
+            "fits now, press Enter"
         } else {
             "does not fit yet"
         });
     } else if let Some(fits) = state.enclosing_finishes() {
         line.push_str(" · ");
         line.push_str(if fits {
-            "inside ⦇⦈ · fits now — press Enter"
+            "inside ⦇⦈ · fits now, press Enter"
         } else {
             "inside ⦇⦈ · does not fit yet"
         });
@@ -319,7 +321,7 @@ pub fn candidate_doc_line(state: &AppState) -> Option<String> {
     let ranked = complete::candidates(state, &state.entry);
     let best = ranked.first()?;
     let doc = best.doc.as_deref()?;
-    Some(format!("{} — {doc}", best.name))
+    Some(format!("{}: {doc}", best.name))
 }
 
 pub fn key_line() -> &'static str {
@@ -366,6 +368,20 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Constraint::Length(3),
     ])
     .areas(frame.area());
+
+    let tutorial = state
+        .tutorial
+        .as_ref()
+        .filter(|_| program_area.width > TUTORIAL_PANE_WIDTH * 2);
+    let (program_area, tutorial_area) = match tutorial {
+        Some(_) => {
+            let [rest, pane] =
+                Layout::horizontal([Constraint::Min(10), Constraint::Length(TUTORIAL_PANE_WIDTH)])
+                    .areas(program_area);
+            (rest, Some(pane))
+        }
+        None => (program_area, None),
+    };
 
     let show_defs = program_area.width > DEF_PANE_WIDTH * 2 && state.definition_count() > 1;
     let (defs_area, program_area) = if show_defs {
@@ -423,6 +439,22 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
             .padding(Padding::horizontal(1)),
     );
     frame.render_widget(program, program_area);
+    if let (Some(area), Some(tutorial)) = (tutorial_area, tutorial) {
+        let block = Block::bordered()
+            .title(crate::tutorial::pane_title(tutorial))
+            .padding(Padding::horizontal(1));
+        let inner = block.inner(area);
+        let lines = crate::tutorial::pane_lines(tutorial, inner.width as usize);
+        let style = if tutorial.finished() {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(lines.join("\n")).style(style).block(block),
+            area,
+        );
+    }
     frame.render_widget(
         Paragraph::new(live::live_line(state)).style(Style::default().add_modifier(Modifier::BOLD)),
         value_area,
@@ -647,7 +679,7 @@ mod tests {
         );
         assert_eq!(
             candidate_doc_line(&typing).as_deref(),
-            Some("twice — twice a number"),
+            Some("twice: twice a number"),
             "the doc of the highlighted candidate gets a line of its own"
         );
 
@@ -717,7 +749,7 @@ mod tests {
         let fixed = handle_key(key(KeyCode::Char('2')), state);
         let fixed = handle_key(key(KeyCode::Up), fixed);
         assert!(
-            status_line(&fixed).contains("fits now — press Enter"),
+            status_line(&fixed).contains("fits now, press Enter"),
             "{}",
             status_line(&fixed)
         );
@@ -914,7 +946,7 @@ mod tests {
 
         let repaired = handle_key(key(KeyCode::Char('2')), inside);
         assert!(
-            status_line(&repaired).contains("inside ⦇⦈ · fits now — press Enter"),
+            status_line(&repaired).contains("inside ⦇⦈ · fits now, press Enter"),
             "{}",
             status_line(&repaired)
         );
@@ -960,6 +992,62 @@ mod tests {
         let looping = render_to_string(&AppState::new(Exp::ap(omega.clone(), omega)), 90, 10);
         assert!(looping.contains("still running after"), "{looping}");
         assert!(!looping.contains("blocked"), "{looping}");
+    }
+
+    #[test]
+    fn the_tutorial_pane_stands_beside_the_program_when_there_is_room_for_it() {
+        let state = crate::tutorial::begin(AppState::empty(), crate::tutorial::DEFAULT_FILE);
+        let screen = render_to_string(&state, 120, 32);
+        assert!(screen.contains("tutorial 1/9"), "{screen}");
+        assert!(screen.contains("Step 1 of 9"), "{screen}");
+        assert!(screen.contains("Write a function"), "{screen}");
+        assert!(screen.contains("▸ Write a function"), "{screen}");
+        assert!(screen.contains("· Repair it and finish"), "{screen}");
+        assert!(
+            screen.contains("»⦇⦈«"),
+            "the editor is still the editor: {screen}"
+        );
+
+        let narrow = render_to_string(&state, 60, 24);
+        assert!(!narrow.contains("tutorial 1/9"), "{narrow}");
+        assert!(narrow.contains("»⦇⦈«"), "{narrow}");
+
+        let plain = render_to_string(&AppState::empty(), 120, 24);
+        assert!(!plain.contains("tutorial"), "{plain}");
+    }
+
+    #[test]
+    fn the_finished_tutorial_pane_says_so_in_bold() {
+        use crate::keyscript::replay_keys;
+
+        let keys = crate::tutorial::STEPS
+            .iter()
+            .flat_map(|step| step.keys.split_whitespace())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let done = replay_keys(
+            &keys,
+            crate::tutorial::begin(AppState::empty(), crate::tutorial::DEFAULT_FILE),
+        )
+        .expect("the tutorial keys parse");
+
+        let screen = render_to_string(&done, 120, 26);
+        assert!(screen.contains("tutorial · done"), "{screen}");
+        assert!(screen.contains("All 9 steps are done."), "{screen}");
+        assert!(screen.contains("nothing run tutorial.n"), "{screen}");
+        assert!(screen.contains("print »(greet \"world\")«"), "{screen}");
+
+        let buffer = render_styles(&done, 120, 26);
+        let banner = (0..120)
+            .find(|&x| buffer[(x, 1)].symbol() == "A")
+            .expect("the banner is on the first row of the pane");
+        assert!(
+            buffer[(banner, 1)]
+                .style()
+                .add_modifier
+                .contains(Modifier::BOLD),
+            "the completion banner is not lit"
+        );
     }
 
     #[test]

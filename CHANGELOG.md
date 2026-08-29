@@ -446,4 +446,79 @@ Only `nothing run` performs one.
   step-by-step instructions for a maintainer to run it and commit the
   result.
 
+## Phase B6 — meeting a beginner where they are
+
+### Added
+
+- **`nothing tutorial [<file>]`** (default `tutorial.n` in the working
+  directory) — a nine-step, in-editor tutorial that runs inside the real TUI
+  editor: the same `AppState`, `keys::handle_key`, `render::draw` and
+  `term::run` `nothing edit` uses, loading and saving through `edit::load` /
+  `edit::save`, so the file it produces opens under `nothing edit` and runs
+  under `nothing run`. Progress is checked structurally: each step carries a
+  predicate over the actual AST / `Doc`, re-evaluated on every keystroke by
+  `tutorial::advance` at the end of `keys::handle_key` — no output text is
+  ever inspected, and there is no progress file, so quitting and rerunning
+  resumes at the right step. The nine steps walk from an empty definition
+  through naming a parameter, typing it, filling its hole, naming and
+  annotating the definition, starting `main` as a command, causing a
+  quarantine, and repairing it, ending at `greet : Str -> Str = λwho:Str.
+  "hello, " ++ who` and `main : Cmd ? = print (greet "world")`. Finishing
+  every step and quitting saves the file and performs it, printing
+  `hello, world`. The tutorial pane sits 34 columns to the right of the
+  program area, shown only when the terminal is wide enough (the
+  `DEF_PANE_WIDTH` precedent). No new keybindings were added — `KEYS.md` is
+  unchanged and `render::key_line` is still exactly 160 columns. New:
+  `tui/src/tutorial.rs`, `cli/src/tutorial.rs`, `cli/tests/tutorial.rs`.
+  Changed: `tui/src/lib.rs`, `tui/src/app.rs`, `tui/src/keys.rs`,
+  `tui/src/render.rs`, `cli/src/main.rs`, `cli/tests/subcommands.rs`. Tests:
+  15 in `tui/src/tutorial.rs` (one per step, a full run-through, and an
+  exhaustive resumability test over all ten reachable documents), 2 in
+  `tui/src/render.rs`, 4 pty tests in `cli/tests/tutorial.rs` against the
+  real binary, and `tutorial` added to the existing one-screen help test in
+  `cli/tests/subcommands.rs`. See `DECISIONS.md`, 2026-08-29, for the design
+  finding that shaped the step order.
+- **Five example programs** (`examples/`, with `EXAMPLES.md`, and
+  `cli/tests/examples.rs`): `unit_converter` (11 definitions; `nothing run`
+  prints `320 :: 680 :: 986 :: 2120 :: 42000 :: 4186 :: 10800 :: 5000 ::
+  nil`), `grade_calculator` (11 definitions; prints `class grade: B`,
+  `grades: A, C, B, D, A`, `everyone passed`), `state_machine` (5
+  definitions; driven by three real stdin lines, prints `the turnstile is
+  unlocked`, `the turnstile is jammed`, `the turnstile is locked`),
+  `text_game_turn` (11 definitions; reads two stdin lines), and
+  `decision_table` (8 definitions; prints `young saver`, `standard`,
+  `referred`, `senior`, `declined`). Every definition in all five is named,
+  annotated with a non-hole type, and carries a doc line. Each is a committed
+  `.n` document produced by replaying a committed, commented `.actions`
+  script — authored the way `stdlib/std.n` was — with a replay test asserting
+  the result re-encodes byte for byte to the committed document; no binary
+  file was hand-crafted. Tests: 6 passing plus one `#[ignore]`d `regenerate`
+  test documenting the rebuild path.
+- **CI split into two concurrently running required jobs**
+  (`.github/workflows/ci.yml`). `fast` runs `cargo build --workspace`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
+  --check`, and every test target other than the slow suites, by explicit
+  per-crate `-p <crate> --lib` / `--test <name>` / `--bin <name>` selection.
+  `slow` runs exactly `nothing-action --test sensibility`, `nothing-action
+  --test reachability`, `nothing-eval --test deep_programs`, `nothing-store
+  --test deep_documents`, `nothing-merge --test deep_versions`, `nothing-cli
+  --test deep_programs`. The union of the two jobs is exactly the suite
+  `cargo test --workspace` ran before the split. Done because the single job
+  had grown to roughly sixty minutes, dominated by the 10,000-case
+  sensibility proptest. See `DECISIONS.md`, 2026-08-29.
+- **`bench/BEGINNER.md`** — the protocol for the beginner-projection test:
+  which program, in which projection, the exact question, the participant
+  criteria, the pre-committed correctness rubric, the 2-of-3 pass bar, and
+  the revise-and-retest rule, plus three clearly labelled empty transcript
+  slots.
+
+### Human-required
+
+- **The beginner-projection test itself is human-required and has not been
+  run.** `bench/BEGINNER.md` holds the protocol and the empty transcript
+  slots, but no participant has gone through it yet. Phase B6 is therefore
+  **not complete**: the tutorial, the examples and the CI split are done,
+  but the phase's own done-when asks for this test, and it remains open. See
+  `DECISIONS.md`, 2026-08-29.
+
 [Unreleased]: https://github.com/frgmt0/nothing

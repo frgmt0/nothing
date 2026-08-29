@@ -94,6 +94,7 @@ fn top_level_help_fits_one_screen() {
 #[test]
 fn every_subcommand_help_fits_one_screen() {
     for command in [
+        "tutorial",
         "edit",
         "run",
         "check",

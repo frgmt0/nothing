@@ -9,6 +9,7 @@ mod merge_cmd;
 mod protocol_cmd;
 mod repl_cmd;
 mod run_cmd;
+mod tutorial;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -19,6 +20,7 @@ nothing — a projectional structural editor and language
 Usage: nothing <command> [args]
 
 Commands:
+  tutorial [<file>]      a guided first session in the editor (default tutorial.n)
   edit <file>            open <file> in the TUI editor
   run <file>             evaluate <file>, or perform it if it is a command
   check <file>           check <file> is well-typed
@@ -62,6 +64,7 @@ fn dispatch(args: &[String]) -> u8 {
             println!("{TOP_HELP}");
             0
         }
+        "tutorial" => tutorial_command(rest),
         "edit" => run_file_command(rest, edit::HELP, edit::run),
         "run" => run_command(rest),
         "check" => run_file_command(rest, check::HELP, check::run),
@@ -109,6 +112,22 @@ fn run_file_command(args: &[String], help: &str, f: fn(&std::path::Path) -> i32)
         None => {
             eprintln!("error: missing <file>");
             eprintln!("{help}");
+            1
+        }
+    }
+}
+
+fn tutorial_command(args: &[String]) -> u8 {
+    if wants_help(args) {
+        println!("{}", tutorial::HELP);
+        return 0;
+    }
+    match args {
+        [] => tutorial::run(&PathBuf::from(tutorial::DEFAULT_FILE)) as u8,
+        [path] => tutorial::run(&PathBuf::from(path)) as u8,
+        _ => {
+            eprintln!("error: `tutorial` takes one file, and was given more than one");
+            eprintln!("{}", tutorial::HELP);
             1
         }
     }

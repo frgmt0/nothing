@@ -1,0 +1,394 @@
+# A decision table: a lending rule set, written as data rather than as code.
+#
+# Each rule is a record with three condition fields and one outcome field,
+# and the rules are a `List ?`. Adding a rule means adding a line to `rules`;
+# nothing about `matches` or `decide` changes. That is the whole point of a
+# decision table, and it is the reason records earn their keep here: a rule
+# with four positional components would be a nest of pairs, and nothing in
+# the program would record that the third one was the score floor.
+#
+# Records are built by a constructor function, `rule`, for a reason. A record
+# type is a list of field identities, identities are minted where a record
+# literal is written, and two literals with the same field NAMES would still
+# be two different sets of identities. One literal, called four times, gives
+# all four rules the same fields. `applicant` does the same for the other
+# record in the file. Their field names are all distinct, which is what lets
+# `construct-field` find them by name from another definition.
+#
+# `decide` folds the rules. `fold` runs from the front, so the first rule in
+# the list that matches is the one whose outcome survives, and the initial
+# value is what an applicant gets when no rule matches at all. First match
+# wins, which is how a decision table is normally read.
+
+# rule : Num -> Num -> Num -> Str -> ?
+#      = λlo:Num. λhi:Num. λfloor:Num. λout:Str.
+#          {min_age = lo, max_age = hi, min_score = floor, outcome = out}
+rename-def rule
+set-def-ann Num -> Num -> Num -> Str -> ?
+set-doc build one rule from an age range, a score floor and what it decides
+construct-lam
+move-parent
+rename lo
+set-ann Num
+move-child 0
+construct-lam
+move-parent
+rename hi
+set-ann Num
+move-child 0
+construct-lam
+move-parent
+rename floor
+set-ann Num
+move-child 0
+construct-lam
+move-parent
+rename out
+set-ann Str
+move-child 0
+construct-record
+rename-field min_age
+construct-var lo
+add-field
+rename-field max_age
+construct-var hi
+add-field
+rename-field min_score
+construct-var floor
+add-field
+rename-field outcome
+construct-var out
+
+# applicant : Num -> Num -> ? = λa:Num. λs:Num. {age = a, score = s}
+create-definition
+rename-def applicant
+set-def-ann Num -> Num -> ?
+set-doc build one applicant from an age and a credit score
+construct-lam
+move-parent
+rename a
+set-ann Num
+move-child 0
+construct-lam
+move-parent
+rename s
+set-ann Num
+move-child 0
+construct-record
+rename-field age
+construct-var a
+add-field
+rename-field score
+construct-var s
+
+# rules : List ? = the table itself, read from the top down
+create-definition
+rename-def rules
+set-def-ann List ?
+set-doc the lending rules, most specific first
+construct-cons
+construct-ap
+construct-ap
+construct-ap
+construct-ap
+construct-var rule
+move-parent
+move-child 1
+construct-num 18
+move-parent
+move-parent
+move-child 1
+construct-num 25
+move-parent
+move-parent
+move-child 1
+construct-num 600
+move-parent
+move-parent
+move-child 1
+construct-str "young saver"
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-ap
+construct-ap
+construct-var rule
+move-parent
+move-child 1
+construct-num 26
+move-parent
+move-parent
+move-child 1
+construct-num 64
+move-parent
+move-parent
+move-child 1
+construct-num 700
+move-parent
+move-parent
+move-child 1
+construct-str "standard"
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-ap
+construct-ap
+construct-var rule
+move-parent
+move-child 1
+construct-num 26
+move-parent
+move-parent
+move-child 1
+construct-num 64
+move-parent
+move-parent
+move-child 1
+construct-num 0
+move-parent
+move-parent
+move-child 1
+construct-str "referred"
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-ap
+construct-ap
+construct-var rule
+move-parent
+move-child 1
+construct-num 65
+move-parent
+move-parent
+move-child 1
+construct-num 120
+move-parent
+move-parent
+move-child 1
+construct-num 0
+move-parent
+move-parent
+move-child 1
+construct-str "senior"
+move-parent
+move-parent
+move-child 1
+construct-nil
+
+# applicants : List ? = five people to run the table against
+create-definition
+rename-def applicants
+set-def-ann List ?
+set-doc the five applicants this run decides
+construct-cons
+construct-ap
+construct-ap
+construct-var applicant
+move-parent
+move-child 1
+construct-num 22
+move-parent
+move-parent
+move-child 1
+construct-num 640
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-var applicant
+move-parent
+move-child 1
+construct-num 40
+move-parent
+move-parent
+move-child 1
+construct-num 720
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-var applicant
+move-parent
+move-child 1
+construct-num 40
+move-parent
+move-parent
+move-child 1
+construct-num 650
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-var applicant
+move-parent
+move-child 1
+construct-num 70
+move-parent
+move-parent
+move-child 1
+construct-num 300
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-ap
+construct-var applicant
+move-parent
+move-child 1
+construct-num 15
+move-parent
+move-parent
+move-child 1
+construct-num 800
+move-parent
+move-parent
+move-child 1
+construct-nil
+
+# matches : ? -> ? -> Bool =
+#   λr:?. λwho:?. and (between r.min_age r.max_age who.age) (lte r.min_score who.score)
+create-definition
+rename-def matches
+set-def-ann ? -> ? -> Bool
+set-doc true when an applicant satisfies every condition of a rule
+construct-lam
+move-parent
+rename r
+move-child 0
+construct-lam
+move-parent
+rename who
+move-child 0
+construct-ap
+construct-ap
+construct-var and
+move-parent
+move-child 1
+construct-ap
+construct-ap
+construct-ap
+construct-var between
+move-parent
+move-child 1
+construct-field min_age
+construct-var r
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-field max_age
+construct-var r
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-field age
+construct-var who
+move-parent
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-ap
+construct-ap
+construct-var lte
+move-parent
+move-child 1
+construct-field min_score
+construct-var r
+move-parent
+move-parent
+move-parent
+move-child 1
+construct-field score
+construct-var who
+
+# decide : ? -> Str =
+#   λwho:?. fold rules "declined" (λr:?. λacc:Str. if matches r who then r.outcome else acc)
+create-definition
+rename-def decide
+set-def-ann ? -> Str
+set-doc the outcome the first matching rule gives an applicant
+construct-lam
+move-parent
+rename who
+move-child 0
+construct-fold
+construct-var rules
+move-parent
+move-child 1
+construct-str "declined"
+move-parent
+move-child 2
+construct-lam
+move-parent
+rename r
+move-child 0
+construct-lam
+move-parent
+rename acc
+set-ann Str
+move-child 0
+construct-if
+construct-ap
+construct-ap
+construct-var matches
+move-parent
+move-child 1
+construct-var r
+move-parent
+move-parent
+move-child 1
+construct-var who
+move-parent
+move-parent
+move-child 1
+construct-field outcome
+construct-var r
+move-parent
+move-parent
+move-child 2
+construct-var acc
+
+# outcomes : List Str = map decide applicants
+create-definition
+rename-def outcomes
+set-def-ann List Str
+set-doc one outcome per applicant, in the order they were listed
+construct-ap
+construct-ap
+construct-var map
+move-parent
+move-child 1
+construct-var decide
+move-parent
+move-parent
+move-child 1
+construct-var applicants
+
+# main : Cmd ? = print_all outcomes
+create-definition
+rename-def main
+set-def-ann Cmd ?
+set-doc write one line per applicant saying what the table decided
+construct-ap
+construct-var print_all
+move-parent
+move-child 1
+construct-var outcomes

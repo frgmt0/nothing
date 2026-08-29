@@ -1,0 +1,231 @@
+# A unit converter.
+#
+# Every conversion in this file is a multiplication, because `nothing` has
+# `+ - * < ==` and nothing else: there is no division. That is not as
+# limiting as it sounds if you pick the output unit to suit. Celsius to
+# Fahrenheit is c * 9 / 5 + 32, which needs a division; the same answer in
+# TENTHS of a degree is c * 18 + 320, which does not. Miles to kilometres is
+# the same trick: 1.609 km to the mile becomes 161 hundredths of a
+# kilometre. Choosing the smaller unit is how you write exact arithmetic in
+# a language with only whole numbers.
+#
+# `main` has type `List Num`, so `nothing run` evaluates it and prints the
+# value. There is no number-to-string conversion anywhere in the language,
+# so a program that computes numbers cannot label them; it hands the numbers
+# back and lets the runner print them.
+
+# c_to_f_tenths : Num -> Num = λc:Num. c * 18 + 320
+rename-def c_to_f_tenths
+set-def-ann Num -> Num
+set-doc a Celsius reading as tenths of a degree Fahrenheit
+construct-lam
+move-parent
+rename c
+set-ann Num
+move-child 0
+construct-var c
+construct-binop mul
+construct-num 18
+move-parent
+construct-binop add
+construct-num 320
+
+# km_to_m : Num -> Num = λkm:Num. km * 1000
+create-definition
+rename-def km_to_m
+set-def-ann Num -> Num
+set-doc kilometres as whole metres
+construct-lam
+move-parent
+rename km
+set-ann Num
+move-child 0
+construct-var km
+construct-binop mul
+construct-num 1000
+
+# miles_to_km_hundredths : Num -> Num = λmi:Num. mi * 161
+create-definition
+rename-def miles_to_km_hundredths
+set-def-ann Num -> Num
+set-doc miles as hundredths of a kilometre
+construct-lam
+move-parent
+rename mi
+set-ann Num
+move-child 0
+construct-var mi
+construct-binop mul
+construct-num 161
+
+# hours_to_minutes : Num -> Num = λh:Num. h * 60
+create-definition
+rename-def hours_to_minutes
+set-def-ann Num -> Num
+set-doc hours as whole minutes
+construct-lam
+move-parent
+rename h
+set-ann Num
+move-child 0
+construct-var h
+construct-binop mul
+construct-num 60
+
+# minutes_to_seconds : Num -> Num = λm:Num. m * 60
+create-definition
+rename-def minutes_to_seconds
+set-def-ann Num -> Num
+set-doc minutes as whole seconds
+construct-lam
+move-parent
+rename m
+set-ann Num
+move-child 0
+construct-var m
+construct-binop mul
+construct-num 60
+
+# hours_to_seconds : Num -> Num = λh:Num. minutes_to_seconds (hours_to_minutes h)
+#
+# The application spine is built outside-in from a hole: `construct-ap` on a
+# hole writes ⦇⦈ ⦇⦈ and leaves the cursor on the function, which is a hole
+# and so accepts anything. Writing the function name first instead would put
+# a `Num -> Num` where a `Num` is wanted and earn a non-empty hole around it.
+create-definition
+rename-def hours_to_seconds
+set-def-ann Num -> Num
+set-doc hours as whole seconds, by way of minutes
+construct-lam
+move-parent
+rename h
+set-ann Num
+move-child 0
+construct-ap
+construct-var minutes_to_seconds
+move-parent
+move-child 1
+construct-ap
+construct-var hours_to_minutes
+move-parent
+move-child 1
+construct-var h
+
+# kg_to_g : Num -> Num = λkg:Num. kg * 1000
+create-definition
+rename-def kg_to_g
+set-def-ann Num -> Num
+set-doc kilograms as whole grams
+construct-lam
+move-parent
+rename kg
+set-ann Num
+move-child 0
+construct-var kg
+construct-binop mul
+construct-num 1000
+
+# sample_celsius : List Num = 0 :: 20 :: 37 :: 100 :: nil
+#
+# The list is grown spine first: `construct-cons` on a hole in a `List Num`
+# position writes ⦇⦈ :: ⦇⦈ and drops the cursor on the head, which is then a
+# `Num` position and takes a number. Writing the number first would put a
+# `Num` where a `List Num` is wanted, and the editor would wrap it in a
+# non-empty hole rather than let the definition stop type checking.
+create-definition
+rename-def sample_celsius
+set-def-ann List Num
+set-doc four Celsius readings: freezing, a warm room, blood heat, boiling
+construct-cons
+construct-num 0
+move-parent
+move-child 1
+construct-cons
+construct-num 20
+move-parent
+move-child 1
+construct-cons
+construct-num 37
+move-parent
+move-child 1
+construct-cons
+construct-num 100
+move-parent
+move-child 1
+construct-nil
+
+# fahrenheit_tenths : List Num = map c_to_f_tenths sample_celsius
+create-definition
+rename-def fahrenheit_tenths
+set-def-ann List Num
+set-doc the sample readings in tenths of a degree Fahrenheit
+construct-ap
+construct-ap
+construct-var map
+move-parent
+move-child 1
+construct-var c_to_f_tenths
+move-parent
+move-parent
+move-child 1
+construct-var sample_celsius
+
+# one_off_conversions : List Num =
+#   km_to_m 42 :: miles_to_km_hundredths 26 :: hours_to_seconds 3 :: kg_to_g 5 :: nil
+create-definition
+rename-def one_off_conversions
+set-def-ann List Num
+set-doc a marathon in metres, a marathon in hundredths of a kilometre, three hours in seconds, five kilograms in grams
+construct-cons
+construct-ap
+construct-var km_to_m
+move-parent
+move-child 1
+construct-num 42
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-var miles_to_km_hundredths
+move-parent
+move-child 1
+construct-num 26
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-var hours_to_seconds
+move-parent
+move-child 1
+construct-num 3
+move-parent
+move-parent
+move-child 1
+construct-cons
+construct-ap
+construct-var kg_to_g
+move-parent
+move-child 1
+construct-num 5
+move-parent
+move-parent
+move-child 1
+construct-nil
+
+# main : List Num = append fahrenheit_tenths one_off_conversions
+create-definition
+rename-def main
+set-def-ann List Num
+set-doc the four Fahrenheit readings followed by the four one-off conversions
+construct-ap
+construct-ap
+construct-var append
+move-parent
+move-child 1
+construct-var fahrenheit_tenths
+move-parent
+move-parent
+move-child 1
+construct-var one_off_conversions

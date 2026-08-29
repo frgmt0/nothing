@@ -11,6 +11,12 @@ pub fn handle_key(key: KeyEvent, state: AppState) -> AppState {
     if key.kind == KeyEventKind::Release {
         return state;
     }
+    let mut next = edit_key(key, state);
+    crate::tutorial::advance(&mut next);
+    next
+}
+
+fn edit_key(key: KeyEvent, state: AppState) -> AppState {
     let state = state.clear_hint();
 
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -984,7 +990,7 @@ fn backspace(state: AppState) -> AppState {
 fn delete(state: AppState) -> AppState {
     if state.slot != Slot::Node {
         return state
-            .with_hint("Del removes an expression — press ↑ to leave the binder slot first");
+            .with_hint("Del removes an expression. Press ↑ to leave the binder slot first");
     }
     apply_or_hint(state, &[Action::Delete], "nothing to delete here")
 }

@@ -10,6 +10,7 @@ pub mod projection;
 pub mod render;
 pub mod state_machine;
 pub mod term;
+pub mod tutorial;
 
 pub use app::{AppState, Slot};
 pub use projection::ProjectionKind;
