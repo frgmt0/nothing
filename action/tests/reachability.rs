@@ -65,6 +65,15 @@ fn build(target: &Exp, actions: &mut Vec<Action>) {
             actions.push(Action::ConstructProj(*side));
             build_children(&[inner], actions);
         }
+        Exp::Nil => actions.push(Action::ConstructNil),
+        Exp::Cons(head, tail) => {
+            actions.push(Action::ConstructCons);
+            build_children(&[head, tail], actions);
+        }
+        Exp::Fold(list, init, step) => {
+            actions.push(Action::ConstructFold);
+            build_children(&[list, init, step], actions);
+        }
 
         Exp::NonEmptyHole(_, inner) => {
             actions.push(Action::ConstructNonEmptyHole);
@@ -115,6 +124,7 @@ fn canonical_hole_ids(exp: &Exp) -> Exp {
             Exp::Num(n) => Exp::Num(*n),
             Exp::Bool(b) => Exp::Bool(*b),
             Exp::Str(text) => Exp::Str(text.clone()),
+            Exp::Nil => Exp::Nil,
             Exp::EmptyHole(_) => Exp::EmptyHole(fresh()),
             Exp::NonEmptyHole(_, inner) => {
                 let h = fresh();
@@ -126,6 +136,8 @@ fn canonical_hole_ids(exp: &Exp) -> Exp {
             Exp::If(c, t, e) => Exp::if_(go(c, next), go(t, next), go(e, next)),
             Exp::Let(id, bound, body) => Exp::let_(*id, go(bound, next), go(body, next)),
             Exp::Pair(l, r) => Exp::pair(go(l, next), go(r, next)),
+            Exp::Cons(l, r) => Exp::cons(go(l, next), go(r, next)),
+            Exp::Fold(l, i, st) => Exp::fold(go(l, next), go(i, next), go(st, next)),
             Exp::Proj(side, inner) => Exp::proj(*side, go(inner, next)),
         }
     }
@@ -139,12 +151,16 @@ fn eq_up_to_hole_ids(x: &Exp, y: &Exp) -> bool {
 fn is_hole_free(exp: &Exp) -> bool {
     match exp {
         Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => false,
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => true,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => true,
         Exp::Lam(_, _, b) | Exp::Proj(_, b) => is_hole_free(b),
-        Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
-            is_hole_free(a) && is_hole_free(b)
+        Exp::Ap(a, b)
+        | Exp::BinOp(_, a, b)
+        | Exp::Let(_, a, b)
+        | Exp::Pair(a, b)
+        | Exp::Cons(a, b) => is_hole_free(a) && is_hole_free(b),
+        Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
+            is_hole_free(c) && is_hole_free(t) && is_hole_free(e)
         }
-        Exp::If(c, t, e) => is_hole_free(c) && is_hole_free(t) && is_hole_free(e),
     }
 }
 
@@ -361,6 +377,18 @@ fn the_targets_cover_the_hard_cases() {
                 note("Proj", seen);
                 survey(inner, seen);
             }
+            Exp::Nil => note("Nil", seen),
+            Exp::Cons(head, tail) => {
+                note("Cons", seen);
+                survey(head, seen);
+                survey(tail, seen);
+            }
+            Exp::Fold(list, init, step) => {
+                note("Fold", seen);
+                survey(list, seen);
+                survey(init, seen);
+                survey(step, seen);
+            }
         }
     }
 
@@ -383,6 +411,9 @@ fn the_targets_cover_the_hard_cases() {
         "Let",
         "Pair",
         "Proj",
+        "Nil",
+        "Cons",
+        "Fold",
     ] {
         assert!(
             seen.contains(&form),

@@ -1,7 +1,8 @@
 use nothing_core::exp::Side;
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, Prec, op_prec, op_str, render_id, render_prec,
+    CONS_STR, FOLD_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec, op_prec,
+    op_str, render_id, render_prec,
 };
 
 use crate::zipper::{Frame, Zipper};
@@ -24,6 +25,9 @@ fn min_prec_for(frame: &Frame) -> Prec {
         Frame::PairFst(..) => PREC_BINDER,
         Frame::PairSnd(..) => PREC_BINDER,
         Frame::ProjBody(..) => PREC_ATOM,
+        Frame::ConsHead(..) => PREC_CONS + 1,
+        Frame::ConsTail(..) => PREC_CONS,
+        Frame::FoldList(..) | Frame::FoldInit(..) | Frame::FoldStep(..) => PREC_ATOM,
         Frame::NonEmptyHoleBody(..) => PREC_BINDER,
     }
 }
@@ -36,8 +40,14 @@ fn own_prec(frame: &Frame) -> Prec {
         | Frame::IfElse(..)
         | Frame::LetBound(..)
         | Frame::LetBody(..) => PREC_BINDER,
-        Frame::ApFun(..) | Frame::ApArg(..) | Frame::ProjBody(..) => PREC_APP,
+        Frame::ApFun(..)
+        | Frame::ApArg(..)
+        | Frame::ProjBody(..)
+        | Frame::FoldList(..)
+        | Frame::FoldInit(..)
+        | Frame::FoldStep(..) => PREC_APP,
         Frame::BinOpLeft(op, _) | Frame::BinOpRight(op, _) => op_prec(*op),
+        Frame::ConsHead(..) | Frame::ConsTail(..) => PREC_CONS,
         Frame::PairFst(..) | Frame::PairSnd(..) | Frame::NonEmptyHoleBody(..) => PREC_ATOM,
     }
 }
@@ -95,6 +105,28 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
             };
             format!("{prefix}{child}")
         }
+        Frame::ConsHead(tail) => {
+            format!("{child} {CONS_STR} {}", render_prec(tail, PREC_CONS, names))
+        }
+        Frame::ConsTail(head) => format!(
+            "{} {CONS_STR} {child}",
+            render_prec(head, PREC_CONS + 1, names)
+        ),
+        Frame::FoldList(init, step) => format!(
+            "{FOLD_STR} {child} {} {}",
+            render_prec(init, PREC_ATOM, names),
+            render_prec(step, PREC_ATOM, names)
+        ),
+        Frame::FoldInit(list, step) => format!(
+            "{FOLD_STR} {} {child} {}",
+            render_prec(list, PREC_ATOM, names),
+            render_prec(step, PREC_ATOM, names)
+        ),
+        Frame::FoldStep(list, init) => format!(
+            "{FOLD_STR} {} {} {child}",
+            render_prec(list, PREC_ATOM, names),
+            render_prec(init, PREC_ATOM, names)
+        ),
         Frame::NonEmptyHoleBody(_) => format!("⦇{child}⦈"),
     }
 }

@@ -1,6 +1,6 @@
-# 2. List map — bench/references.md §2, Phase-1 surface:
+# 2. List map — bench/references.md §2, Phase-B2 surface:
 #
-#   λx0:Num -> Num. λx1:Num * Num. (x0 (fst x1), x0 (snd x1))
+#   λx0:Num -> Num. λx1:List Num. fold x1 nil (λx2:Num. λx3:List Num. x0 x2 :: x3)
 
 \
 x
@@ -15,24 +15,41 @@ n
 x
 1
 :
-n
-*          # `*` is the product inside the annotation slot
+[          # `[` is the list prefix inside the annotation slot
 n
 .
 
-# x0 (fst x1)
-x
-0
-space      # application
-[          # fst
+/          # fold — the only eliminator, and the cursor lands on the list
 x
 1
 
-# , x0 (snd x1) — the `,` climbs out of the projection and the application
-,
+Tab        # the accumulator's seed
+n          # `nil` is a candidate, not a key
+
+Tab        # the step function
+\
+x
+2
+:
+n
+.
+
+\
+x
+3
+:
+[
+n
+.
+
+:          # cons: the cell before its head is written
+space      # the application in the head position
 x
 0
-space
-]          # snd
+Tab
 x
-1
+2
+
+Tab        # the tail
+x
+3

@@ -18,6 +18,11 @@ pub enum Frame {
     PairFst(Exp),
     PairSnd(Exp),
     ProjBody(Side),
+    ConsHead(Exp),
+    ConsTail(Exp),
+    FoldList(Exp, Exp),
+    FoldInit(Exp, Exp),
+    FoldStep(Exp, Exp),
     NonEmptyHoleBody(HoleId),
 }
 
@@ -37,6 +42,17 @@ impl Frame {
             Frame::PairFst(snd) => Exp::Pair(Box::new(focus), Box::new(snd)),
             Frame::PairSnd(fst) => Exp::Pair(Box::new(fst), Box::new(focus)),
             Frame::ProjBody(side) => Exp::Proj(side, Box::new(focus)),
+            Frame::ConsHead(tail) => Exp::Cons(Box::new(focus), Box::new(tail)),
+            Frame::ConsTail(head) => Exp::Cons(Box::new(head), Box::new(focus)),
+            Frame::FoldList(init, step) => {
+                Exp::Fold(Box::new(focus), Box::new(init), Box::new(step))
+            }
+            Frame::FoldInit(list, step) => {
+                Exp::Fold(Box::new(list), Box::new(focus), Box::new(step))
+            }
+            Frame::FoldStep(list, init) => {
+                Exp::Fold(Box::new(list), Box::new(init), Box::new(focus))
+            }
             Frame::NonEmptyHoleBody(h) => Exp::NonEmptyHole(h, Box::new(focus)),
         }
     }
@@ -50,13 +66,17 @@ impl Frame {
             | Frame::LetBound(..)
             | Frame::PairFst(..)
             | Frame::ProjBody(..)
+            | Frame::ConsHead(..)
+            | Frame::FoldList(..)
             | Frame::NonEmptyHoleBody(..) => 0,
             Frame::ApArg(..)
             | Frame::BinOpRight(..)
             | Frame::IfThen(..)
             | Frame::LetBody(..)
-            | Frame::PairSnd(..) => 1,
-            Frame::IfElse(..) => 2,
+            | Frame::PairSnd(..)
+            | Frame::ConsTail(..)
+            | Frame::FoldInit(..) => 1,
+            Frame::IfElse(..) | Frame::FoldStep(..) => 2,
         }
     }
 
@@ -70,18 +90,25 @@ impl Frame {
             | Frame::LetBound(..)
             | Frame::LetBody(..)
             | Frame::PairFst(..)
-            | Frame::PairSnd(..) => 2,
-            Frame::IfCond(..) | Frame::IfThen(..) | Frame::IfElse(..) => 3,
+            | Frame::PairSnd(..)
+            | Frame::ConsHead(..)
+            | Frame::ConsTail(..) => 2,
+            Frame::IfCond(..)
+            | Frame::IfThen(..)
+            | Frame::IfElse(..)
+            | Frame::FoldList(..)
+            | Frame::FoldInit(..)
+            | Frame::FoldStep(..) => 3,
         }
     }
 }
 
 pub fn arity(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => 0,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 0,
         Exp::Lam(..) | Exp::Proj(..) | Exp::NonEmptyHole(..) => 1,
-        Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) => 2,
-        Exp::If(..) => 3,
+        Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
+        Exp::If(..) | Exp::Fold(..) => 3,
     }
 }
 
@@ -176,10 +203,27 @@ impl Zipper {
                     (Frame::PairSnd(*fst), *snd)
                 }
             }
+            Exp::Cons(head, tail) => {
+                if n == 0 {
+                    (Frame::ConsHead(*tail), *head)
+                } else {
+                    (Frame::ConsTail(*head), *tail)
+                }
+            }
+            Exp::Fold(list, init, step) => match n {
+                0 => (Frame::FoldList(*init, *step), *list),
+                1 => (Frame::FoldInit(*list, *step), *init),
+                _ => (Frame::FoldStep(*list, *init), *step),
+            },
             Exp::Proj(side, inner) => (Frame::ProjBody(side), *inner),
             Exp::NonEmptyHole(h, inner) => (Frame::NonEmptyHoleBody(h), *inner),
 
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => {
+            Exp::Var(_)
+            | Exp::Num(_)
+            | Exp::Bool(_)
+            | Exp::Str(_)
+            | Exp::Nil
+            | Exp::EmptyHole(_) => {
                 return None;
             }
         };

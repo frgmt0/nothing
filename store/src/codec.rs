@@ -176,6 +176,10 @@ pub fn encode_ty(buf: &mut Vec<u8>, ty: &Ty) {
         }
         Ty::Hole => buf.push(4),
         Ty::Str => buf.push(5),
+        Ty::List(elem) => {
+            buf.push(6);
+            encode_ty(buf, elem);
+        }
     }
 }
 
@@ -195,6 +199,7 @@ pub fn decode_ty(bytes: &[u8], pos: &mut usize) -> Result<Ty, DecodeError> {
         }
         4 => Ok(Ty::Hole),
         5 => Ok(Ty::Str),
+        6 => Ok(Ty::List(Box::new(decode_ty(bytes, pos)?))),
         other => Err(DecodeError::BadTag(other)),
     }
 }

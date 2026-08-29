@@ -101,6 +101,7 @@ editing:
   construct-num N         write a numeric literal
   construct-bool BOOL     write true or false
   construct-str \"TEXT\"    write a string literal; only \\\" and \\\\ are escapes
+  construct-nil           write the empty list
   construct-var NAME      reference the in-scope binder or definition NAME
   construct-lam           e becomes λx:?. e
   construct-ap            e becomes e ⦇⦈
@@ -110,9 +111,12 @@ editing:
   construct-let           e becomes let x = e in ⦇⦈
   construct-pair          e becomes (e, ⦇⦈)
   construct-proj SIDE     e becomes fst e / snd e   (l|r, fst|snd, left|right)
+  construct-cons          e becomes e :: ⦇⦈
+  construct-fold          e becomes fold e ⦇⦈ ⦇⦈
   construct-non-empty-hole  e becomes ⦇e⦈
   set-ann TY              set the focused lambda's annotation
-                          TY := Num | Bool | Str | ? | TY -> TY | TY * TY | ( TY )
+                          TY := Num | Bool | Str | ? | List TY
+                                | TY -> TY | TY * TY | ( TY )
   set-binder-id UUID      re-identify the focused lambda or let binder
   rename NAME             give the focused binder the display name NAME
   finish                  unwrap a non-empty hole whose contents now fit
@@ -176,6 +180,7 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
         "construct-num" => act(Action::ConstructNum(parse_i64(head, rest)?)),
         "construct-bool" => act(Action::ConstructBool(parse_bool(head, rest)?)),
         "construct-str" => act(Action::ConstructStr(parse_string(head, rest)?)),
+        "construct-nil" => no_arg(Action::ConstructNil),
         "construct-var" => Ok(Step::Var(parse_name(head, rest)?)),
         "construct-lam" => no_arg(Action::ConstructLam),
         "construct-ap" => no_arg(Action::ConstructAp),
@@ -184,6 +189,8 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
         "construct-let" => no_arg(Action::ConstructLet),
         "construct-pair" => no_arg(Action::ConstructPair),
         "construct-proj" => act(Action::ConstructProj(parse_side(rest)?)),
+        "construct-cons" => no_arg(Action::ConstructCons),
+        "construct-fold" => no_arg(Action::ConstructFold),
         "construct-non-empty-hole" => no_arg(Action::ConstructNonEmptyHole),
 
         "set-ann" => act(Action::SetAnn(parse_ty(rest)?)),
@@ -224,6 +231,7 @@ pub fn action_name(action: &Action) -> String {
         Action::ConstructNum(n) => format!("construct-num {n}"),
         Action::ConstructBool(b) => format!("construct-bool {b}"),
         Action::ConstructStr(text) => format!("construct-str {}", quote_str(text)),
+        Action::ConstructNil => "construct-nil".to_string(),
         Action::ConstructVar(id) => format!("construct-var {id}"),
         Action::ConstructLam => "construct-lam".to_string(),
         Action::ConstructAp => "construct-ap".to_string(),
@@ -232,6 +240,8 @@ pub fn action_name(action: &Action) -> String {
         Action::ConstructLet => "construct-let".to_string(),
         Action::ConstructPair => "construct-pair".to_string(),
         Action::ConstructProj(side) => format!("construct-proj {}", side_name(*side)),
+        Action::ConstructCons => "construct-cons".to_string(),
+        Action::ConstructFold => "construct-fold".to_string(),
         Action::ConstructNonEmptyHole => "construct-non-empty-hole".to_string(),
         Action::SetAnn(ty) => format!("set-ann {ty}"),
         Action::SetBinderId(id) => format!("set-binder-id {id}"),
@@ -434,6 +444,7 @@ fn ty_atom(tokens: &[String], pos: &mut usize) -> Result<Ty, ParseError> {
         "bool" => Ok(Ty::Bool),
         "str" => Ok(Ty::Str),
         "?" | "hole" => Ok(Ty::Hole),
+        "list" => Ok(Ty::List(Box::new(ty_atom(tokens, pos)?))),
         "(" => {
             let inner = ty_arrow(tokens, pos)?;
             if tokens.get(*pos).map(String::as_str) != Some(")") {

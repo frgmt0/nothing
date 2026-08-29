@@ -18,10 +18,10 @@ pub fn extend(base: &[usize], step: usize) -> Path {
 
 pub fn arity(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => 0,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 0,
         Exp::Lam(..) | Exp::Proj(..) | Exp::NonEmptyHole(..) => 1,
-        Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) => 2,
-        Exp::If(..) => 3,
+        Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
+        Exp::If(..) | Exp::Fold(..) => 3,
     }
 }
 
@@ -41,6 +41,11 @@ pub fn child(exp: &Exp, n: usize) -> Option<&Exp> {
         (Exp::If(c, _, _), 0) => Some(c),
         (Exp::If(_, t, _), 1) => Some(t),
         (Exp::If(_, _, e), 2) => Some(e),
+        (Exp::Cons(h, _), 0) => Some(h),
+        (Exp::Cons(_, t), 1) => Some(t),
+        (Exp::Fold(l, _, _), 0) => Some(l),
+        (Exp::Fold(_, i, _), 1) => Some(i),
+        (Exp::Fold(_, _, s), 2) => Some(s),
         _ => None,
     }
 }
@@ -61,6 +66,11 @@ pub fn with_child(exp: &Exp, n: usize, new: Exp) -> Option<Exp> {
         (Exp::If(_, t, e), 0) => Exp::If(Box::new(new), t.clone(), e.clone()),
         (Exp::If(c, _, e), 1) => Exp::If(c.clone(), Box::new(new), e.clone()),
         (Exp::If(c, t, _), 2) => Exp::If(c.clone(), t.clone(), Box::new(new)),
+        (Exp::Cons(_, t), 0) => Exp::Cons(Box::new(new), t.clone()),
+        (Exp::Cons(h, _), 1) => Exp::Cons(h.clone(), Box::new(new)),
+        (Exp::Fold(_, i, s), 0) => Exp::Fold(Box::new(new), i.clone(), s.clone()),
+        (Exp::Fold(l, _, s), 1) => Exp::Fold(l.clone(), Box::new(new), s.clone()),
+        (Exp::Fold(l, i, _), 2) => Exp::Fold(l.clone(), i.clone(), Box::new(new)),
         _ => return None,
     };
     Some(out)

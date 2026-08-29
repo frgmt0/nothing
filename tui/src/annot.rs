@@ -21,7 +21,7 @@ fn open_parens(buffer: &str) -> usize {
 
 pub fn accept(buffer: &str, c: char) -> Accept {
     match c {
-        '?' | '*' | '>' | '(' => Accept::Append,
+        '?' | '*' | '>' | '(' | '[' => Accept::Append,
         ')' if open_parens(buffer) > 0 => Accept::Append,
         ')' => Accept::Ignore,
         c if c.is_alphabetic() && in_word(buffer) => Accept::Swallow,
@@ -33,6 +33,7 @@ pub fn accept(buffer: &str, c: char) -> Accept {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tok {
     Base(&'static str),
+    Prefix(&'static str),
     Op(&'static str),
     Open,
     Close,
@@ -49,6 +50,7 @@ fn tokens(buffer: &str) -> Vec<Tok> {
                 'b' | 'B' => out.push(Tok::Base("Bool")),
                 's' | 'S' => out.push(Tok::Base("Str")),
                 '?' => out.push(Tok::Base("?")),
+                '[' => out.push(Tok::Prefix("List")),
                 '>' => out.push(Tok::Op("->")),
                 '*' => out.push(Tok::Op("*")),
                 '(' => out.push(Tok::Open),
@@ -71,6 +73,11 @@ fn repaired(buffer: &str) -> String {
             Tok::Base(name) => {
                 out.push(name);
                 want_operand = false;
+            }
+            Tok::Prefix(name) => {
+                if want_operand {
+                    out.push(name);
+                }
             }
             Tok::Op(op) => {
                 if want_operand {
@@ -150,7 +157,7 @@ mod tests {
     fn every_prefix_of_every_buffer_parses() {
         for buffer in [
             "n", "n>n", "n*n", "num>bool", "(n>n)>n", "n>(n*b)", "?>?", "n*n*n", "(((n", "n>>n",
-            "*n", "()", "(n*)",
+            "*n", "()", "(n*)", "[n", "[[n", "[n>n", "([n)", "n>[b", "[n*[b", "[", "n[",
         ] {
             let mut prefix = String::new();
             for c in buffer.chars() {
@@ -184,5 +191,22 @@ mod tests {
     fn swallowed_letters_change_nothing_but_stay_visible() {
         assert_eq!(parse("nu"), parse("n"));
         assert_eq!(parse("boo"), parse("b"));
+    }
+
+    fn list(elem: Ty) -> Ty {
+        Ty::List(Box::new(elem))
+    }
+
+    #[test]
+    fn a_bracket_is_the_list_prefix_and_takes_the_next_type() {
+        assert_eq!(parse("["), list(Ty::Hole));
+        assert_eq!(parse("[n"), list(Ty::Num));
+        assert_eq!(parse("[[n"), list(list(Ty::Num)));
+        assert_eq!(parse("[n>n"), arrow(list(Ty::Num), Ty::Num));
+        assert_eq!(parse("[(n>n)"), list(arrow(Ty::Num, Ty::Num)));
+        assert_eq!(parse("[n*[b"), prod(list(Ty::Num), list(Ty::Bool)));
+        assert_eq!(accept("", '['), Accept::Append);
+        assert_eq!(accept("n", '['), Accept::Append);
+        assert_eq!(parse("n["), parse("n"));
     }
 }

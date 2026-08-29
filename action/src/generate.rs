@@ -59,6 +59,7 @@ enum Form {
     Ap,
     Proj,
     BinOp,
+    Fold,
     NonEmptyHole,
 }
 
@@ -89,13 +90,14 @@ impl Gen {
     }
 
     pub fn ty(&mut self, depth: u32) -> Ty {
-        let n = if depth == 0 { 4 } else { 6 };
+        let n = if depth == 0 { 4 } else { 7 };
         match self.rng.below(n) {
             0 => Ty::Num,
             1 => Ty::Bool,
             2 => Ty::Str,
             3 => Ty::Hole,
             4 => Ty::Arrow(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
+            5 => Ty::List(Box::new(self.ty(depth - 1))),
             _ => Ty::Prod(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
         }
     }
@@ -151,6 +153,7 @@ impl Gen {
             cands.push(Form::If);
             cands.push(Form::Ap);
             cands.push(Form::Proj);
+            cands.push(Form::Fold);
             if *ty == Ty::Num || *ty == Ty::Bool || *ty == Ty::Str {
                 cands.push(Form::BinOp);
                 cands.push(Form::BinOp);
@@ -180,6 +183,12 @@ impl Gen {
                     let fst = self.exp_syn(ctx, a, d);
                     let snd = self.exp_syn(ctx, b, d);
                     Exp::pair(fst, snd)
+                }
+                Ty::List(a) => {
+                    let shortest = usize::from(**a != Ty::Hole);
+                    let len = shortest + self.rng.below(3 - shortest);
+                    let items: Vec<Exp> = (0..len).map(|_| self.exp_syn(ctx, a, d)).collect();
+                    Exp::list(items)
                 }
             },
 
@@ -237,6 +246,15 @@ impl Gen {
                 Exp::bin_op(op, lhs, rhs)
             }
 
+            Form::Fold => {
+                let elem = self.ty(1);
+                let list = self.exp_syn(ctx, &Ty::List(Box::new(elem.clone())), d);
+                let init = self.exp_syn(ctx, ty, d);
+                let step_ty = nothing_core::typing::step_ty(&elem, ty);
+                let step = self.exp_syn(ctx, &step_ty, d);
+                Exp::fold(list, init, step)
+            }
+
             Form::NonEmptyHole => {
                 let sigma = self.ty(1);
                 let inner = self.exp_syn(ctx, &sigma, d);
@@ -280,13 +298,14 @@ pub fn well_typed_exp_of_ty(seed: u64, ty: &Ty, depth: u32) -> Exp {
 
 pub fn size(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => 1,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 1,
         Exp::Lam(_, _, body) => 1 + size(body),
         Exp::Ap(f, a) => 1 + size(f) + size(a),
         Exp::BinOp(_, l, r) => 1 + size(l) + size(r),
         Exp::If(c, t, e) => 1 + size(c) + size(t) + size(e),
+        Exp::Fold(l, i, s) => 1 + size(l) + size(i) + size(s),
         Exp::Let(_, bound, body) => 1 + size(bound) + size(body),
-        Exp::Pair(l, r) => 1 + size(l) + size(r),
+        Exp::Pair(l, r) | Exp::Cons(l, r) => 1 + size(l) + size(r),
         Exp::Proj(_, e) => 1 + size(e),
         Exp::NonEmptyHole(_, e) => 1 + size(e),
     }
@@ -353,17 +372,17 @@ mod tests {
                     *non_empty += 1;
                     count(inner, empty, non_empty);
                 }
-                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
+                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
                 Exp::Lam(_, _, b) => count(b, empty, non_empty),
                 Exp::Ap(f, a) => {
                     count(f, empty, non_empty);
                     count(a, empty, non_empty);
                 }
-                Exp::BinOp(_, l, r) | Exp::Pair(l, r) | Exp::Let(_, l, r) => {
+                Exp::BinOp(_, l, r) | Exp::Pair(l, r) | Exp::Let(_, l, r) | Exp::Cons(l, r) => {
                     count(l, empty, non_empty);
                     count(r, empty, non_empty);
                 }
-                Exp::If(c, t, el) => {
+                Exp::If(c, t, el) | Exp::Fold(c, t, el) => {
                     count(c, empty, non_empty);
                     count(t, empty, non_empty);
                     count(el, empty, non_empty);

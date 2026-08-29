@@ -3,8 +3,10 @@ use nothing_core::ctx::Ctx;
 use nothing_core::exp::{Exp, Op};
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
-use nothing_core::ty::{Ty, matched_arrow, matched_prod};
-use nothing_core::typing::{ana, is_comparable, is_well_typed_in, join, operand_expectation, syn};
+use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod};
+use nothing_core::typing::{
+    ana, is_comparable, is_well_typed_in, join, operand_expectation, step_ty, syn,
+};
 
 use crate::path::{Path, extend, label};
 
@@ -105,7 +107,7 @@ impl State {
                     self.vacate(exp, path, "the merge left this variable unbound")
                 }
             }
-            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => exp.clone(),
+            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => exp.clone(),
 
             Exp::Lam(id, ann, body) => {
                 let inner = ctx.extend(*id, ann.clone());
@@ -227,6 +229,61 @@ impl State {
                     );
                 }
                 Exp::Proj(*side, Box::new(inner))
+            }
+
+            Exp::Cons(head, tail) => {
+                let head = self.go(ctx, head, &extend(path, 0));
+                let mut tail = self.go(ctx, tail, &extend(path, 1));
+                let tail_ty = syn(ctx, &tail).unwrap_or(Ty::Hole);
+                let from_tail = match matched_list(&tail_ty) {
+                    Some(elem) => elem,
+                    None => {
+                        tail = self.quarantine(
+                            tail,
+                            &extend(path, 1),
+                            "the merge left a non-list after a `::`",
+                        );
+                        Ty::Hole
+                    }
+                };
+                let head_ty = syn(ctx, &head).unwrap_or(Ty::Hole);
+                let head = if join(&head_ty, &from_tail).is_some() {
+                    head
+                } else {
+                    self.quarantine(
+                        head,
+                        &extend(path, 0),
+                        "the merge left an element the rest of the list cannot hold",
+                    )
+                };
+                Exp::Cons(Box::new(head), Box::new(tail))
+            }
+
+            Exp::Fold(list, init, step) => {
+                let mut list = self.go(ctx, list, &extend(path, 0));
+                let init = self.go(ctx, init, &extend(path, 1));
+                let step = self.go(ctx, step, &extend(path, 2));
+                let list_ty = syn(ctx, &list).unwrap_or(Ty::Hole);
+                let elem = match matched_list(&list_ty) {
+                    Some(elem) => elem,
+                    None => {
+                        list = self.quarantine(
+                            list,
+                            &extend(path, 0),
+                            "the merge left a fold over a non-list",
+                        );
+                        Ty::Hole
+                    }
+                };
+                let acc = syn(ctx, &init).unwrap_or(Ty::Hole);
+                let step = self.ensure_ana(
+                    ctx,
+                    step,
+                    &step_ty(&elem, &acc),
+                    &extend(path, 2),
+                    "the merge left a fold step that does not match its list",
+                );
+                Exp::Fold(Box::new(list), Box::new(init), Box::new(step))
             }
 
             Exp::NonEmptyHole(h, inner) => {

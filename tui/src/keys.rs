@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nothing_action::act::Action;
 use nothing_core::exp::{Exp, Op, Side};
-use nothing_core::render::{PREC_APP, PREC_ATOM, PREC_BINDER, Prec, op_prec};
+use nothing_core::render::{PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CONS, Prec, op_prec};
 
 use crate::annot::{self, Accept};
 use crate::app::{AppState, Slot};
@@ -354,6 +354,7 @@ fn node_key(c: char, state: AppState) -> AppState {
         ',' => wrap(state, PREC_BINDER, Action::ConstructPair, "pair"),
         '[' => wrap(state, PREC_APP, Action::ConstructProj(Side::L), "fst"),
         ']' => wrap(state, PREC_APP, Action::ConstructProj(Side::R), "snd"),
+        '/' => wrap(state, PREC_APP, Action::ConstructFold, "fold"),
 
         '!' => wrap(
             state,
@@ -363,7 +364,8 @@ fn node_key(c: char, state: AppState) -> AppState {
         ),
 
         '~' => negate(state),
-        ':' => to_annotation(state),
+        ':' if matches!(state.focus(), Exp::Lam(..)) => to_annotation(state),
+        ':' => wrap(state, PREC_CONS, Action::ConstructCons, "cons"),
         '.' => state.with_hint("`.` addresses a binder's body; the cursor is not on a binder"),
         _ => state.with_hint(format!("`{c}` is not bound here")),
     }
@@ -756,6 +758,87 @@ mod tests {
 
     fn typed(text: &str) -> String {
         type_chars(text, AppState::empty()).text()
+    }
+
+    #[test]
+    fn cons_is_a_colon_and_a_written_lambda_keeps_its_annotation_slot() {
+        assert_eq!(typed("1:"), "1 :: ⦇⦈");
+        assert_eq!(
+            typed("1:2:n"),
+            "1 :: ⦇2 :: nil⦈",
+            "the tail of `1 :: _` wants a list, so a bare 2 is quarantined and typing goes on \
+             inside the quarantine"
+        );
+        let finished = handle_key(key(KeyCode::Enter), type_chars("1:2:n", AppState::empty()));
+        assert_eq!(
+            finished.text(),
+            "1 :: 2 :: nil",
+            "and one Enter finishes it, because by then it fits"
+        );
+        assert_eq!(
+            typed("1+2:"),
+            "1 + 2 :: ⦇⦈",
+            "cons binds looser than addition, so `+` is climbed out of"
+        );
+        assert_eq!(
+            typed("1<2:"),
+            "1 < ⦇2 :: ⦇⦈⦈",
+            "and tighter than comparison, so `<` is not climbed out of and the list lands \
+             where a number was wanted"
+        );
+
+        let lambda = type_chars("\\x0:n.x0", AppState::empty());
+        let lambda = handle_key(key(KeyCode::Esc), lambda);
+        let lambda = handle_key(key(KeyCode::Up), lambda);
+        assert!(matches!(lambda.focus(), Exp::Lam(..)));
+        let annotated = handle_key(key(KeyCode::Char(':')), lambda);
+        assert_eq!(
+            annotated.slot,
+            Slot::Annotation,
+            "`:` on a written lambda still opens its annotation slot"
+        );
+    }
+
+    #[test]
+    fn fold_and_nil_are_a_key_and_a_candidate() {
+        assert_eq!(typed("/"), "fold ⦇⦈ ⦇⦈ ⦇⦈");
+        assert_eq!(typed("n"), "nil", "nil is a candidate like true and false");
+        assert_eq!(typed("/n"), "fold nil ⦇⦈ ⦇⦈");
+
+        let state = type_chars("\\x0:[n./x0", AppState::empty());
+        assert_eq!(state.text(), "λx0:List Num. fold x0 ⦇⦈ ⦇⦈");
+        let state = handle_key(key(KeyCode::Tab), state);
+        assert_eq!(
+            state.expected_ty(),
+            nothing_core::ty::Ty::Hole,
+            "an unannotated fold accumulates whatever its seed is"
+        );
+    }
+
+    #[test]
+    fn the_expected_type_of_a_cons_tail_comes_from_the_head_that_was_typed() {
+        let state = type_chars("1:", AppState::empty());
+        assert_eq!(state.text(), "1 :: ⦇⦈");
+        assert_eq!(
+            state.expected_ty(),
+            nothing_core::ty::Ty::List(Box::new(nothing_core::ty::Ty::Num)),
+            "the hole after `1 ::` wants a list of numbers, and nobody said so"
+        );
+
+        let head = type_chars(":", AppState::empty());
+        assert_eq!(head.text(), "⦇⦈ :: ⦇⦈");
+        let quarantined = type_chars("t:1:n", AppState::empty());
+        assert_eq!(
+            quarantined.text(),
+            "true :: ⦇1 :: nil⦈",
+            "a list settles on its first element's type and quarantines the rest"
+        );
+        assert!(
+            !handle_key(key(KeyCode::Enter), quarantined.clone()).finishes(),
+            "and this one never finishes: a list of numbers is not a list of booleans"
+        );
+        assert!(nothing_core::typing::is_well_typed(&head.program()));
+        assert!(nothing_core::typing::is_well_typed(&quarantined.program()));
     }
 
     #[test]

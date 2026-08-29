@@ -265,3 +265,73 @@ fn editing_a_string_literal_is_one_replace() {
     let replayed = apply_all(&before, &ops);
     assert!(structurally_equal(&replayed.version.exp, &after.exp));
 }
+
+fn list_of(items: &[i64]) -> Version {
+    Version::new(
+        Exp::list(items.iter().copied().map(Exp::num)),
+        NameTable::new(),
+    )
+}
+
+#[test]
+fn appending_to_a_list_is_one_insert_and_so_is_splicing_into_its_middle() {
+    let base = list_of(&[1, 2, 3]);
+
+    let appended = diff(&base, &list_of(&[1, 2, 3, 4]));
+    assert_eq!(
+        appended.len(),
+        1,
+        "appending should not rewrite the cells it passes: {appended:#?}"
+    );
+    assert!(matches!(appended[0], Operation::Insert { slot: 1, .. }));
+
+    let spliced = diff(&base, &list_of(&[1, 9, 2, 3]));
+    assert_eq!(
+        spliced.len(),
+        1,
+        "splicing should not renumber the elements after it: {spliced:#?}"
+    );
+    assert!(matches!(spliced[0], Operation::Insert { slot: 1, .. }));
+
+    let dropped = diff(&base, &list_of(&[1, 3]));
+    assert_eq!(
+        dropped.len(),
+        1,
+        "removing one element should be one delete: {dropped:#?}"
+    );
+    assert!(matches!(dropped[0], Operation::Delete { slot: 1, .. }));
+
+    for (target, ops) in [
+        (list_of(&[1, 2, 3, 4]), appended),
+        (list_of(&[1, 9, 2, 3]), spliced),
+        (list_of(&[1, 3]), dropped),
+    ] {
+        let applied = apply_all(&base, &ops);
+        assert!(applied.dropped.is_empty(), "an operation did not apply");
+        assert!(
+            structurally_equal(&applied.version.exp, &target.exp),
+            "replaying gave {} not {}",
+            applied.version.render(),
+            target.render()
+        );
+    }
+}
+
+#[test]
+fn two_branches_growing_the_same_list_at_different_places_merge_cleanly() {
+    let base = list_of(&[1, 2, 3]);
+    let ours = list_of(&[1, 2, 3, 4]);
+    let theirs = list_of(&[1, 9, 2, 3]);
+
+    let outcome = nothing_merge::merge3::merge(&base, &ours, &theirs);
+    assert!(
+        outcome.is_clean(),
+        "the ends of a list are not the middle of it: {}",
+        outcome.report()
+    );
+    assert!(
+        structurally_equal(&outcome.merged.exp, &list_of(&[1, 9, 2, 3, 4]).exp),
+        "merged to {}",
+        outcome.merged.render()
+    );
+}

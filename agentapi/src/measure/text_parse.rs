@@ -3,7 +3,7 @@ use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::names::NameTable;
 
 const KEYWORDS: &[&str] = &[
-    "if", "then", "else", "let", "in", "true", "false", "fst", "snd",
+    "if", "then", "else", "let", "in", "true", "false", "fst", "snd", "nil", "fold",
 ];
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -225,7 +225,7 @@ impl Parser<'_> {
     }
 
     fn cmp(&mut self) -> Result<Exp, TextError> {
-        let mut left = self.additive()?;
+        let mut left = self.cons()?;
         loop {
             self.skip_ws();
             let op = if self.eat("==") {
@@ -236,9 +236,19 @@ impl Parser<'_> {
             } else {
                 return Ok(left);
             };
-            let right = self.additive()?;
+            let right = self.cons()?;
             left = Exp::bin_op(op, left, right);
         }
+    }
+
+    fn cons(&mut self) -> Result<Exp, TextError> {
+        let head = self.additive()?;
+        self.skip_ws();
+        if !self.eat("::") {
+            return Ok(head);
+        }
+        let tail = self.cons()?;
+        Ok(Exp::cons(head, tail))
     }
 
     fn additive(&mut self) -> Result<Exp, TextError> {
@@ -280,6 +290,11 @@ impl Parser<'_> {
             Exp::proj(Side::L, self.atom()?)
         } else if self.eat_word("snd") {
             Exp::proj(Side::R, self.atom()?)
+        } else if self.eat_word("fold") {
+            let list = self.atom()?;
+            let init = self.atom()?;
+            let step = self.atom()?;
+            Exp::fold(list, init, step)
         } else {
             self.atom()?
         };
@@ -364,6 +379,7 @@ impl Parser<'_> {
                 match word.as_str() {
                     "true" => Ok(Exp::bool_(true)),
                     "false" => Ok(Exp::bool_(false)),
+                    "nil" => Ok(Exp::nil()),
                     other if KEYWORDS.contains(&other) => {
                         Err(TextError(format!("`{other}` cannot start an expression")))
                     }

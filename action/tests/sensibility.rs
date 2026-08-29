@@ -37,10 +37,13 @@ fn variant_name(action: &Action) -> &'static str {
         Action::MoveNextDef => "MoveNextDef",
         Action::MovePrevDef => "MovePrevDef",
         Action::MoveToDef(_) => "MoveToDef",
+        Action::ConstructNil => "ConstructNil",
+        Action::ConstructCons => "ConstructCons",
+        Action::ConstructFold => "ConstructFold",
     }
 }
 
-const ALL_VARIANTS: [&str; 27] = [
+const ALL_VARIANTS: [&str; 30] = [
     "MoveChild",
     "MoveParent",
     "MoveNextSibling",
@@ -68,6 +71,9 @@ const ALL_VARIANTS: [&str; 27] = [
     "MoveNextDef",
     "MovePrevDef",
     "MoveToDef",
+    "ConstructNil",
+    "ConstructCons",
+    "ConstructFold",
 ];
 
 fn arb_op() -> impl Strategy<Value = Op> {
@@ -143,6 +149,9 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
         Just(Action::MoveNextDef).boxed(),
         Just(Action::MovePrevDef).boxed(),
         arb_id().prop_map(Action::MoveToDef).boxed(),
+        Just(Action::ConstructNil).boxed(),
+        Just(Action::ConstructCons).boxed(),
+        Just(Action::ConstructFold).boxed(),
     ])
 }
 
@@ -177,11 +186,15 @@ fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
         Action::ConstructPair,
         Action::ConstructProj(Side::L),
         Action::ConstructProj(Side::R),
+        Action::ConstructNil,
+        Action::ConstructCons,
+        Action::ConstructFold,
         Action::ConstructNonEmptyHole,
         Action::SetAnn(Ty::Num),
         Action::SetAnn(Ty::Str),
         Action::SetAnn(Ty::Hole),
         Action::SetAnn(Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool))),
+        Action::SetAnn(Ty::List(Box::new(Ty::Num))),
         Action::SetBinderId(Id::from_u128(0)),
         Action::SetBinderId(Id::from_u128(9)),
         Action::Rename(Id::from_u128(0), "x".to_string()),
@@ -190,6 +203,7 @@ fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
         Action::CreateDefinition,
         Action::DeleteDefinition,
         Action::SetDefAnn(Ty::Num),
+        Action::SetDefAnn(Ty::List(Box::new(Ty::Num))),
         Action::SetDefAnn(Ty::Hole),
         Action::MoveNextDef,
         Action::MovePrevDef,

@@ -39,6 +39,7 @@ fn ty_json(ty: &Ty) -> String {
             ty_json(a),
             ty_json(b)
         ),
+        Ty::List(elem) => format!("{{\"ty\":\"List\",\"elem\":{}}}", ty_json(elem)),
     }
 }
 
@@ -105,6 +106,18 @@ fn exp_json(exp: &Exp) -> String {
             escape(side_str(*side)),
             exp_json(e)
         ),
+        Exp::Nil => "{\"exp\":\"Nil\"}".to_string(),
+        Exp::Cons(head, tail) => format!(
+            "{{\"exp\":\"Cons\",\"head\":{},\"tail\":{}}}",
+            exp_json(head),
+            exp_json(tail)
+        ),
+        Exp::Fold(list, init, step) => format!(
+            "{{\"exp\":\"Fold\",\"list\":{},\"init\":{},\"step\":{}}}",
+            exp_json(list),
+            exp_json(init),
+            exp_json(step)
+        ),
         Exp::EmptyHole(h) => format!(
             "{{\"exp\":\"EmptyHole\",\"hole\":{}}}",
             escape(&h.to_string())
@@ -149,6 +162,9 @@ fn action_json(action: &Action) -> String {
             "{{\"action\":\"ConstructVar\",\"id\":{}}}",
             escape(&id.to_string())
         ),
+        Action::ConstructNil => "{\"action\":\"ConstructNil\"}".to_string(),
+        Action::ConstructCons => "{\"action\":\"ConstructCons\"}".to_string(),
+        Action::ConstructFold => "{\"action\":\"ConstructFold\"}".to_string(),
         Action::ConstructLam => "{\"action\":\"ConstructLam\"}".to_string(),
         Action::ConstructAp => "{\"action\":\"ConstructAp\"}".to_string(),
         Action::ConstructBinOp(op) => format!(

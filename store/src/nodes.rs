@@ -152,6 +152,26 @@ fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32
             let idx = push_entry(table, hash, 9, payload, vec![e_idx]);
             (idx, hash)
         }
+        Exp::Nil => {
+            let hash = hash_node(13, &[], &[]);
+            let idx = push_entry(table, hash, 13, vec![], vec![]);
+            (idx, hash)
+        }
+        Exp::Cons(head, tail) => {
+            let (head_idx, head_hash) = build_rec(head, stack, table);
+            let (tail_idx, tail_hash) = build_rec(tail, stack, table);
+            let hash = hash_node(14, &[], &[head_hash, tail_hash]);
+            let idx = push_entry(table, hash, 14, vec![], vec![head_idx, tail_idx]);
+            (idx, hash)
+        }
+        Exp::Fold(list, init, step) => {
+            let (list_idx, list_hash) = build_rec(list, stack, table);
+            let (init_idx, init_hash) = build_rec(init, stack, table);
+            let (step_idx, step_hash) = build_rec(step, stack, table);
+            let hash = hash_node(15, &[], &[list_hash, init_hash, step_hash]);
+            let idx = push_entry(table, hash, 15, vec![], vec![list_idx, init_idx, step_idx]);
+            (idx, hash)
+        }
         Exp::EmptyHole(h) => {
             let hash = hash_node(10, &[], &[]);
             let mut payload = Vec::new();
@@ -258,6 +278,18 @@ fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
             let side = decode_side(read_u8(&entry.payload, &mut pos)?)?;
             let e = decode_child(entries, entry, 0)?;
             Ok(Exp::proj(side, e))
+        }
+        13 => Ok(Exp::nil()),
+        14 => {
+            let head = decode_child(entries, entry, 0)?;
+            let tail = decode_child(entries, entry, 1)?;
+            Ok(Exp::cons(head, tail))
+        }
+        15 => {
+            let list = decode_child(entries, entry, 0)?;
+            let init = decode_child(entries, entry, 1)?;
+            let step = decode_child(entries, entry, 2)?;
+            Ok(Exp::fold(list, init, step))
         }
         10 => {
             let h = read_hole_id(&entry.payload, &mut pos)?;

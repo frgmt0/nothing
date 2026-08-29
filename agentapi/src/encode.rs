@@ -61,6 +61,7 @@ pub fn ty_json(ty: &Ty) -> Json {
             ("fst", ty_json(a)),
             ("snd", ty_json(b)),
         ]),
+        Ty::List(elem) => Json::obj(vec![("ty", Json::str("List")), ("elem", ty_json(elem))]),
     }
 }
 
@@ -88,6 +89,12 @@ pub fn ty_from_json(value: &Json) -> Result<Ty, String> {
                 Box::new(ty_from_json(from)?),
                 Box::new(ty_from_json(to)?),
             ))
+        }
+        "List" => {
+            let elem = value
+                .get("elem")
+                .ok_or_else(|| "List needs `elem`".to_string())?;
+            Ok(Ty::List(Box::new(ty_from_json(elem)?)))
         }
         "Prod" => {
             let fst = value
@@ -160,6 +167,18 @@ pub fn exp_json(exp: &Exp, names: &NameTable) -> Json {
             ("side", Json::str(side_str(*side))),
             ("body", exp_json(e, names)),
         ]),
+        Exp::Nil => Json::obj(vec![("exp", Json::str("Nil"))]),
+        Exp::Cons(head, tail) => Json::obj(vec![
+            ("exp", Json::str("Cons")),
+            ("head", exp_json(head, names)),
+            ("tail", exp_json(tail, names)),
+        ]),
+        Exp::Fold(list, init, step) => Json::obj(vec![
+            ("exp", Json::str("Fold")),
+            ("list", exp_json(list, names)),
+            ("init", exp_json(init, names)),
+            ("step", exp_json(step, names)),
+        ]),
         Exp::EmptyHole(h) => Json::obj(vec![
             ("exp", Json::str("EmptyHole")),
             ("hole", Json::str(h.to_string())),
@@ -185,6 +204,9 @@ pub fn exp_kind(exp: &Exp) -> &'static str {
         Exp::Let(..) => "Let",
         Exp::Pair(..) => "Pair",
         Exp::Proj(..) => "Proj",
+        Exp::Nil => "Nil",
+        Exp::Cons(..) => "Cons",
+        Exp::Fold(..) => "Fold",
         Exp::EmptyHole(_) => "EmptyHole",
         Exp::NonEmptyHole(..) => "NonEmptyHole",
     }
@@ -216,6 +238,9 @@ pub fn action_json(action: &Action) -> Json {
             ("action", Json::str("ConstructVar")),
             ("id", Json::str(id.to_string())),
         ]),
+        Action::ConstructNil => Json::obj(vec![("action", Json::str("ConstructNil"))]),
+        Action::ConstructCons => Json::obj(vec![("action", Json::str("ConstructCons"))]),
+        Action::ConstructFold => Json::obj(vec![("action", Json::str("ConstructFold"))]),
         Action::ConstructLam => Json::obj(vec![("action", Json::str("ConstructLam"))]),
         Action::ConstructAp => Json::obj(vec![("action", Json::str("ConstructAp"))]),
         Action::ConstructBinOp(op) => Json::obj(vec![
@@ -390,13 +415,17 @@ pub fn holes(exp: &Exp) -> (usize, usize) {
                 *non_empty += 1;
                 go(inner, empty, non_empty);
             }
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
             Exp::Lam(_, _, b) | Exp::Proj(_, b) => go(b, empty, non_empty),
-            Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
+            Exp::Ap(a, b)
+            | Exp::BinOp(_, a, b)
+            | Exp::Let(_, a, b)
+            | Exp::Pair(a, b)
+            | Exp::Cons(a, b) => {
                 go(a, empty, non_empty);
                 go(b, empty, non_empty);
             }
-            Exp::If(c, t, e) => {
+            Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
                 go(c, empty, non_empty);
                 go(t, empty, non_empty);
                 go(e, empty, non_empty);
@@ -417,13 +446,17 @@ pub fn hole_ids(exp: &Exp) -> Vec<HoleId> {
                 out.push(*h);
                 go(inner, out);
             }
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
             Exp::Lam(_, _, b) | Exp::Proj(_, b) => go(b, out),
-            Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
+            Exp::Ap(a, b)
+            | Exp::BinOp(_, a, b)
+            | Exp::Let(_, a, b)
+            | Exp::Pair(a, b)
+            | Exp::Cons(a, b) => {
                 go(a, out);
                 go(b, out);
             }
-            Exp::If(c, t, e) => {
+            Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
                 go(c, out);
                 go(t, out);
                 go(e, out);

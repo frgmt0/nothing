@@ -17,6 +17,9 @@ pub enum Dyn {
     Let(Id, Box<Dyn>, Box<Dyn>),
     Pair(Box<Dyn>, Box<Dyn>),
     Proj(Side, Box<Dyn>),
+    Nil,
+    Cons(Box<Dyn>, Box<Dyn>),
+    Fold(Box<Dyn>, Box<Dyn>, Box<Dyn>),
 
     EmptyHole(HoleId, Env),
     NonEmptyHole(HoleId, Env, Box<Dyn>),
@@ -60,6 +63,16 @@ pub fn elaborate_in(exp: &Exp, sigma: &Env) -> Dyn {
             Box::new(elaborate_in(snd, sigma)),
         ),
         Exp::Proj(side, inner) => Dyn::Proj(*side, Box::new(elaborate_in(inner, sigma))),
+        Exp::Nil => Dyn::Nil,
+        Exp::Cons(head, tail) => Dyn::Cons(
+            Box::new(elaborate_in(head, sigma)),
+            Box::new(elaborate_in(tail, sigma)),
+        ),
+        Exp::Fold(list, init, step) => Dyn::Fold(
+            Box::new(elaborate_in(list, sigma)),
+            Box::new(elaborate_in(init, sigma)),
+            Box::new(elaborate_in(step, sigma)),
+        ),
         Exp::EmptyHole(h) => Dyn::EmptyHole(*h, sigma.clone()),
         Exp::NonEmptyHole(h, inner) => {
             Dyn::NonEmptyHole(*h, sigma.clone(), Box::new(elaborate_in(inner, sigma)))
@@ -101,6 +114,15 @@ pub fn subst(x: Id, v: &Dyn, d: &Dyn) -> Dyn {
         }
         Dyn::Pair(fst, snd) => Dyn::Pair(Box::new(subst(x, v, fst)), Box::new(subst(x, v, snd))),
         Dyn::Proj(side, inner) => Dyn::Proj(*side, Box::new(subst(x, v, inner))),
+        Dyn::Nil => Dyn::Nil,
+        Dyn::Cons(head, tail) => {
+            Dyn::Cons(Box::new(subst(x, v, head)), Box::new(subst(x, v, tail)))
+        }
+        Dyn::Fold(list, init, step) => Dyn::Fold(
+            Box::new(subst(x, v, list)),
+            Box::new(subst(x, v, init)),
+            Box::new(subst(x, v, step)),
+        ),
         Dyn::EmptyHole(h, env) => Dyn::EmptyHole(*h, subst_env(x, v, env)),
         Dyn::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, subst_env(x, v, env), Box::new(subst(x, v, inner)))
@@ -114,8 +136,8 @@ fn subst_env(x: Id, v: &Dyn, env: &Env) -> Env {
 
 pub fn is_value(d: &Dyn) -> bool {
     match d {
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) => true,
-        Dyn::Pair(fst, snd) => is_value(fst) && is_value(snd),
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::Nil => true,
+        Dyn::Pair(fst, snd) | Dyn::Cons(fst, snd) => is_value(fst) && is_value(snd),
         _ => false,
     }
 }
@@ -137,6 +159,13 @@ pub fn to_exp(d: &Dyn) -> Exp {
         Dyn::Let(id, bound, body) => Exp::Let(*id, Box::new(to_exp(bound)), Box::new(to_exp(body))),
         Dyn::Pair(fst, snd) => Exp::Pair(Box::new(to_exp(fst)), Box::new(to_exp(snd))),
         Dyn::Proj(side, inner) => Exp::Proj(*side, Box::new(to_exp(inner))),
+        Dyn::Nil => Exp::Nil,
+        Dyn::Cons(head, tail) => Exp::Cons(Box::new(to_exp(head)), Box::new(to_exp(tail))),
+        Dyn::Fold(list, init, step) => Exp::Fold(
+            Box::new(to_exp(list)),
+            Box::new(to_exp(init)),
+            Box::new(to_exp(step)),
+        ),
         Dyn::EmptyHole(h, _) => Exp::EmptyHole(*h),
         Dyn::NonEmptyHole(h, _, inner) => Exp::NonEmptyHole(*h, Box::new(to_exp(inner))),
     }
@@ -148,12 +177,14 @@ pub fn render(d: &Dyn, names: &NameTable) -> String {
 
 pub fn size(d: &Dyn) -> usize {
     match d {
-        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::EmptyHole(..) => 1,
+        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::EmptyHole(..) => 1,
         Dyn::Lam(_, _, b) | Dyn::Proj(_, b) | Dyn::NonEmptyHole(_, _, b) => 1 + size(b),
-        Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Let(_, a, b) | Dyn::Pair(a, b) => {
-            1 + size(a) + size(b)
-        }
-        Dyn::If(c, t, e) => 1 + size(c) + size(t) + size(e),
+        Dyn::Ap(a, b)
+        | Dyn::BinOp(_, a, b)
+        | Dyn::Let(_, a, b)
+        | Dyn::Pair(a, b)
+        | Dyn::Cons(a, b) => 1 + size(a) + size(b),
+        Dyn::If(c, t, e) | Dyn::Fold(c, t, e) => 1 + size(c) + size(t) + size(e),
     }
 }
 

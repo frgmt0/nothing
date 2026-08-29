@@ -1,39 +1,60 @@
-# 2. List map (bench/references.md §2), as the nearest Phase-1 program.
+# 2. List map (bench/references.md §2), on the Phase-B2 surface.
 #
-#   λf:Num -> Num. λxs:Num * Num. (f (fst xs), f (snd xs))
+#   λf:Num -> Num. λxs:List Num. fold xs nil (λh:Num. λacc:List Num. f h :: acc)
 #
-# Phase 1 has no lists and no pattern matching. A pair is the longest
-# fixed-length sequence the type grammar can express, so `map` becomes map
-# over a 2-element "list": apply f to both components. The shape of the
-# reference program — take a function, take a container, rebuild the
-# container with the function applied to each element — survives intact.
+# Lists arrived in Phase B2, and with them the first honest version of this
+# fixture: a real cons list of any length, rebuilt element by element. The
+# eliminator is `fold` rather than `match`, because fold is the only
+# eliminator the language has; the recursion the reference writes by hand
+# is the one fold performs.
 
-# λf:Num -> Num. ⦇⦈
+# λx0:Num -> Num. ⦇⦈
 construct-lam
 move-parent
 rename x0
 set-ann Num -> Num
 move-child 0
 
-# λxs:Num * Num. ⦇⦈
+# λx1:List Num. ⦇⦈
 construct-lam
 move-parent
 rename x1
-set-ann Num * Num
+set-ann List Num
 move-child 0
 
-# (f (fst xs), ⦇⦈)
-construct-pair
-construct-var x0
-construct-ap
-construct-proj fst
+# fold x1 ⦇⦈ ⦇⦈
+construct-fold
 construct-var x1
 
-# (..., f (snd xs))
+# fold x1 nil ⦇⦈
 move-parent
+move-child 1
+construct-nil
+
+# fold x1 nil (λx2:Num. ⦇⦈)
 move-parent
-move-next-sibling
-construct-var x0
+move-child 2
+construct-lam
+move-parent
+rename x2
+set-ann Num
+move-child 0
+
+# λx3:List Num. ⦇⦈
+construct-lam
+move-parent
+rename x3
+set-ann List Num
+move-child 0
+
+# x0 x2 :: x3
+construct-cons
 construct-ap
-construct-proj snd
-construct-var x1
+construct-var x0
+move-parent
+move-child 1
+construct-var x2
+move-parent
+move-parent
+move-child 1
+construct-var x3

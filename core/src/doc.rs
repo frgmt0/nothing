@@ -130,17 +130,23 @@ pub fn references(exp: &Exp, target: Id) -> bool {
         Exp::Ap(f, a) => references(f, target) || references(a, target),
         Exp::BinOp(_, l, r) => references(l, target) || references(r, target),
         Exp::Pair(l, r) => references(l, target) || references(r, target),
+        Exp::Cons(l, r) => references(l, target) || references(r, target),
         Exp::If(c, t, e) => references(c, target) || references(t, target) || references(e, target),
+        Exp::Fold(l, i, s) => {
+            references(l, target) || references(i, target) || references(s, target)
+        }
         Exp::Proj(_, e) => references(e, target),
         Exp::NonEmptyHole(_, e) => references(e, target),
-        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => false,
+        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => false,
     }
 }
 
 pub fn vacate(exp: &Exp, target: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
     match exp {
         Exp::Var(id) if *id == target => Exp::empty_hole(fresh()),
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            exp.clone()
+        }
         Exp::Lam(id, ty, body) => {
             if *id == target {
                 exp.clone()
@@ -162,10 +168,16 @@ pub fn vacate(exp: &Exp, target: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
             Exp::bin_op(*op, vacate(l, target, fresh), vacate(r, target, fresh))
         }
         Exp::Pair(l, r) => Exp::pair(vacate(l, target, fresh), vacate(r, target, fresh)),
+        Exp::Cons(l, r) => Exp::cons(vacate(l, target, fresh), vacate(r, target, fresh)),
         Exp::If(c, t, e) => Exp::if_(
             vacate(c, target, fresh),
             vacate(t, target, fresh),
             vacate(e, target, fresh),
+        ),
+        Exp::Fold(l, i, s) => Exp::fold(
+            vacate(l, target, fresh),
+            vacate(i, target, fresh),
+            vacate(s, target, fresh),
         ),
         Exp::Proj(side, e) => Exp::proj(*side, vacate(e, target, fresh)),
         Exp::NonEmptyHole(h, e) => {

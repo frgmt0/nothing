@@ -1,1 +1,1 @@
-main : ? = λx0:Num -> Num. λx1:Num * Num. (x0 (fst x1), x0 (snd x1))
+main : ? = λx0:Num -> Num. λx1:List Num. fold x1 nil (λx2:Num. λx3:List Num. x0 x2 :: x3)

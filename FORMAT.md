@@ -9,11 +9,22 @@ magic bytes below.
 A "document" is the three things a saved program needs: the **definitions**,
 the name table, and the action log that produced it.
 
-**Format version 3** (this revision) adds string literals: a node tag, a
-`Ty` tag, an `Op` tag and an action tag, and nothing else — the layout of
-§3.1 is unchanged from version 2. Version 1 and version 2 files still open
-— see §11, which is normative: a migrating reader for every previous
-version ships with every format change from here on.
+**Format version 4** (this revision) adds lists: three node tags (`Nil`,
+`Cons`, `Fold`), one `Ty` tag (`List`), and three action tags, and nothing
+else — the layout of §3.1 is unchanged from version 2. Versions 1, 2 and 3
+still open — see §11, which is normative: a migrating reader for every
+previous version ships with every format change from here on.
+
+**Format version 3** added string literals: a node tag, a `Ty` tag, an `Op`
+tag and an action tag.
+
+A list is **structure, not a payload**. `List` is the first type
+constructor in this format that is neither a base type nor a pair of
+types, and the three nodes that build and consume one carry no payload at
+all: a list's contents are entirely in its children, so `Cons` frames like
+`Pair` does and `Fold` frames like `If` does. That is why the addition
+costs three tags and no layout change — the node framing of §4 already
+describes an n-ary tree, and lists are just more of it.
 
 A string literal is **data, not a name**. Every other payload in this
 format that contains user-visible text — a definition's display name, a
@@ -59,7 +70,7 @@ raw bytes.
 ```
 offset  size  field
 0       4     magic:   4E 54 48 47   ("NTHG", ASCII)
-4       1     version_major:  0x03
+4       1     version_major:  0x04
 5       1     version_minor:  0x00
 6       1     kind:    0x01 (Document — the only kind this version defines)
 ```
@@ -77,8 +88,8 @@ Everything after the 7-byte header is, in order: the **definition list**
 (§3.1), the **name table**, the **action log**. A `version_major` of `0x01`
 selects the version-1 layout instead (**node table**, **root index**, name
 table, action log) and is decoded through the migrating reader in §11; a
-`version_major` of `0x02` selects a layout identical to this one minus the
-tags added in version 3, and is read by the same body decoder.
+`version_major` of `0x02` or `0x03` selects a layout identical to this one
+minus the tags added after it, and is read by the same body decoder.
 
 ## 3.1 The definition list
 
@@ -195,11 +206,15 @@ decode").
 | 10 | `EmptyHole(h)` | 16 bytes: `h` | none |
 | 11 | `NonEmptyHole(h, e)` | 16 bytes: `h` | `[e]` |
 | 12 | `Str(s)` | a string (§1): varint byte length, then that many UTF-8 bytes | none |
+| 13 | `Nil` | empty | none |
+| 14 | `Cons(head, tail)` | empty | `[head, tail]` |
+| 15 | `Fold(list, init, step)` | empty | `[list, init, step]` |
 
-This table is exhaustive over the thirteen `Exp` variants as of Phase B2.
-Tags 0–11 are unchanged from version 2; tag `12` is the version-3 addition.
-If a fourteenth variant is added to `core::exp::Exp`, it gets the next tag
-(`13`) and a row here; a reader must treat an unrecognised tag as a hard
+This table is exhaustive over the sixteen `Exp` variants as of Phase B2's
+list feature. Tags 0–11 are unchanged from version 2, tag `12` is the
+version-3 addition, and tags `13`–`15` are the version-4 additions.
+If a seventeenth variant is added to `core::exp::Exp`, it gets the next tag
+(`16`) and a row here; a reader must treat an unrecognised tag as a hard
 decode error, not skip it silently (the `payload_len`/`children_count`
 framing lets it skip the *bytes*, but it cannot reconstruct an `Exp` it has
 no variant for).
@@ -217,6 +232,7 @@ determined entirely by the tag byte):
 | 3 | `Prod(a, b)` | `Ty(a)` then `Ty(b)` |
 | 4 | `Hole` | none |
 | 5 | `Str` | none |
+| 6 | `List(a)` | `Ty(a)` |
 
 #### 5.2 `Op` encoding (1 byte)
 
@@ -379,13 +395,16 @@ log_entry:
 | 24 | `MovePrevDef` | empty |
 | 25 | `MoveToDef(id)` | 16 bytes |
 | 26 | `ConstructStr(s)` | a string (§1) |
+| 27 | `ConstructNil` | empty |
+| 28 | `ConstructCons` | empty |
+| 29 | `ConstructFold` | empty |
 
-This table is exhaustive over the twenty-seven `Action` variants as of
-format version 3. Tags 0–19 are unchanged from version 1 and tags 0–25 from
-version 2, so an older log decodes under the current reader without
-translation. The same rule as §5 applies to a future twenty-eighth variant:
-next tag, new row, hard decode error on an unrecognised tag rather than a
-silent skip.
+This table is exhaustive over the thirty `Action` variants as of format
+version 4. Tags 0–19 are unchanged from version 1, tags 0–25 from version 2
+and tags 0–26 from version 3, so an older log decodes under the current
+reader without translation. The same rule as §5 applies to a future
+thirty-first variant: next tag, new row, hard decode error on an
+unrecognised tag rather than a silent skip.
 
 Note that renaming a *definition* uses tag 18, `Rename` — the same action
 that renames a lambda binder, because a definition's display name lives in
@@ -435,7 +454,7 @@ byte-for-byte here the way the binary format is; it is not a wire format,
 and Phase 7 only asks that it exist.
 
 
-## 11. Migration from versions 1 and 2
+## 11. Migration from versions 1, 2 and 3
 
 Format stability starts at version 1, so every earlier version's files
 open. The reader dispatches on `version_major` in the header (§3):
@@ -453,7 +472,15 @@ open. The reader dispatches on `version_major` in the header (§3):
   `encode_document_v1` does — the committed v2 fixtures under
   `store/fixtures/v2/` are generated by it, so the version-3 reader is
   exercised against real version-2 bytes rather than a hypothesis.
-- `0x03` → the current layout in §3.1.
+- `0x03` → the same version-2/§3.1 body layout, minus the tags added in
+  version 4. `store::v3::encode_document_v3` exists for the same reason
+  `encode_document_v2` does — the committed v3 fixtures under
+  `store/fixtures/v3/` were generated by the *unmodified* version-3 encoder
+  before the list tags were written, so the version-4 reader is exercised
+  against bytes an older build really produced. One of them,
+  `bench_greeting.v3.nothing`, carries string literals, which are the thing
+  version 3 could express and version 2 could not.
+- `0x04` → the current layout in §3.1.
 - anything else → `DecodeError::UnsupportedVersion`.
 
 A version-1 file is a single expression. It becomes a document with
@@ -473,14 +500,15 @@ hashes are stable. And two people who migrate the *same* v1 file
 independently get the same definition id, so the merge engine matches
 their definitions instead of seeing an add-and-delete pair.
 
-Version 2 → version 3 needs no rewriting at all: every version-2 node,
-type, operator and action tag means the same thing under version 3, and
-version 3 only added tags version 2 never wrote. The migration is the
-header bump, and it happens on save.
+Version 2 → version 3 and version 3 → version 4 need no rewriting at all:
+every earlier node, type, operator and action tag means the same thing
+under the current version, and each new version only added tags the older
+one never wrote. The migration is the header bump, and it happens on save.
 
 Migration is read-only and lossless in the direction that matters: the
 name table and the action log carry across untouched (§8's tags 0–19 are
-version-stable across all three versions, and 20–25 across the last two),
+version-stable across all four versions, 20–25 across the last three, and
+26 across the last two),
 and the expression is byte-identical after re-encoding as the single
 definition's node table. There is no downgrading writer; saving a migrated
 file writes the current version, and the older bytes on disk are only

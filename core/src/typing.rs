@@ -1,6 +1,6 @@
 use crate::ctx::Ctx;
 use crate::exp::{Exp, Op, Side};
-use crate::ty::{Ty, is_consistent, matched_arrow, matched_prod};
+use crate::ty::{Ty, is_consistent, matched_arrow, matched_list, matched_prod};
 
 pub fn is_comparable(ty: &Ty) -> bool {
     matches!(ty, Ty::Num | Ty::Bool | Ty::Str | Ty::Hole)
@@ -52,8 +52,16 @@ pub fn join(a: &Ty, b: &Ty) -> Option<Ty> {
         (Ty::Prod(a1, a2), Ty::Prod(b1, b2)) => {
             Some(Ty::Prod(Box::new(join(a1, b1)?), Box::new(join(a2, b2)?)))
         }
+        (Ty::List(a), Ty::List(b)) => Some(Ty::List(Box::new(join(a, b)?))),
         _ => None,
     }
+}
+
+pub fn step_ty(elem: &Ty, acc: &Ty) -> Ty {
+    Ty::Arrow(
+        Box::new(elem.clone()),
+        Box::new(Ty::Arrow(Box::new(acc.clone()), Box::new(acc.clone()))),
+    )
 }
 
 pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
@@ -117,6 +125,31 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
             })
         }
 
+        Exp::Nil => Some(Ty::List(Box::new(Ty::Hole))),
+
+        Exp::Cons(head, tail) => {
+            let tail_ty = syn(ctx, tail)?;
+            let from_tail = matched_list(&tail_ty)?;
+            let head_ty = syn(ctx, head)?;
+            let elem = join(&head_ty, &from_tail)?;
+            if ana(ctx, tail, &Ty::List(Box::new(elem.clone()))) {
+                Some(Ty::List(Box::new(elem)))
+            } else {
+                None
+            }
+        }
+
+        Exp::Fold(list, init, step) => {
+            let list_ty = syn(ctx, list)?;
+            let elem = matched_list(&list_ty)?;
+            let acc = syn(ctx, init)?;
+            if ana(ctx, step, &step_ty(&elem, &acc)) {
+                Some(acc)
+            } else {
+                None
+            }
+        }
+
         Exp::EmptyHole(_) => Some(Ty::Hole),
 
         Exp::NonEmptyHole(_, inner) => {
@@ -148,6 +181,30 @@ pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
             Some((l, r)) => ana(ctx, fst, &l) && ana(ctx, snd, &r),
             None => false,
         },
+
+        Exp::Cons(head, tail) => match matched_list(ty) {
+            Some(elem) => {
+                let refined = match syn(ctx, head) {
+                    Some(head_ty) => match join(&head_ty, &elem) {
+                        Some(joined) => joined,
+                        None => return false,
+                    },
+                    None => return false,
+                };
+                ana(ctx, head, &refined) && ana(ctx, tail, &Ty::List(Box::new(refined)))
+            }
+            None => false,
+        },
+
+        Exp::Fold(list, init, step) => {
+            let Some(list_ty) = syn(ctx, list) else {
+                return false;
+            };
+            let Some(elem) = matched_list(&list_ty) else {
+                return false;
+            };
+            ana(ctx, init, ty) && ana(ctx, step, &step_ty(&elem, ty))
+        }
 
         _ => match syn(ctx, exp) {
             Some(syn_ty) => is_consistent(&syn_ty, ty),

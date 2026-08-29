@@ -170,6 +170,17 @@ fn stock() -> [Exp; 3] {
     [square(0), bump(1), drop2(2)]
 }
 
+fn list_program(items: &[i64]) -> Version {
+    Version::new(
+        program(
+            [F, G, H],
+            stock(),
+            Exp::list(items.iter().copied().map(Exp::num)),
+        ),
+        names(),
+    )
+}
+
 fn pair_program(fst: Exp, snd: Exp) -> Version {
     Version::new(program([F, G, H], stock(), Exp::pair(fst, snd)), names())
 }
@@ -372,6 +383,19 @@ pub fn all() -> Vec<Scenario> {
             base: greeting.clone(),
             ours: renamed(&greeting, X, "who"),
             theirs: greeting_program("hi there, ", "!!"),
+            base_style: CANONICAL,
+            ours_style: CANONICAL,
+            theirs_style: CANONICAL,
+        },
+        Scenario {
+            name: "one branch appends to a list, the other inserts into its middle",
+            category: Category::Reordering,
+            note: "a cons chain is a spine like a let chain, but its cells have no ids: \
+                   `1 :: 2 :: 3 :: nil` gains a 4 at the end on one side and a 9 after the 1 \
+                   on the other",
+            base: list_program(&[1, 2, 3]),
+            ours: list_program(&[1, 2, 3, 4]),
+            theirs: list_program(&[1, 9, 2, 3]),
             base_style: CANONICAL,
             ours_style: CANONICAL,
             theirs_style: CANONICAL,

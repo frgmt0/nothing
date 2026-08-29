@@ -455,3 +455,287 @@ genuinely new *design* questions that no amount of prior wiring answers for
 you. The next value type (a character, a byte string) would be nearly free.
 A type with *structure* would not be, and nothing here is evidence that it
 would.
+
+### 2026-08-29 — Fold is a primitive, not a builtin definition
+
+Lists need one eliminator. The two candidates were a node in the grammar,
+`Exp::Fold(list, init, step)`, and a *builtin definition* — a name in every
+document's scope that the evaluator knows how to apply, so that `fold` is
+looked up the way `map` will be in B4.
+
+**Chosen: the primitive.** The builtin loses on three counts, each of which
+would have cost more than the node did.
+
+1. **It cannot be typed.** A builtin is a `Var` and a `Var` gets one type
+   from the context. `fold`'s type is `List α -> β -> (α -> β -> β) -> β`
+   and this language has no type variables — `spec-build.md` defers
+   polymorphism past v0.1.0 on purpose. The only monotype that admits every
+   use is all-`?`, which means `fold xs nil f` synthesises `?`, the seed's
+   type never reaches the accumulator, the step function's holes expect
+   nothing, and the one thing this project is *for* — a hole knowing what
+   belongs in it — stops working exactly where the new feature is. The
+   primitive gets a real bidirectional rule instead (below), and at
+   `fold xs 0 ⦇⦈` the hole says `Num -> Num -> Num` without anyone
+   declaring it.
+2. **It needs machinery nothing else needs.** A three-argument builtin is
+   applied one argument at a time, so both evaluators would need partial
+   application of a thing that is not a `Lam`: a builtin-closure value in
+   `Dyn`, a matching one in `incr::Value`, arity tracking, and a rule for
+   what `fold xs` *is* when nobody applies it further. The primitive is a
+   3-ary node, which is the shape `If` already has, so every frame,
+   traversal and diff arm was a copy of an existing one.
+3. **It is not actually cheaper at the keyboard.** `fold` as a name is a
+   completion candidate, three characters and a `space` for each argument;
+   `fold` as a form is one key (`/`) that lays out all three holes.
+
+**The rule, written for gradual types.** Synthesis:
+
+```
+syn(fold e_l e_i e_s) = β   when  syn(e_l) ▷List α
+                              and syn(e_i) = β
+                              and ana(e_s : α -> β -> β)
+```
+
+and analysis against an expected `β` skips the seed's synthesis entirely:
+
+```
+ana(fold e_l e_i e_s ⇐ β)  when  syn(e_l) ▷List α
+                            and  ana(e_i ⇐ β)
+                            and  ana(e_s ⇐ α -> β -> β)
+```
+
+`▷List` is `matched_list`, the third member of the `matched_arrow` /
+`matched_prod` family: `List τ ▷List τ` and `? ▷List ?`, everything else
+fails. So a fold over a hole is still well-typed with `α = ?`, and the seed
+still fixes the accumulator; only the element type goes unknown, which is
+the correct amount of ignorance.
+
+**The step is `α -> β -> β`, element before accumulator, and it is a right
+fold.** Both halves of that were chosen for what B4's standard library will
+have to write:
+
+```
+map f xs    = fold xs nil (λx. λacc. f x :: acc)
+filter p xs = fold xs nil (λx. λacc. if p x then x :: acc else acc)
+```
+
+A *left* fold would produce these reversed and the library would need
+`reverse` — which is itself a fold — before it could define `map`. And
+element-first matches the order the arguments appear in the expression the
+user is building (`x` is the thing they just took out of the list), so the
+lambda reads in the order it was typed. `foldr`'s associativity is also the
+one that composes with the cons chain the evaluator already walks: the
+small-step rule is one line, `fold (h :: t) i s ↦ s h (fold t i s)`, and it
+is why `fold` over a list with a hole in its tail computes every element it
+*can* reach before blocking (see `step.rs`,
+`a_fold_runs_until_it_reaches_the_hole_in_the_list`).
+
+### 2026-08-29 — A cons chain settles on one element type, and quarantines the rest
+
+`Cons` is the first two-child form whose children's types are *not*
+independent: `Pair`'s components can be anything, but `1 :: true :: nil`
+must not typecheck. The question is where the element type comes from when
+the two halves disagree, and the answer had to hold in both directions
+because a projectional editor builds these left to right *and* fills holes
+inside them.
+
+**Synthesis takes the join.** `syn(h :: t)` computes `syn(t) ▷List α`, then
+`syn(h) = β`, then `join(β, α)` — the same greatest-lower-bound the `if`
+rule uses to reconcile two branches — and re-analyses the *tail* against
+`List (join)`. So `1 :: nil` is `List Num` (the `?` from `nil` gives way to
+the number), `⦇⦈ :: nil` is `List ?` (nothing has decided yet), and
+`1 :: 2 :: ⦇⦈` is `List Num` (the hole in the tail is `List Num`, which is
+the payoff: type `1`, `::`, and the editor already knows what the rest of
+the list is).
+
+**Analysis pushes the expected element down and re-joins.** `ana(h :: t ⇐ τ)`
+takes `τ ▷List α`, joins `α` with `syn(h)` and analyses both halves against
+the refined type. That second join is what makes the *editor* behave: at a
+hole expecting `List Num`, `⦇⦈ :: ⦇⦈` still fits, and the head hole then
+expects `Num` rather than `?`.
+
+**Disagreement quarantines rather than refusing.** `join(Bool, Num)` fails,
+so `true :: 1 :: nil` is not well-typed, and the editor's `place` wraps
+whatever does not fit: typing `t` `:` `1` `:` `n` gives
+`true :: ⦇1 :: nil⦈`, and no `Enter` will ever finish it, because a list of
+numbers is not a list of booleans. **The element type is fixed by the first
+element written, not by a declaration** — which is the same discipline the
+rest of the language uses (a `let`'s binder takes its bound expression's
+type, an `if`'s type is the join of its branches) and needs no new concept.
+
+One consequence worth stating out loud: typing a literal list left to right
+at a hole that already expects a list produces *nested* quarantines, one
+per element, because each element lands where a list was wanted. Every one
+of them finishes with a single `Enter` once the cell around it is written,
+and this is not new behaviour — it is exactly what typing `1` at a
+`Num * Num` hole has always done. It is the price of "the editor never
+refuses a keystroke", paid in a place where it is more visible than usual.
+
+### 2026-08-29 — No bracket sugar: a list projects as its cons cells
+
+`[1, 2, 3]` is how every other language writes this, and it is not how
+`nothing` renders it. The projection is `1 :: 2 :: 3 :: nil`.
+
+The reason is a property, not a preference. `action/src/cursor_render.rs`
+builds the cursor projection **frame by frame** from the zipper, and
+`stripping_markers_reproduces_the_plain_projection` asserts that deleting
+the two cursor markers from that string yields exactly what `core::render`
+produces for the whole program. That property is what lets the TUI, the
+agent protocol and the beginner voice share one renderer and one set of
+precedences; it is checked on 1 000 generated programs.
+
+Bracket sugar cannot satisfy it. A cursor on the second cell of `[1, 2, 3]`
+addresses the subtree `2 :: 3 :: nil`, and there is no substring of
+`[1, 2, 3]` that is the rendering of that subtree — the sugar is a
+*whole-list* decision, and the zipper hands the renderer one frame at a
+time with no way to know whether the cell above it is the head of a
+literal chain or the tail of something else. Making it work would mean
+either a second renderer that the marker-strip property does not cover, or
+teaching every frame about its ancestors, which is the thing the frame
+representation exists to avoid.
+
+Given that, `1 :: 2 :: 3 :: nil` is the better of the two available
+answers rather than a consolation prize: every cons cell is addressable and
+visibly so, which is the whole reason a structure editor renders anything.
+The sugar is a *display* question and can come back as a projection in the
+`C-p` family (`tui/src/projection.rs`), where a projection is allowed to be
+a different surface with its own key handling — the state-machine table
+already is one. Two projections did get a list voice for free: the beginner
+one reads "1 in front of 2 in front of an empty list", and the state
+machine one was untouched because it matches on `if`-chains.
+
+### 2026-08-29 — A cons cell is a spine link, and the merge engine now says so
+
+Two branches that append different elements to *different places in the
+same list* commute, and the first implementation conflicted them. Both
+edits are an `Insert` at a path, one at `[1]` and one at `[1,1,1]`, and
+`regions_overlap` treats two `Region::Node` paths as overlapping whenever
+one is a prefix of the other — which is right for a replace inside a
+rewritten subtree, and wrong here, because inserting a link into a chain
+does not disturb the chain below it.
+
+Two changes, both small:
+
+1. **`merge/src/chain.rs` was generalised, and it did fit.** Its LCS was
+   over binder `Id`s; it is now `common_subsequence_indices<T: PartialEq>`
+   returning index pairs, with the old `longest_common_subsequence` written
+   in terms of it. `diff_spine` in `merge/src/diff.rs` flattens a cons chain
+   the way `chain_of` flattens a `let` chain and aligns the two element
+   lists by **content hash**. What did *not* transfer is the identity part:
+   a `let` chain's bindings have ids, so a reordering is detectable and gets
+   a `MoveBinding`; cons cells have no identity at all, so an element that
+   moves is a delete and an insert, and there is no list analogue of
+   `Region::Order`. Appending is one `Insert`, splicing is one `Insert`,
+   dropping an element is one `Delete`, and an edit *inside* an element is
+   an ordinary recursive diff at that element's path.
+2. **`Region::Cell`.** An `Insert` or `Delete` whose node is a `Cons` and
+   whose slot is the tail is a spine-link edit. Two of them overlap only at
+   the *same* link; a `Node` or `Shape` region overlaps one when it contains
+   it (so replacing the whole list still conflicts with splicing into it);
+   an edit to an element does not overlap the links around it. The existing
+   deepest-path-first application order does the rest, and
+   `1 :: 2 :: 3 :: nil` grown at the end by one branch and in the middle by
+   the other merges to `1 :: 9 :: 2 :: 3 :: 4 :: nil` with no conflict.
+
+### 2026-08-29 — What the first *structured* type cost
+
+Strings were the first Phase B2 feature and the entry above records their
+bill, ending on a prediction: "the next value type would be nearly free. A
+type with *structure* would not be, and nothing here is evidence that it
+would." Lists are that type. Here is the bill.
+
+**Files touched: 56 modified, 17 added** (`store/src/v3.rs` and the sixteen
+committed `store/fixtures/v3/` artifacts). By layer:
+
+| layer | files | what changed |
+|---|---:|---|
+| type grammar | 1 | `Ty::List`, `matched_list`, one consistency row, one `Display` arm, one `join` row |
+| expression grammar | 1 | `Exp::Nil`, `Exp::Cons`, `Exp::Fold`, an `Exp::list` helper |
+| typing | 1 | `step_ty` and four rules — `syn`/`ana` for `Cons` and `Fold` |
+| zipper | 1 | **five new frames**, where strings needed none |
+| actions | 4 | three constructions, three expected-type frame rules, generators, script |
+| rendering | 2 | `PREC_CONS` inserted mid-table, so every precedence above it moved |
+| serialisation | 8 (+1 new) | v3→v4, `store/src/v3.rs`, 16 committed v3 fixtures |
+| evaluation | 3 | `Dyn`/`Value` cases, the two fold rules, an iterative spine walk |
+| diff/merge | 5 | `diff_spine`, `Region::Cell`, a generic LCS, a scenario |
+| hole context | 1 | three candidates, no templates |
+| provenance | 2 | three `shallow_key` rows, three JSON tags |
+| TUI | 6 | `:`/`/`/`[`, the `nil` candidate, the beginner voice, the matrix |
+| benchmark | 4 | reference 2 rebuilt as a real list map |
+| docs | 5 | `KEYS.md`, `FORMAT.md`, `bench/references.md`, `bench/RESULTS.md`, this file |
+
+**Tests: 27 added**, 10 honestly adapted, 0 deleted. The proptest generators
+grew a `List` type arm and a `Fold` form, the action alphabet went from 27
+variants to 30, and sensibility still passes at 10 000 cases over the
+enlarged grammar.
+
+**Adapted, each for a real reason.** Three were counts that are now bigger
+and are asserted rather than assumed: the reachability form survey (13 → 16
+`Exp` variants), the action-variant table (27 → 30), and the fixture
+inventory. Two completion tests changed because `nil` is a new candidate
+and therefore appears in the ranked lists they assert on — in both cases
+after everything that fits, which is the ranking working. One matrix column
+changed because `n` at a hole now commits `nil` instead of leaving the hole
+alone. Three key-line and layout assertions moved because the status line
+gained two characters (see below). One evaluator reference test —
+`reference_two_list_map_maps` — now applies the doubling function to
+`3 :: 4 :: 5 :: nil` and expects `6 :: 8 :: 10 :: nil`, because reference 2
+is a real list map now and no longer a map over a pair. None of them
+changed because a claim stopped being true.
+
+**What was free.** Auto-quarantine (the `place` fallback needed no list
+case). Undo, the action log, content addressing, the incremental cache's
+invalidation, the state-machine projection, the agent protocol's transport.
+The CLI again needed nothing but a test.
+
+**What fought back, in order of how much:**
+
+1. **The renderer's precedence table.** Cons sits *between* comparison and
+   addition, which no existing operator did — every previous addition went
+   on an end. Inserting `PREC_CONS = 2` renumbered `PREC_ADD`, `PREC_MUL`,
+   `PREC_APP` and `PREC_ATOM`, and those constants are shared by three
+   renderers (`core::render`, `action::cursor_render`,
+   `agentapi::provenance`) and the TUI's climb rule. Nothing broke, because
+   they are constants and not literals — but that is the design paying off,
+   not the change being small.
+2. **The evaluator's stack.** Adding the `Fold` arm inline to `step_in`
+   grew that function's frame enough that a *pre-existing* test —
+   `a_definition_that_diverges_runs_out_of_fuel_rather_than_hanging`, which
+   builds a 500-deep `+` chain and then walks it — began overflowing the
+   stack in debug builds. The fix was to lift the arm into `step_fold`, and
+   the lesson is that a small-step interpreter written as one big recursive
+   `match` has a frame-size budget that new grammar spends. The incremental
+   engine has the same hazard from the other direction: a naive recursive
+   fold recurses once per element, so `fold_value` walks the cons spine into
+   a `Vec` first and folds right-to-left over that, with salted per-element
+   digests so the cache keys stay sound. There is a test that folds a
+   1 200-element list to prove it.
+3. **The merge engine.** See the `Region::Cell` entry above. This is the
+   first feature that needed a new *conflict* concept rather than a new row
+   in an existing table, and it is exactly the thing strings did not need.
+4. **The zipper.** Five frames. Strings needed zero, because a `Str` is a
+   leaf. Every frame is a rebuild arm, a child index, a parent arity, a
+   `move_child` arm, a `cursor_render` arm, a beginner-voice arm and an
+   expected-type rule: seven places each, thirty-five in total, all
+   mechanical and none of them free.
+5. **The 80×12 status line, again.** Adding `:` and `/` to the key hint
+   line wrapped it onto a third row and broke the definition-pane layout
+   test, exactly as `"` and `&` did in the strings entry. Two features in a
+   row have paid this; the line is now within four characters of full and
+   the next feature should expect to shorten something.
+
+**Verdict on the prediction: it held, and the caveat held too.** Strings
+predicted that another *value* type would be nearly free and that a
+*structured* type would not be. Lists cost roughly the same number of files
+as strings (56 against 50) but the work was differently shaped: strings
+were dominated by one hard design question (a delimited literal at the
+keyboard) with mechanical consequences, while lists were dominated by
+*breadth* — five zipper frames, three constructions, a precedence
+insertion, a new conflict region — with the design questions (fold's form,
+the element-type join) settled on paper in an afternoon. Nine of the
+fourteen layers were still a match arm or a table row. The two places the
+architecture genuinely did not absorb the change were the merge engine's
+notion of a conflict region and the evaluator's stack budget, and both were
+about *sequences* specifically rather than about structure in general. A
+record type — the other thing B4 wants — would pay the zipper and renderer
+costs again and none of the sequence ones.

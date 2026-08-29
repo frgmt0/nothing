@@ -143,6 +143,43 @@ fn run_and_check_handle_a_string_program() {
 }
 
 #[test]
+fn run_and_check_handle_a_list_program() {
+    use nothing_core::exp::{Id, Op};
+    use nothing_core::ty::Ty;
+    let x = Id::from_u128(1);
+    let y = Id::from_u128(2);
+    let sum = Exp::fold(
+        Exp::list([Exp::num(1), Exp::num(2), Exp::num(3), Exp::num(4)]),
+        Exp::num(0),
+        Exp::lam(
+            x,
+            Ty::Num,
+            Exp::lam(y, Ty::Num, Exp::bin_op(Op::Add, Exp::var(x), Exp::var(y))),
+        ),
+    );
+    let path = write_fixture("run-list.nothing", sum);
+    let (code, stdout, _) = run(&["check", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert!(stdout.contains("well-typed: true"));
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert_eq!(stdout.trim(), "10");
+
+    let unfinished = Exp::cons(
+        Exp::num(1),
+        Exp::cons(
+            Exp::num(2),
+            Exp::empty_hole(nothing_core::exp::HoleId::from_u128(9)),
+        ),
+    );
+    let path = write_fixture("run-list-hole.nothing", unfinished);
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 2, "stdout: {stdout}");
+    assert!(stdout.contains("1 :: 2 :: ⦇⦈"), "stdout: {stdout}");
+    assert!(stdout.contains("blocked on hole"), "stdout: {stdout}");
+}
+
+#[test]
 fn run_reports_an_indeterminate_result_and_its_hole() {
     let path = write_fixture("run-indeterminate.nothing", examples::add_with_empty_hole());
     let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);

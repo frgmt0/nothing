@@ -8,6 +8,7 @@ use crate::app::AppState;
 pub enum CandidateKind {
     Var(Id),
     Bool(bool),
+    Nil,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -22,6 +23,7 @@ impl Candidate {
         match self.kind {
             CandidateKind::Var(id) => Action::ConstructVar(id),
             CandidateKind::Bool(b) => Action::ConstructBool(b),
+            CandidateKind::Nil => Action::ConstructNil,
         }
     }
 
@@ -68,6 +70,15 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
             kind: CandidateKind::Bool(b),
         };
 
+        out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
+    }
+
+    if "nil".starts_with(prefix) {
+        let candidate = Candidate {
+            name: "nil".to_string(),
+            ty: Ty::List(Box::new(Ty::Hole)),
+            kind: CandidateKind::Nil,
+        };
         out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
     }
 
@@ -181,7 +192,11 @@ mod tests {
             ["true", "false"],
             "the literals fit and the function does not: {ranked:?}"
         );
-        assert_eq!(ranked.last(), Some(&"x0".to_string()));
+        assert_eq!(
+            &ranked[2..],
+            ["main", "x0", "nil"],
+            "neither a function nor an empty list fits a Bool hole: {ranked:?}"
+        );
     }
 
     #[test]
@@ -191,7 +206,7 @@ mod tests {
 
         assert_eq!(
             names(&state, ""),
-            vec!["x2", "x1", "x0", "main", "true", "false"],
+            vec!["x2", "x1", "x0", "nil", "main", "true", "false"],
             "the definition the cursor is in is a name like any other"
         );
 
@@ -201,7 +216,7 @@ mod tests {
         let empty = AppState::empty();
         assert_eq!(empty.expected_ty(), Ty::Hole);
         assert!(candidates(&empty, "x").is_empty());
-        assert_eq!(names(&empty, ""), vec!["main", "true", "false"]);
+        assert_eq!(names(&empty, ""), vec!["nil", "main", "true", "false"]);
     }
 
     #[test]

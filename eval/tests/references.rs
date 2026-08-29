@@ -46,7 +46,9 @@ fn drop_calls_to(exp: &Exp, target: Id, next: &mut u128) -> Exp {
             *next += 1;
             Exp::empty_hole(HoleId::from_u128(*next))
         }
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            exp.clone()
+        }
         Exp::Lam(id, ty, body) => Exp::lam(*id, ty.clone(), drop_calls_to(body, target, next)),
         Exp::Proj(side, body) => Exp::proj(*side, drop_calls_to(body, target, next)),
         Exp::NonEmptyHole(h, body) => Exp::non_empty_hole(*h, drop_calls_to(body, target, next)),
@@ -67,6 +69,15 @@ fn drop_calls_to(exp: &Exp, target: Id, next: &mut u128) -> Exp {
         Exp::Pair(a, b) => Exp::pair(
             drop_calls_to(a, target, next),
             drop_calls_to(b, target, next),
+        ),
+        Exp::Cons(a, b) => Exp::cons(
+            drop_calls_to(a, target, next),
+            drop_calls_to(b, target, next),
+        ),
+        Exp::Fold(a, b, c) => Exp::fold(
+            drop_calls_to(a, target, next),
+            drop_calls_to(b, target, next),
+            drop_calls_to(c, target, next),
         ),
         Exp::If(c, t, e) => Exp::if_(
             drop_calls_to(c, target, next),
@@ -171,14 +182,19 @@ fn reference_two_list_map_maps() {
     let k = Id::fresh();
     let double = Exp::lam(k, Ty::Num, Exp::bin_op(Op::Mul, Exp::var(k), Exp::num(2)));
 
-    let applied = Exp::ap(Exp::ap(map, double), Exp::pair(Exp::num(3), Exp::num(4)));
+    let list = Exp::cons(
+        Exp::num(3),
+        Exp::cons(Exp::num(4), Exp::cons(Exp::num(5), Exp::Nil)),
+    );
+    let applied = Exp::ap(Exp::ap(map, double), list);
     assert!(is_well_typed(&applied));
 
     let outcome = eval(&applied);
     assert!(outcome.is_value(), "{outcome:?}");
     assert_eq!(
         nothing_eval::dynamic::render(outcome.dyn_result(), &names),
-        "(6, 8)"
+        "6 :: 8 :: 10 :: nil",
+        "the fold rebuilt the whole spine"
     );
 }
 

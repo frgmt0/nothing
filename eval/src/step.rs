@@ -109,7 +109,9 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
     match d {
         Dyn::Var(id) => defs.get(id).cloned(),
 
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::EmptyHole(..) => None,
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::Nil | Dyn::EmptyHole(..) => {
+            None
+        }
 
         Dyn::Ap(fun, arg) => {
             if let Some(fun) = step(fun) {
@@ -177,8 +179,54 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
             }
         }
 
+        Dyn::Cons(head, tail) => {
+            if let Some(head) = step(head) {
+                return Some(Dyn::Cons(Box::new(head), tail.clone()));
+            }
+            step(tail).map(|tail| Dyn::Cons(head.clone(), Box::new(tail)))
+        }
+
+        Dyn::Fold(list, init, folder) => step_fold(defs, list, init, folder),
+
         Dyn::NonEmptyHole(h, env, inner) => {
             step(inner).map(|inner| Dyn::NonEmptyHole(*h, env.clone(), Box::new(inner)))
+        }
+    }
+}
+
+fn step_fold(defs: &Defs, list: &Dyn, init: &Dyn, folder: &Dyn) -> Option<Dyn> {
+    if let Some(list) = step_in(defs, list) {
+        return Some(Dyn::Fold(
+            Box::new(list),
+            Box::new(init.clone()),
+            Box::new(folder.clone()),
+        ));
+    }
+    match list {
+        Dyn::Nil => Some(init.clone()),
+        Dyn::Cons(head, tail) => Some(Dyn::Ap(
+            Box::new(Dyn::Ap(Box::new(folder.clone()), head.clone())),
+            Box::new(Dyn::Fold(
+                tail.clone(),
+                Box::new(init.clone()),
+                Box::new(folder.clone()),
+            )),
+        )),
+        _ => {
+            if let Some(init) = step_in(defs, init) {
+                return Some(Dyn::Fold(
+                    Box::new(list.clone()),
+                    Box::new(init),
+                    Box::new(folder.clone()),
+                ));
+            }
+            step_in(defs, folder).map(|folder| {
+                Dyn::Fold(
+                    Box::new(list.clone()),
+                    Box::new(init.clone()),
+                    Box::new(folder),
+                )
+            })
         }
     }
 }
@@ -288,15 +336,20 @@ fn collect(d: &Dyn, out: &mut Vec<Blocked>) {
             });
             collect(inner, out);
         }
-        Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Pair(a, b) => {
+        Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Pair(a, b) | Dyn::Cons(a, b) => {
             collect(a, out);
             collect(b, out);
         }
         Dyn::Let(_, bound, _) => collect(bound, out),
         Dyn::If(cond, _, _) => collect(cond, out),
+        Dyn::Fold(list, init, folder) => {
+            collect(list, out);
+            collect(init, out);
+            collect(folder, out);
+        }
         Dyn::Proj(_, inner) => collect(inner, out),
 
-        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) => {}
+        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::Lam(..) => {}
     }
 }
 
@@ -501,6 +554,119 @@ mod tests {
             render(outcome.dyn_result(), &names()),
             "(3, 2 * ⦇⦈)",
             "the half that could run, ran"
+        );
+    }
+
+    #[test]
+    fn a_list_with_a_hole_in_its_tail_is_an_indeterminate_list_that_reports_the_hole() {
+        let e = Exp::cons(Exp::num(1), Exp::cons(Exp::num(2), Exp::empty_hole(h(0))));
+        assert!(is_well_typed(&e));
+        let outcome = eval(&e);
+        assert!(outcome.is_indeterminate(), "{outcome:?}");
+        assert_eq!(render(outcome.dyn_result(), &names()), "1 :: 2 :: ⦇⦈");
+        assert_eq!(outcome.blocked().len(), 1);
+        assert_eq!(outcome.blocked()[0].hole, h(0));
+        assert_eq!(outcome.blocked()[0].kind, HoleKind::Empty);
+    }
+
+    #[test]
+    fn a_finished_list_is_a_value_and_a_fold_over_it_is_a_number() {
+        let xs = Exp::list([Exp::num(1), Exp::num(2), Exp::num(3)]);
+        assert!(eval(&xs).is_value(), "a list of literals is a value");
+        assert_eq!(
+            render(eval(&xs).dyn_result(), &names()),
+            "1 :: 2 :: 3 :: nil"
+        );
+
+        let sum = Exp::fold(
+            xs.clone(),
+            Exp::num(0),
+            Exp::lam(
+                x(),
+                Ty::Num,
+                Exp::lam(
+                    y(),
+                    Ty::Num,
+                    Exp::bin_op(Op::Add, Exp::var(x()), Exp::var(y())),
+                ),
+            ),
+        );
+        assert!(is_well_typed(&sum));
+        assert_eq!(eval(&sum).num(), Some(6));
+
+        let empty = Exp::fold(
+            Exp::nil(),
+            Exp::num(41),
+            Exp::lam(
+                x(),
+                Ty::Num,
+                Exp::lam(
+                    y(),
+                    Ty::Num,
+                    Exp::bin_op(Op::Add, Exp::var(x()), Exp::var(y())),
+                ),
+            ),
+        );
+        assert_eq!(eval(&empty).num(), Some(41), "folding nothing is the seed");
+    }
+
+    #[test]
+    fn a_fold_runs_until_it_reaches_the_hole_in_the_list() {
+        let xs = Exp::cons(Exp::num(1), Exp::cons(Exp::num(2), Exp::empty_hole(h(3))));
+        let sum = Exp::fold(
+            xs,
+            Exp::num(0),
+            Exp::lam(
+                x(),
+                Ty::Num,
+                Exp::lam(
+                    y(),
+                    Ty::Num,
+                    Exp::bin_op(Op::Add, Exp::var(x()), Exp::var(y())),
+                ),
+            ),
+        );
+        assert!(is_well_typed(&sum));
+        let outcome = eval(&sum);
+        assert!(outcome.is_indeterminate(), "{outcome:?}");
+        assert_eq!(
+            outcome.blocked().len(),
+            1,
+            "the fold stopped at the one hole it needed"
+        );
+        assert_eq!(outcome.blocked()[0].hole, h(3));
+        assert!(
+            render(outcome.dyn_result(), &names()).starts_with("1 + (2 + fold ⦇⦈ 0"),
+            "the elements it did reach were folded in: {}",
+            render(outcome.dyn_result(), &names())
+        );
+    }
+
+    #[test]
+    fn folding_a_long_enough_list_runs_out_of_fuel_rather_than_hanging() {
+        let long = Exp::list((0..400).map(Exp::num));
+        let sum = Exp::fold(
+            long,
+            Exp::num(0),
+            Exp::lam(
+                x(),
+                Ty::Num,
+                Exp::lam(
+                    y(),
+                    Ty::Num,
+                    Exp::bin_op(Op::Add, Exp::var(x()), Exp::var(y())),
+                ),
+            ),
+        );
+        assert!(is_well_typed(&sum));
+        assert!(
+            eval_with_fuel(&sum, 100).is_out_of_fuel(),
+            "fuel must still guard a fold over a long list"
+        );
+        assert_eq!(
+            eval_with_fuel(&sum, 100_000).num(),
+            Some((0..400).sum()),
+            "with enough fuel it finishes"
         );
     }
 

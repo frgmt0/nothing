@@ -11,12 +11,14 @@ fn holes(exp: &Exp) -> usize {
     match exp {
         Exp::EmptyHole(_) => 1,
         Exp::NonEmptyHole(_, inner) => 1 + holes(inner),
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => 0,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => 0,
         Exp::Lam(_, _, b) | Exp::Proj(_, b) => holes(b),
-        Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
-            holes(a) + holes(b)
-        }
-        Exp::If(c, t, e) => holes(c) + holes(t) + holes(e),
+        Exp::Ap(a, b)
+        | Exp::BinOp(_, a, b)
+        | Exp::Let(_, a, b)
+        | Exp::Pair(a, b)
+        | Exp::Cons(a, b) => holes(a) + holes(b),
+        Exp::If(c, t, e) | Exp::Fold(c, t, e) => holes(c) + holes(t) + holes(e),
     }
 }
 
@@ -42,17 +44,17 @@ fn free_vars(
             free_vars(body, bound, out);
             bound.pop();
         }
-        Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Pair(a, b) => {
+        Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Pair(a, b) | Dyn::Cons(a, b) => {
             free_vars(a, bound, out);
             free_vars(b, bound, out);
         }
-        Dyn::If(c, t, e) => {
+        Dyn::If(c, t, e) | Dyn::Fold(c, t, e) => {
             free_vars(c, bound, out);
             free_vars(t, bound, out);
             free_vars(e, bound, out);
         }
         Dyn::Proj(_, inner) | Dyn::NonEmptyHole(_, _, inner) => free_vars(inner, bound, out),
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) => {}
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil => {}
         Dyn::EmptyHole(_, env) => {
             for (id, value) in env.iter() {
                 if value != &Dyn::Var(*id) {

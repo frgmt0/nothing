@@ -81,25 +81,27 @@ MOVEMENT                                   LITERALS & NAMES
   →      next sibling/slot   MoveNextSib     ~     negate the focused Num
   ←      prev sibling/slot   MovePrevSib     a-zA-Z_  name run: live-filtered,
   Tab    next hole, either kind (wraps)            type-ranked, commit-live
-  S-Tab  previous hole, either kind                (true/false are candidates)
-                                             "    string run: open, and close
-OPERATORS  (climb, then wrap)                     with " again. Inside it every
-  +   add        e + ⦇⦈    ConstructBinOp        printable key is one character
-  -   subtract   e - ⦇⦈         〃                of text; \" and \\ escape
-  *   multiply   e * ⦇⦈         〃
-  <   less than  e < ⦇⦈         〃         FORMS  (wrap the focus)
-  =   equals     e == ⦇⦈        〃           space  apply       e ⦇⦈   ConstructAp
-  &   join text  e ++ ⦇⦈        〃           \      lambda      λ⦇⦈:?. e   …Lam
+  S-Tab  previous hole, either kind                (true/false/nil are
+                                             "    candidates, not keys)
+OPERATORS  (climb, then wrap)                     string run: open, and close
+  +   add        e + ⦇⦈    ConstructBinOp        with " again. Inside it every
+  -   subtract   e - ⦇⦈         〃                printable key is one character
+  *   multiply   e * ⦇⦈         〃                of text; \" and \\ escape
+  <   less than  e < ⦇⦈         〃
+  =   equals     e == ⦇⦈        〃         FORMS  (wrap the focus)
+  &   join text  e ++ ⦇⦈        〃           space  apply       e ⦇⦈   ConstructAp
+  :   cons       e :: ⦇⦈   ConstructCons     \      lambda      λ⦇⦈:?. e   …Lam
                                              ?      if e then ⦇⦈ else ⦇⦈   …If
 IN A BINDER-NAME SLOT                        ;      let ⦇⦈ = e in ⦇⦈       …Let
   a-zA-Z0-9_  name the binder  Rename        ,      pair        (e, ⦇⦈)   …Pair
   :   → annotation slot                      [  ]   fst e / snd e   ConstructProj
-  =   → bound expression (let)               !      quarantine  ⦇e⦈   …NonEmptyHole
-  .   → body
-                                          HOLES & HISTORY
-IN AN ANNOTATION SLOT (re-issues SetAnn)    Bksp  run: un-type one char ·
-  n Num  b Bool  s Str  ? unknown                 empty hole: ascend · else Delete
-  > arrow  * product  ( ) grouping          Del   focus → ⦇⦈           Delete
+  =   → bound expression (let)               /      fold e ⦇⦈ ⦇⦈    ConstructFold
+  .   → body                                 !      quarantine  ⦇e⦈   …NonEmptyHole
+
+IN AN ANNOTATION SLOT (re-issues SetAnn)  HOLES & HISTORY
+  n Num  b Bool  s Str  ? unknown           Bksp  run: un-type one char ·
+  > arrow  * product  [ list                      empty hole: ascend · else Delete
+  ( ) grouping                              Del   focus → ⦇⦈           Delete
   Bksp drop tok  .  → body                  Enter Finish the ⦇e⦈ on or around
   Tab/Enter → next hole                           the cursor, else next hole
                                             Esc   end the run (no-op otherwise)
@@ -111,8 +113,8 @@ DEFINITIONS  (the document is a list of      C-z / C-r  undo / redo · C-q quit
   C-d  drop this definition (never the last) DeleteDefinition
 ```
 
-39 bindings. Deliberately unbound and held in reserve for Phase 6+:
-`( ) { } / | ^ % $ # @ ' . >` outside the slots, and `` ` ``.
+40 bindings. Deliberately unbound and held in reserve for Phase 6+:
+`( ) { } | ^ % $ # @ ' . >` outside the slots, and `` ` ``.
 
 `&` rather than a doubled `+`: `++` cannot be two keystrokes, because the
 first `+` would already have committed an addition, and a key whose meaning
@@ -135,10 +137,11 @@ is not a context because it is a pure function of the focused node.
 | **op** `+ - * < = &` | wrap: `⦇⦈ op ⦇⦈` | climb, then wrap | climb, then wrap | end run, then as B | `*` product; others exit → body, reprocess | `=` on a `let` → bound slot; others exit → body, reprocess | descend, then as inner | append the character |
 | **form** `space \ ? ; ,` | insert the form | climb (`\ ? ; ,`), then wrap | climb, then wrap | end run, then as B | `?` = the unknown type; others exit → body, reprocess | exit → body, reprocess | descend, then as inner | append — except `\`, which arms the escape |
 | **`"`** | `ConstructStr("")`, run opens | replace: `ConstructStr("")`, run opens — on a focused `Str`, **re-open** at its end | replace: `ConstructStr("")`, run opens | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | **close the run**; armed, append `"` |
-| **`[` `]`** | `fst ⦇⦈` / `snd ⦇⦈` | climb (app-level), then wrap | wrap: `fst ⦇n⦈` (quarantined) | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`[` `]`** | `fst ⦇⦈` / `snd ⦇⦈` | climb (app-level), then wrap | wrap: `fst ⦇n⦈` (quarantined) | end run, then as B | `[` = `List`, a prefix taking the next type; `]` exits → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`/`** | `fold ⦇⦈ ⦇⦈ ⦇⦈` | climb (app-level), then wrap | climb, then wrap: `fold n ⦇⦈ ⦇⦈` (quarantined) | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
 | **`!`** | wrap the hole: `⦇⦇⦈⦈` | quarantine: `⦇e⦈` | `⦇n⦈` | end run, then as B | exit → body, reprocess | exit → body, reprocess | **acts on the wrapper**: `⦇⦇e⦈⦈` | append the character |
 | **`~`** | no-op, hint | no-op unless `Num` | negate: `ConstructNum(-n)` | end run, then as B | exit → body, reprocess | no-op | descend, then as inner | append the character |
-| **`:`** | no-op, hint "annotations live on binders" | focused `Lam`: → its annotation slot; else no-op + hint | no-op, hint | end run, then as B | no-op | → annotation slot (`Lam` only) | descend, then as inner | append the character |
+| **`:`** | wrap: `⦇⦈ :: ⦇⦈` | focused `Lam`: → its annotation slot; else climb, then wrap `e :: ⦇⦈` | climb, then wrap | end run, then as B | no-op | → annotation slot (`Lam` only) | descend, then as inner | append the character |
 | **`.`** | no-op, hint | no-op, hint | no-op, hint | end run, then as B | → body slot | → body slot | descend, then as inner | append the character |
 | **anything else** | no-op, status-line hint | no-op, hint | no-op, hint | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | printable: append; otherwise close the run, reprocess |
 
@@ -462,8 +465,9 @@ the same reason it was worst in Phase 3 (deep nesting, four binders).
 | `ConstructVar(Id)` | letters (name run) | `Finish` | `Enter` on or inside `⦇e⦈` |
 | `ConstructStr(String)` | `"` opens the run; every printable key re-issues it with one more character | undo / redo | `C-z` / `C-r` |
 | `ConstructLam` | `\` | quit | `C-q` |
-| `ConstructAp` | `space` | | |
-| `ConstructBinOp(Op)` | `+ - * < =`, and `&` for `Op::Concat` | | |
+| `ConstructAp` | `space` | `ConstructCons` | `:` (except on a focused `Lam`, where `:` still opens the annotation slot) |
+| `ConstructBinOp(Op)` | `+ - * < =`, and `&` for `Op::Concat` | `ConstructFold` | `/` |
+| `ConstructNil` | `nil`, a name-run candidate like `true`/`false` | `Ty::List` in an annotation | `[` |
 | `CreateDefinition` | `C-n` | `MoveNextDef` | `C-↓` |
 | `DeleteDefinition` | `C-d` | `MovePrevDef` | `C-↑` |
 | `SetDefAnn(Ty)` | `C-t` + annotation slot | `MoveToDef(Id)` | `C-↑`/`C-↓` repeated (the pane shows how far); the protocol has it by name |
@@ -691,6 +695,49 @@ Item 17 is dated **2026-08-29** and belongs to Phase B2.
    `keys::tests::a_quote_reopens_a_finished_string_at_its_end`, and
    `tui/tests/matrix.rs`, which is column H as a table.
 
+Item 18 is dated **2026-08-29** and belongs to Phase B2's second half.
+
+18. **Lists cost one new key, and two keys that meant nothing now mean
+   something.** The three list constructions needed bindings and only one of
+   them was a new character:
+   **(a)** `:` is **cons**. Reading down the `:` row of the matrix, three of
+   its eight cells said "no-op, hint" and a fourth said "no-op + hint unless
+   the focus is a `Lam`"; those are the four cells that now build a cons
+   cell, and *no cell that already meant something changed meaning*. The one
+   exception stays: on a focused `Lam`, `:` still opens the annotation slot,
+   because that is the shortcut item 16 describes and a list of functions is
+   not why anyone reaches for `:`. Consing a written lambda is therefore the
+   one thing this key cannot do; you type the cell first (`:` at the hole,
+   then `\`), which is the order you would type it in anyway. `:` climbs on
+   the ordinary rule at `PREC_CONS`, which sits between comparison and
+   addition, so `1 + 2` then `:` gives `1 + 2 :: ⦇⦈` and `a < b` then `:`
+   gives `a < (b :: ⦇⦈)`. It never climbs out of a `ConsTail`, which is what
+   makes `1` `:` `2` `:` `n` type the right-nested `1 :: 2 :: nil` rather
+   than fighting associativity.
+   **(b)** `/` is **fold**, taken out of the reserve list — APL's reduce, and
+   the only genuinely new binding. Fold could not be a completion candidate
+   the way `nil` is: the name run commits by `Delete` + re-construct and
+   assumes the action leaves the cursor *on* what it built, and
+   `ConstructFold` descends into a child. A key it is, and the reserve list
+   is one character shorter. The cost is that a future `Op::Div` would need
+   a different character; that is a trade recorded rather than hidden.
+   **(c)** `nil` is a **candidate, not a key** — the `true`/`false` rule
+   (item 10's neighbourhood) applied to the third literal the language has.
+   It types `List ?`, so at a `List Num` hole it ranks above anything that
+   does not fit and one keystroke usually commits it; at a `Num` hole it is
+   still offered and still quarantines, because ranking never filters.
+   **(d)** `[` is **`List`** inside an annotation slot, a prefix taking the
+   next type: `[n` is `List Num`, `[[n` is `List (List Num)`, `[(n>n)` is
+   `List (Num -> Num)`. Outside the slot `[` is still `fst`; the annotation
+   slot has always had its own small alphabet (`*` is product there and
+   multiply outside), and this fills the cell where `[` used to mean "I do
+   not understand this, exit". A `[` where the buffer already holds a
+   complete type is swallowed and visible, the way `)` with no `(` is.
+   Pinned by `keys::tests::cons_is_a_colon_and_a_written_lambda_keeps_its_annotation_slot`,
+   `keys::tests::fold_and_nil_are_a_key_and_a_candidate`,
+   `annot::tests::a_bracket_is_the_list_prefix_and_takes_the_next_type`, and
+   the four new rows/columns of `tui/tests/matrix.rs`.
+
 Measured, replacing the predicted table's middle column (`tui/tests/keys/`,
 one keystroke per line). The 2026-08-28 column is the definition era: the
 programs are documents now, and `factorial` and `record` were rebuilt to say
@@ -699,11 +746,17 @@ what they always meant rather than what Phase 1 could express.
 | # | program | Neovim | keystrokes | actions | ratio | was (2026-08-27) |
 |---|---|---:|---:|---:|---:|---:|
 | 1 | factorial | 84 | 28 | 33 | 0.33× | 16 / 0.19× |
-| 2 | list_map | 114 | 29 | 35 | 0.25× | unchanged |
+| 2 | list_map | 114 | 44 | 53 | 0.39× | 29 / 0.25× |
 | 3 | record | 65 | 46 | 40 | 0.71× | 33 / 0.51× |
 | 4 | state_machine | 151 | 24 | 33 | 0.16× | unchanged |
 | 5 | nested_conditional | 146 | 31 | 42 | 0.21× | unchanged |
 | 6 | greeting | 127 | 52 | 56 | 0.41× | new (2026-08-29) |
+
+Row 2 changed on 2026-08-29 when lists arrived: the fixture had been map
+over a *pair* since Phase 1 and is now a real map over a cons list, so the
+number went **up** (`bench/RESULTS.md`, 2026-08-29 lists entry, and
+`bench/references.md` §2). A ratio that rises because the program got
+honest is the only kind of regression this table welcomes.
 
 Row 6 arrived with strings on 2026-08-29 and is the first reference whose
 cost is mostly *content*: 27 of its 52 keystrokes are the characters and

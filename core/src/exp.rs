@@ -165,6 +165,9 @@ pub enum Exp {
     Let(Id, Box<Exp>, Box<Exp>),
     Pair(Box<Exp>, Box<Exp>),
     Proj(Side, Box<Exp>),
+    Nil,
+    Cons(Box<Exp>, Box<Exp>),
+    Fold(Box<Exp>, Box<Exp>, Box<Exp>),
 
     /// A gap where an expression has not been written yet. It synthesises
     /// type `Hole` so the program stays well-typed mid-edit: an empty hole
@@ -230,6 +233,30 @@ impl Exp {
         Exp::Proj(side, e.into())
     }
 
+    pub fn nil() -> Exp {
+        Exp::Nil
+    }
+
+    pub fn cons(head: impl Into<Box<Exp>>, tail: impl Into<Box<Exp>>) -> Exp {
+        Exp::Cons(head.into(), tail.into())
+    }
+
+    pub fn fold(
+        list: impl Into<Box<Exp>>,
+        init: impl Into<Box<Exp>>,
+        step: impl Into<Box<Exp>>,
+    ) -> Exp {
+        Exp::Fold(list.into(), init.into(), step.into())
+    }
+
+    pub fn list(items: impl IntoIterator<Item = Exp>) -> Exp {
+        let items: Vec<Exp> = items.into_iter().collect();
+        items
+            .into_iter()
+            .rev()
+            .fold(Exp::Nil, |tail, head| Exp::cons(head, tail))
+    }
+
     pub fn empty_hole(id: HoleId) -> Exp {
         Exp::EmptyHole(id)
     }
@@ -262,11 +289,23 @@ mod tests {
             Exp::let_(x, Exp::num(1), Exp::var(x)),
             Exp::pair(Exp::num(1), Exp::bool_(true)),
             Exp::proj(Side::L, Exp::pair(Exp::num(1), Exp::bool_(true))),
+            Exp::nil(),
+            Exp::cons(Exp::num(1), Exp::nil()),
+            Exp::fold(Exp::nil(), Exp::num(0), Exp::var(x)),
             Exp::empty_hole(h0),
             Exp::non_empty_hole(h1, Exp::bool_(true)),
         ];
 
-        assert_eq!(exps.len(), 13);
+        assert_eq!(exps.len(), 16);
+    }
+
+    #[test]
+    fn the_list_helper_builds_a_right_nested_chain_ending_in_nil() {
+        assert_eq!(Exp::list([]), Exp::Nil);
+        assert_eq!(
+            Exp::list([Exp::num(1), Exp::num(2)]),
+            Exp::cons(Exp::num(1), Exp::cons(Exp::num(2), Exp::nil()))
+        );
     }
 
     #[test]

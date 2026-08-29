@@ -68,12 +68,18 @@ pub enum Region {
     Shape(Path),
     Name(Id),
     Order(Path, usize),
+    Cell(Path),
 }
 
 pub fn regions_overlap(a: &Region, b: &Region) -> bool {
     match (a, b) {
         (Region::Name(x), Region::Name(y)) => x == y,
         (Region::Name(_), _) | (_, Region::Name(_)) => false,
+        (Region::Cell(p), Region::Cell(q)) => p == q,
+        (Region::Cell(p), Region::Order(root, len))
+        | (Region::Order(root, len), Region::Cell(p)) => chain::touches_ordering(root, *len, p),
+        (Region::Cell(p), Region::Node(q) | Region::Shape(q))
+        | (Region::Node(q) | Region::Shape(q), Region::Cell(p)) => is_prefix(q, p),
         (Region::Node(p), Region::Node(q)) => nested(p, q),
         (Region::Node(p), Region::Shape(q)) => is_prefix(p, q),
         (Region::Shape(q), Region::Node(p)) => is_prefix(p, q),
@@ -94,10 +100,15 @@ impl Operation {
             Operation::Rename { id, .. } => vec![Region::Name(*id)],
             Operation::Fill { path, .. }
             | Operation::DeleteToHole { path, .. }
-            | Operation::Insert { path, .. }
-            | Operation::Delete { path, .. }
             | Operation::Replace { path, .. }
             | Operation::Rebind { path, .. } => vec![Region::Node(path.clone())],
+            Operation::Insert { path, slot, node } | Operation::Delete { path, slot, node } => {
+                if matches!(node, Exp::Cons(..)) && *slot == 1 {
+                    vec![Region::Cell(path.clone())]
+                } else {
+                    vec![Region::Node(path.clone())]
+                }
+            }
             Operation::SetAnn { path, .. } => vec![Region::Shape(path.clone())],
             Operation::Move { from, to, .. } => {
                 vec![Region::Node(from.clone()), Region::Node(to.clone())]

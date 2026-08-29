@@ -6,7 +6,8 @@ use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, Id, Side};
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, Prec, op_prec, op_str, quote_str, render_id,
+    CONS_STR, FOLD_STR, NIL_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec,
+    op_prec, op_str, quote_str, render_id,
 };
 use nothing_merge::path::{Path, arity, at, child, extend};
 
@@ -97,6 +98,9 @@ fn shallow_key(exp: &Exp) -> String {
         Exp::If(..) => "If".to_string(),
         Exp::Let(id, ..) => format!("Let:{id}"),
         Exp::Pair(..) => "Pair".to_string(),
+        Exp::Nil => "Nil".to_string(),
+        Exp::Cons(..) => "Cons".to_string(),
+        Exp::Fold(..) => "Fold".to_string(),
         Exp::Proj(side, _) => format!(
             "Proj:{}",
             match side {
@@ -339,8 +343,10 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::Str(_)
         | Exp::EmptyHole(_)
         | Exp::NonEmptyHole(_, _)
+        | Exp::Nil
         | Exp::Pair(_, _) => PREC_ATOM,
-        Exp::Ap(_, _) | Exp::Proj(_, _) => PREC_APP,
+        Exp::Cons(_, _) => PREC_CONS,
+        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) => PREC_APP,
         Exp::BinOp(op, _, _) => op_prec(*op),
         Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) => PREC_BINDER,
     }
@@ -448,6 +454,21 @@ impl Marker<'_> {
             Exp::Lam(id, ty, _) => {
                 out.push_str(&format!("λ{}:{}. ", render_id(*id, self.names), ty));
                 self.kid(exp, path, 0, PREC_BINDER, class, out);
+            }
+            Exp::Nil => out.push_str(NIL_STR),
+            Exp::Cons(..) => {
+                self.kid(exp, path, 0, PREC_CONS + 1, class, out);
+                out.push_str(&format!(" {CONS_STR} "));
+                self.kid(exp, path, 1, PREC_CONS, class, out);
+            }
+            Exp::Fold(..) => {
+                out.push_str(FOLD_STR);
+                out.push(' ');
+                self.kid(exp, path, 0, PREC_ATOM, class, out);
+                out.push(' ');
+                self.kid(exp, path, 1, PREC_ATOM, class, out);
+                out.push(' ');
+                self.kid(exp, path, 2, PREC_ATOM, class, out);
             }
         }
     }

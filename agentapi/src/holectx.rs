@@ -126,6 +126,9 @@ fn candidate_actions(state: &EditState) -> Vec<Action> {
         Action::ConstructPair,
         Action::ConstructProj(Side::L),
         Action::ConstructProj(Side::R),
+        Action::ConstructNil,
+        Action::ConstructCons,
+        Action::ConstructFold,
     ]);
     out
 }
@@ -490,6 +493,56 @@ mod tests {
                 .and_then(|c| c.template.clone()),
             Some(STR_TEMPLATE.to_string())
         );
+    }
+
+    #[test]
+    fn a_list_hole_offers_the_list_forms_and_a_num_hole_does_not() {
+        let state = state_from("set-def-ann List Num\nconstruct-cons\n");
+        assert_eq!(
+            ctx_and_expected_ty_at_in(&state.scope(), &state.zipper).1,
+            Ty::Num,
+            "the head of a cons in a List Num context expects Num"
+        );
+        let head_steps: Vec<String> = well_typed_constructions(&state)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        assert!(
+            !head_steps.iter().any(|s| s == "construct-nil"),
+            "an empty list is not a number: {head_steps:?}"
+        );
+        assert!(
+            !head_steps.iter().any(|s| s == "construct-cons"),
+            "a cons cell is not a number: {head_steps:?}"
+        );
+        assert_constructions_are_clean(&state);
+
+        let tail = state_from(
+            "set-def-ann List Num\nconstruct-cons\nconstruct-num 1\n\
+             move-parent\nmove-child 1\n",
+        );
+        assert_eq!(
+            ctx_and_expected_ty_at_in(&tail.scope(), &tail.zipper).1,
+            Ty::List(Box::new(Ty::Num)),
+            "the tail of `1 :: _` expects a list of numbers"
+        );
+        let tail_steps: Vec<String> = well_typed_constructions(&tail)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        assert!(
+            tail_steps.iter().any(|s| s == "construct-nil"),
+            "a list hole must offer the empty list: {tail_steps:?}"
+        );
+        assert!(
+            tail_steps.iter().any(|s| s == "construct-cons"),
+            "a list hole must offer another cell: {tail_steps:?}"
+        );
+        assert!(
+            tail_steps.iter().any(|s| s == "construct-fold"),
+            "fold synthesises whatever its accumulator is, so it fits anywhere: {tail_steps:?}"
+        );
+        assert_constructions_are_clean(&tail);
     }
 
     #[test]

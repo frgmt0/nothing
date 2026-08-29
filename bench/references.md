@@ -194,6 +194,9 @@ a test asserting that no other one does.
 
 ### 2. List map — a pair is the list
 
+**Superseded on 2026-08-29; kept because the numbers it produced are in
+`RESULTS.md` and those entries are history.**
+
 Phase 1 has no lists and no pattern matching, and the spec forbids adding
 them ("You will want to add records, lists, strings, and polymorphism during
 Phase 1. Do not."). A product type is the longest fixed-length sequence the
@@ -206,6 +209,40 @@ recursion over a cons-list does not.
 *What is lost:* arbitrary length, and with it the `match`/recursion that
 makes the reference 114 keystrokes. The fixture is genuinely a smaller
 program.
+
+### 2. List map — a real list, eliminated by fold (2026-08-29)
+
+Lists arrived with the second half of Phase B2, and the paragraph above
+said exactly what was missing, so the fixture was rewritten rather than a
+seventh reference being invented for a feature reference 2 was already
+about. The fixture is now
+
+```
+λx0:Num -> Num. λx1:List Num. fold x1 nil (λx2:Num. λx3:List Num. x0 x2 :: x3)
+```
+
+which maps a function over a cons list of *any* length and rebuilds it
+element by element. The denominator is untouched: 114 was computed once on
+2026-08-26 from the reference text and is fixed forever, and the reference
+text has not changed either. What changed is the numerator, and it went
+**up** — 29 keystrokes to 44, 0.25× to 0.39× — because the fixture is now
+a bigger program than it was. That direction is the point: the old ratio
+was flattering `nothing` by measuring it on a smaller program than the one
+Neovim was charged for.
+
+*What is still lost:* two things, both honest.
+- **Polymorphism.** `map` is `List Num -> List Num`, not `List a -> List b`;
+  the language has no type variables (`spec-build.md` defers them past
+  v0.1.0), so the reference's implicit generality is not expressible.
+- **`match`.** The eliminator is `fold`, the only one the language has, so
+  the recursion the reference writes out by hand is the recursion fold
+  performs. The program means the same thing; it does not spell it the same
+  way. This is also why the result type synthesises as `List ?` rather than
+  `List Num` — `nil` synthesises `List ?`, and nothing in a `main : ?`
+  definition pins it down. It is consistent with `List Num` everywhere it
+  matters, which is what gradual typing is for.
+
+Still marked `*` (approximate) in the tables, for those two reasons.
 
 ### 3. Record constructor + accessor — pairs, positionally
 

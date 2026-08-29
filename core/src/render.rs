@@ -7,10 +7,15 @@ pub type Prec = u8;
 
 pub const PREC_BINDER: Prec = 0;
 pub const PREC_CMP: Prec = 1;
-pub const PREC_ADD: Prec = 2;
-pub const PREC_MUL: Prec = 3;
-pub const PREC_APP: Prec = 4;
-pub const PREC_ATOM: Prec = 5;
+pub const PREC_CONS: Prec = 2;
+pub const PREC_ADD: Prec = 3;
+pub const PREC_MUL: Prec = 4;
+pub const PREC_APP: Prec = 5;
+pub const PREC_ATOM: Prec = 6;
+
+pub const CONS_STR: &str = "::";
+pub const NIL_STR: &str = "nil";
+pub const FOLD_STR: &str = "fold";
 
 pub fn op_prec(op: Op) -> Prec {
     match op {
@@ -111,6 +116,23 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
             out.push(' ');
             fmt_prec(a, PREC_ATOM, names, out);
         }
+        Exp::Nil => {
+            out.push_str(NIL_STR);
+        }
+        Exp::Cons(head, tail) => {
+            fmt_prec(head, PREC_CONS + 1, names, out);
+            write!(out, " {CONS_STR} ").unwrap();
+            fmt_prec(tail, PREC_CONS, names, out);
+        }
+        Exp::Fold(list, init, step) => {
+            out.push_str(FOLD_STR);
+            out.push(' ');
+            fmt_prec(list, PREC_ATOM, names, out);
+            out.push(' ');
+            fmt_prec(init, PREC_ATOM, names, out);
+            out.push(' ');
+            fmt_prec(step, PREC_ATOM, names, out);
+        }
         Exp::BinOp(op, l, r) => {
             let p = op_prec(*op);
 
@@ -154,8 +176,10 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::Str(_)
         | Exp::EmptyHole(_)
         | Exp::NonEmptyHole(_, _)
+        | Exp::Nil
         | Exp::Pair(_, _) => PREC_ATOM,
-        Exp::Ap(_, _) | Exp::Proj(_, _) => PREC_APP,
+        Exp::Cons(_, _) => PREC_CONS,
+        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) => PREC_APP,
         Exp::BinOp(op, _, _) => op_prec(*op),
         Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) => PREC_BINDER,
     }
@@ -202,6 +226,61 @@ mod tests {
             Exp::num(3),
         );
         assert_eq!(render(&e, &names()), "(\"a\" ++ \"b\") * 3");
+    }
+
+    #[test]
+    fn a_cons_chain_renders_right_associatively_and_ends_in_nil() {
+        assert_eq!(render(&Exp::Nil, &names()), "nil");
+        assert_eq!(
+            render(
+                &Exp::list([Exp::num(1), Exp::num(2), Exp::num(3)]),
+                &names()
+            ),
+            "1 :: 2 :: 3 :: nil"
+        );
+        assert_eq!(
+            render(
+                &Exp::cons(
+                    Exp::num(1),
+                    Exp::cons(Exp::num(2), Exp::empty_hole(HoleId::from_u128(0)))
+                ),
+                &names()
+            ),
+            "1 :: 2 :: ⦇⦈"
+        );
+    }
+
+    #[test]
+    fn cons_binds_looser_than_arithmetic_and_tighter_than_comparison() {
+        let e = Exp::cons(Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)), Exp::Nil);
+        assert_eq!(render(&e, &names()), "1 + 2 :: nil");
+
+        let e = Exp::bin_op(
+            Op::Eq,
+            Exp::cons(Exp::num(1), Exp::Nil),
+            Exp::cons(Exp::num(1), Exp::Nil),
+        );
+        assert_eq!(render(&e, &names()), "1 :: nil == 1 :: nil");
+
+        let e = Exp::cons(Exp::cons(Exp::num(1), Exp::Nil), Exp::Nil);
+        assert_eq!(render(&e, &names()), "(1 :: nil) :: nil");
+    }
+
+    #[test]
+    fn fold_renders_as_an_application_of_three_atoms() {
+        let f = x(0);
+        let e = Exp::fold(
+            Exp::list([Exp::num(1), Exp::num(2)]),
+            Exp::num(0),
+            Exp::var(f),
+        );
+        assert_eq!(render(&e, &names()), "fold (1 :: 2 :: nil) 0 x0");
+
+        let e = Exp::fold(Exp::var(f), Exp::num(0), Exp::var(f));
+        assert_eq!(render(&e, &names()), "fold x0 0 x0");
+
+        let e = Exp::cons(Exp::fold(Exp::Nil, Exp::num(0), Exp::var(f)), Exp::Nil);
+        assert_eq!(render(&e, &names()), "fold nil 0 x0 :: nil");
     }
 
     #[test]

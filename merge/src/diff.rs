@@ -47,6 +47,13 @@ pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
             structurally_equal(l1, l2) && structurally_equal(r1, r2)
         }
         (Exp::Proj(s1, e1), Exp::Proj(s2, e2)) => s1 == s2 && structurally_equal(e1, e2),
+        (Exp::Nil, Exp::Nil) => true,
+        (Exp::Cons(h1, t1), Exp::Cons(h2, t2)) => {
+            structurally_equal(h1, h2) && structurally_equal(t1, t2)
+        }
+        (Exp::Fold(l1, i1, s1), Exp::Fold(l2, i2, s2)) => {
+            structurally_equal(l1, l2) && structurally_equal(i1, i2) && structurally_equal(s1, s2)
+        }
         _ => false,
     }
 }
@@ -118,10 +125,13 @@ fn diff_exp(a: &Exp, b: &Exp, path: &[usize], out: &mut Vec<Operation>) {
             diff_exp(body_a, body_b, &extend(path, 0), out);
         }
         (Exp::Let(..), Exp::Let(..)) => diff_chain(a, b, path, out),
+        (Exp::Cons(..), Exp::Cons(..)) => diff_spine(a, b, path, out),
         (Exp::Ap(..), Exp::Ap(..)) | (Exp::Pair(..), Exp::Pair(..)) => {
             diff_children(a, b, path, 2, out)
         }
-        (Exp::If(..), Exp::If(..)) => diff_children(a, b, path, 3, out),
+        (Exp::If(..), Exp::If(..)) | (Exp::Fold(..), Exp::Fold(..)) => {
+            diff_children(a, b, path, 3, out)
+        }
         (Exp::NonEmptyHole(..), Exp::NonEmptyHole(..)) => diff_children(a, b, path, 1, out),
         (Exp::BinOp(op_a, ..), Exp::BinOp(op_b, ..)) => {
             if op_a == op_b {
@@ -182,6 +192,90 @@ fn replace(path: &[usize], a: &Exp, b: &Exp) -> Operation {
         path: path.to_vec(),
         from: a.clone(),
         to: b.clone(),
+    }
+}
+
+fn spine_of(exp: &Exp) -> (Vec<Exp>, Exp) {
+    let mut items = Vec::new();
+    let mut cursor = exp;
+    while let Exp::Cons(head, tail) = cursor {
+        items.push((**head).clone());
+        cursor = tail;
+    }
+    (items, cursor.clone())
+}
+
+fn cell_at(path: &[usize], index: usize) -> Path {
+    let mut out = path.to_vec();
+    out.extend(std::iter::repeat_n(1, index));
+    out
+}
+
+fn tail_of(exp: &Exp, index: usize) -> Exp {
+    let mut cursor = exp.clone();
+    for _ in 0..index {
+        match cursor {
+            Exp::Cons(_, tail) => cursor = *tail,
+            other => return other,
+        }
+    }
+    cursor
+}
+
+fn diff_spine(a: &Exp, b: &Exp, path: &[usize], out: &mut Vec<Operation>) {
+    let (items_a, tail_a) = spine_of(a);
+    let (items_b, tail_b) = spine_of(b);
+    let hashes_a: Vec<Digest> = items_a.iter().map(content_hash).collect();
+    let hashes_b: Vec<Digest> = items_b.iter().map(content_hash).collect();
+    let pairs = chain::common_subsequence_indices(&hashes_a, &hashes_b);
+    if pairs.is_empty() {
+        diff_children(a, b, path, 2, out);
+        return;
+    }
+
+    let mut i = 0usize;
+    let mut j = 0usize;
+    for (kept_a, kept_b) in pairs.iter().copied() {
+        while i < kept_a {
+            out.push(Operation::Delete {
+                path: cell_at(path, i),
+                slot: 1,
+                node: tail_of(a, i),
+            });
+            i += 1;
+        }
+        diff_exp(
+            &items_a[kept_a],
+            &items_b[kept_b],
+            &extend(&cell_at(path, kept_a), 0),
+            out,
+        );
+        for new_index in (j..kept_b).rev() {
+            out.push(Operation::Insert {
+                path: cell_at(path, kept_a),
+                slot: 1,
+                node: Exp::cons(items_b[new_index].clone(), Exp::Nil),
+            });
+        }
+        i += 1;
+        j = kept_b + 1;
+    }
+    while i < items_a.len() {
+        out.push(Operation::Delete {
+            path: cell_at(path, i),
+            slot: 1,
+            node: tail_of(a, i),
+        });
+        i += 1;
+    }
+    let end = cell_at(path, items_a.len());
+    diff_exp(&tail_a, &tail_b, &end, out);
+    for new_index in (j..items_b.len()).rev() {
+        out.push(Operation::Insert {
+            path: end.clone(),
+            slot: 1,
+            node: Exp::cons(items_b[new_index].clone(), Exp::Nil),
+        });
     }
 }
 

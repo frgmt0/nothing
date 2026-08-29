@@ -4,8 +4,8 @@ use nothing_core::ctx::Ctx;
 use nothing_core::doc::{Def, Doc, MAIN_ID, MAIN_NAME, references, vacate};
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
 use nothing_core::names::{NameTable, fresh_binder_name, fresh_definition_name};
-use nothing_core::ty::{Ty, matched_arrow, matched_prod};
-use nothing_core::typing::{ana, is_comparable, operand_expectation, syn};
+use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod};
+use nothing_core::typing::{ana, is_comparable, operand_expectation, step_ty, syn};
 
 use crate::zipper::{Frame, Zipper, unzip};
 
@@ -21,6 +21,7 @@ pub enum Action {
     ConstructNum(i64),
     ConstructBool(bool),
     ConstructStr(String),
+    ConstructNil,
     ConstructVar(Id),
 
     ConstructLam,
@@ -30,6 +31,8 @@ pub enum Action {
     ConstructLet,
     ConstructPair,
     ConstructProj(Side),
+    ConstructCons,
+    ConstructFold,
     ConstructNonEmptyHole,
 
     SetAnn(Ty),
@@ -100,12 +103,12 @@ impl Fresh {
                 self.observe(f);
                 self.observe(a);
             }
-            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
-            Exp::BinOp(_, l, r) | Exp::Pair(l, r) => {
+            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
+            Exp::BinOp(_, l, r) | Exp::Pair(l, r) | Exp::Cons(l, r) => {
                 self.observe(l);
                 self.observe(r);
             }
-            Exp::If(c, t, e) => {
+            Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
                 self.observe(c);
                 self.observe(t);
                 self.observe(e);
@@ -247,6 +250,40 @@ pub fn ctx_and_expected_ty_at_in(scope: &DefScope, zipper: &Zipper) -> (Ctx, Ty)
             Frame::PairSnd(_) => {
                 expected = matched_prod(&expected).unwrap_or((Ty::Hole, Ty::Hole)).1;
             }
+            Frame::ConsHead(tail) => {
+                let elem = matched_list(&expected).unwrap_or(Ty::Hole);
+                expected = if elem == Ty::Hole {
+                    syn(&ctx, tail)
+                        .as_ref()
+                        .and_then(matched_list)
+                        .unwrap_or(Ty::Hole)
+                } else {
+                    elem
+                };
+            }
+            Frame::ConsTail(head) => {
+                let elem = matched_list(&expected).unwrap_or(Ty::Hole);
+                let elem = if elem == Ty::Hole {
+                    syn(&ctx, head).unwrap_or(Ty::Hole)
+                } else {
+                    elem
+                };
+                expected = Ty::List(Box::new(elem));
+            }
+            Frame::FoldList(..) => expected = Ty::List(Box::new(Ty::Hole)),
+            Frame::FoldInit(..) => {}
+            Frame::FoldStep(list, init) => {
+                let elem = syn(&ctx, list)
+                    .as_ref()
+                    .and_then(matched_list)
+                    .unwrap_or(Ty::Hole);
+                let acc = if expected == Ty::Hole {
+                    syn(&ctx, init).unwrap_or(Ty::Hole)
+                } else {
+                    expected
+                };
+                expected = step_ty(&elem, &acc);
+            }
             Frame::ProjBody(side) => {
                 expected = match side {
                     Side::L => Ty::Prod(Box::new(expected), Box::new(Ty::Hole)),
@@ -291,6 +328,7 @@ pub fn apply_with_in(
         Action::ConstructNum(n) => construct_leaf(scope, zipper, Exp::num(n), fresh),
         Action::ConstructBool(b) => construct_leaf(scope, zipper, Exp::bool_(b), fresh),
         Action::ConstructStr(ref text) => construct_leaf(scope, zipper, Exp::str_(text), fresh),
+        Action::ConstructNil => construct_leaf(scope, zipper, Exp::nil(), fresh),
         Action::ConstructVar(id) => {
             if ctx_at_in(scope, &zipper).lookup(&id).is_none() {
                 None
@@ -349,6 +387,27 @@ pub fn apply_with_in(
             |body, _| Exp::proj(side, body),
         ),
 
+        Action::ConstructCons => {
+            let expected = expected_ty_at_in(scope, &zipper);
+            let elem = matched_list(&expected).unwrap_or(Ty::Hole);
+            construct_wrapping(scope, zipper, elem, fresh, |head, fresh| {
+                Exp::cons(head, Exp::empty_hole(fresh.hole()))
+            })
+        }
+        Action::ConstructFold => construct_wrapping(
+            scope,
+            zipper,
+            Ty::List(Box::new(Ty::Hole)),
+            fresh,
+            |list, fresh| {
+                Exp::fold(
+                    list,
+                    Exp::empty_hole(fresh.hole()),
+                    Exp::empty_hole(fresh.hole()),
+                )
+            },
+        ),
+
         Action::ConstructNonEmptyHole => {
             construct_wrapping(scope, zipper, Ty::Hole, fresh, |inner, fresh| {
                 Exp::non_empty_hole(fresh.hole(), inner)
@@ -386,10 +445,16 @@ fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
         children.iter().position(|c| matches!(c, Exp::EmptyHole(_)))
     }
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => None,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            None
+        }
         Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::NonEmptyHole(_, b) => first(&[b]),
-        Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => first(&[a, b]),
-        Exp::If(c, t, e) => first(&[c, t, e]),
+        Exp::Ap(a, b)
+        | Exp::BinOp(_, a, b)
+        | Exp::Let(_, a, b)
+        | Exp::Pair(a, b)
+        | Exp::Cons(a, b) => first(&[a, b]),
+        Exp::If(c, t, e) | Exp::Fold(c, t, e) => first(&[c, t, e]),
     }
 }
 
@@ -1495,12 +1560,16 @@ mod tests {
     fn contains_a_hole(e: &Exp) -> bool {
         match e {
             Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => true,
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => false,
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => false,
             Exp::Lam(_, _, b) | Exp::Proj(_, b) => contains_a_hole(b),
-            Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
-                contains_a_hole(a) || contains_a_hole(b)
+            Exp::Ap(a, b)
+            | Exp::BinOp(_, a, b)
+            | Exp::Let(_, a, b)
+            | Exp::Pair(a, b)
+            | Exp::Cons(a, b) => contains_a_hole(a) || contains_a_hole(b),
+            Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
+                contains_a_hole(c) || contains_a_hole(t) || contains_a_hole(e)
             }
-            Exp::If(c, t, e) => contains_a_hole(c) || contains_a_hole(t) || contains_a_hole(e),
         }
     }
 

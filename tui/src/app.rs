@@ -466,10 +466,16 @@ fn is_unfinished(exp: &Exp) -> bool {
 
 fn children(exp: &Exp) -> Vec<&Exp> {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => Vec::new(),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            Vec::new()
+        }
         Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::NonEmptyHole(_, b) => vec![b],
-        Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => vec![a, b],
-        Exp::If(c, t, e) => vec![c, t, e],
+        Exp::Ap(a, b)
+        | Exp::BinOp(_, a, b)
+        | Exp::Let(_, a, b)
+        | Exp::Pair(a, b)
+        | Exp::Cons(a, b) => vec![a, b],
+        Exp::If(c, t, e) | Exp::Fold(c, t, e) => vec![c, t, e],
     }
 }
 

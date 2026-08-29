@@ -107,6 +107,16 @@ fn go(exp: &Exp, next: &mut u128, seen: &mut Vec<Id>) -> Exp {
             Exp::pair(a, go(b, next, seen))
         }
         Exp::Proj(side, e) => Exp::proj(*side, go(e, next, seen)),
+        Exp::Nil => Exp::Nil,
+        Exp::Cons(head, tail) => {
+            let head = go(head, next, seen);
+            Exp::cons(head, go(tail, next, seen))
+        }
+        Exp::Fold(list, init, step) => {
+            let list = go(list, next, seen);
+            let init = go(init, next, seen);
+            Exp::fold(list, init, go(step, next, seen))
+        }
         Exp::EmptyHole(_) => Exp::empty_hole(fresh()),
         Exp::NonEmptyHole(_, inner) => {
             let id = fresh();

@@ -12,6 +12,7 @@ use nothing_core::ty::Ty;
 use nothing_store::document::{Document, VERSION_MAJOR};
 use nothing_store::v1::encode_document_v1;
 use nothing_store::v2::encode_document_v2;
+use nothing_store::v3::encode_document_v3;
 use nothing_store::{decode_document, encode_document};
 
 const FACTORIAL: &str = include_str!("../../bench/fixtures/factorial.actions");
@@ -19,6 +20,7 @@ const LIST_MAP: &str = include_str!("../../bench/fixtures/list_map.actions");
 const RECORD: &str = include_str!("../../bench/fixtures/record.actions");
 const STATE_MACHINE: &str = include_str!("../../bench/fixtures/state_machine.actions");
 const NESTED_CONDITIONAL: &str = include_str!("../../bench/fixtures/nested_conditional.actions");
+const GREETING: &str = include_str!("../../bench/fixtures/greeting.actions");
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v1")
@@ -26,6 +28,10 @@ fn fixture_dir() -> PathBuf {
 
 fn v2_fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v2")
+}
+
+fn v3_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v3")
 }
 
 fn sample_log() -> ActionLog {
@@ -158,7 +164,11 @@ fn every_version_one_artifact_opens_under_version_two() {
 
 #[test]
 fn every_migrated_artifact_round_trips_at_the_current_version() {
-    for path in v1_artifacts().into_iter().chain(v2_artifacts()) {
+    for path in v1_artifacts()
+        .into_iter()
+        .chain(v2_artifacts())
+        .chain(v3_artifacts())
+    {
         let bytes = fs::read(&path).expect("the artifact is readable");
         let migrated = decode_document(&bytes).expect("the artifact migrates");
 
@@ -253,6 +263,117 @@ fn a_version_two_document_keeps_every_definition_it_had() {
         assert_eq!(after.doc, before.doc, "{name} lost a definition");
         assert_eq!(after.log, before.log, "{name} lost its action log");
     }
+}
+
+fn every_v3_program() -> Vec<(String, Doc, NameTable)> {
+    let mut out = every_v2_program();
+    let replayed = replay_script(GREETING).expect("the greeting fixture replays cleanly");
+    out.push((
+        "bench_greeting".to_string(),
+        replayed.doc(),
+        replayed.names.clone(),
+    ));
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn ensure_v3_fixtures() {
+    let dir = v3_fixture_dir();
+    fs::create_dir_all(&dir).expect("the fixture directory is creatable");
+    for (name, doc, names) in every_v3_program() {
+        let path = dir.join(format!("{name}.v3.nothing"));
+        if !path.exists() {
+            let document = Document::from_doc(doc, names, sample_log());
+            fs::write(&path, encode_document_v3(&document)).expect("the fixture is writable");
+        }
+    }
+}
+
+fn v3_artifacts() -> Vec<PathBuf> {
+    ensure_v3_fixtures();
+    let mut paths: Vec<PathBuf> = fs::read_dir(v3_fixture_dir())
+        .expect("the fixture directory exists")
+        .map(|entry| entry.expect("a readable directory entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "nothing"))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn there_are_version_three_artifacts_to_migrate() {
+    let paths = v3_artifacts();
+    assert!(
+        paths.len() >= 16,
+        "only {} v3 artifacts were found; the v3 migration path is barely exercised",
+        paths.len()
+    );
+    for path in &paths {
+        let bytes = fs::read(path).expect("the artifact is readable");
+        assert_eq!(&bytes[0..4], b"NTHG", "{path:?} is not a nothing file");
+        assert_eq!(
+            bytes[4], 3,
+            "{path:?} is not version 3, so it does not test migration"
+        );
+    }
+}
+
+#[test]
+fn every_version_three_artifact_opens_under_version_four() {
+    for path in v3_artifacts() {
+        let bytes = fs::read(&path).expect("the artifact is readable");
+        let doc =
+            decode_document(&bytes).unwrap_or_else(|e| panic!("{path:?} failed to migrate: {e:?}"));
+        assert!(
+            doc.doc.is_well_typed(),
+            "{path:?} migrated to an ill-typed document"
+        );
+        assert!(doc.doc.len() >= 1, "{path:?} migrated to no definitions");
+    }
+}
+
+#[test]
+fn a_version_three_document_keeps_every_definition_it_had() {
+    for (name, doc, names) in every_v3_program() {
+        let before = Document::from_doc(doc, names, sample_log());
+        let bytes = encode_document_v3(&before);
+        assert_eq!(bytes[4], 3, "{name} was not written as version 3");
+        let after = decode_document(&bytes).expect("the v3 bytes migrate");
+        assert_eq!(after.doc, before.doc, "{name} lost a definition");
+        assert_eq!(after.log, before.log, "{name} lost its action log");
+    }
+}
+
+#[test]
+fn a_version_four_file_carries_a_list_no_earlier_version_could() {
+    use nothing_core::exp::Exp;
+    let program = Exp::fold(
+        Exp::list([Exp::num(1), Exp::num(2), Exp::num(3)]),
+        Exp::num(0),
+        Exp::lam(
+            nothing_core::exp::Id::from_u128(1),
+            Ty::Num,
+            Exp::lam(
+                nothing_core::exp::Id::from_u128(2),
+                Ty::Num,
+                Exp::bin_op(
+                    nothing_core::exp::Op::Add,
+                    Exp::var(nothing_core::exp::Id::from_u128(1)),
+                    Exp::var(nothing_core::exp::Id::from_u128(2)),
+                ),
+            ),
+        ),
+    );
+    let document = Document::new(program.clone(), NameTable::new(), sample_log());
+    let bytes = encode_document(&document);
+    assert_eq!(bytes[4], VERSION_MAJOR);
+    let reopened = decode_document(&bytes).expect("a list document opens");
+    assert_eq!(reopened.exp(), program);
+    assert_eq!(
+        nothing_core::typing::syn(&nothing_core::ctx::Ctx::empty(), &program),
+        Some(Ty::Num),
+        "the fixture must be the well-typed sum of a literal list"
+    );
 }
 
 #[test]

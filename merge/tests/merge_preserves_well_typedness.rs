@@ -11,7 +11,7 @@ use proptest::prelude::*;
 
 fn binders(exp: &Exp, out: &mut Vec<Id>) {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => {}
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {}
         Exp::Lam(id, _, body) => {
             out.push(*id);
             binders(body, out);
@@ -25,11 +25,11 @@ fn binders(exp: &Exp, out: &mut Vec<Id>) {
             binders(f, out);
             binders(a, out);
         }
-        Exp::BinOp(_, l, r) | Exp::Pair(l, r) => {
+        Exp::BinOp(_, l, r) | Exp::Pair(l, r) | Exp::Cons(l, r) => {
             binders(l, out);
             binders(r, out);
         }
-        Exp::If(c, t, e) => {
+        Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
             binders(c, out);
             binders(t, out);
             binders(e, out);

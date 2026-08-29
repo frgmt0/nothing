@@ -23,14 +23,17 @@ pub enum Value {
     If(Box<Value>, Arc<Exp>, Arc<Exp>),
     Pair(Box<Value>, Box<Value>),
     Proj(Side, Box<Value>),
+    Nil,
+    Cons(Box<Value>, Box<Value>),
+    Fold(Box<Value>, Box<Value>, Box<Value>),
     EmptyHole(HoleId, IncrEnv),
     NonEmptyHole(HoleId, IncrEnv, Box<Value>),
 }
 
 fn is_fully_reduced(v: &Value) -> bool {
     match v {
-        Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) => true,
-        Value::Pair(a, b) => is_fully_reduced(a) && is_fully_reduced(b),
+        Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) | Value::Nil => true,
+        Value::Pair(a, b) | Value::Cons(a, b) => is_fully_reduced(a) && is_fully_reduced(b),
         _ => false,
     }
 }
@@ -59,6 +62,15 @@ pub fn value_to_dyn(v: &Value) -> Dyn {
         ),
         Value::Pair(l, r) => Dyn::Pair(Box::new(value_to_dyn(l)), Box::new(value_to_dyn(r))),
         Value::Proj(side, inner) => Dyn::Proj(*side, Box::new(value_to_dyn(inner))),
+        Value::Nil => Dyn::Nil,
+        Value::Cons(head, tail) => {
+            Dyn::Cons(Box::new(value_to_dyn(head)), Box::new(value_to_dyn(tail)))
+        }
+        Value::Fold(list, init, step) => Dyn::Fold(
+            Box::new(value_to_dyn(list)),
+            Box::new(value_to_dyn(init)),
+            Box::new(value_to_dyn(step)),
+        ),
         Value::EmptyHole(h, env) => Dyn::EmptyHole(*h, env_to_dyn_env(env)),
         Value::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, env_to_dyn_env(env), Box::new(value_to_dyn(inner)))
@@ -81,13 +93,23 @@ fn collect_blocked(v: &Value, out: &mut Vec<Blocked>) {
             });
             collect_blocked(inner, out);
         }
-        Value::Ap(a, b) | Value::BinOp(_, a, b) | Value::Pair(a, b) => {
+        Value::Ap(a, b) | Value::BinOp(_, a, b) | Value::Pair(a, b) | Value::Cons(a, b) => {
             collect_blocked(a, out);
             collect_blocked(b, out);
         }
         Value::If(c, _, _) => collect_blocked(c, out),
+        Value::Fold(list, init, step) => {
+            collect_blocked(list, out);
+            collect_blocked(init, out);
+            collect_blocked(step, out);
+        }
         Value::Proj(_, inner) => collect_blocked(inner, out),
-        Value::Var(_) | Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) => {}
+        Value::Var(_)
+        | Value::Num(_)
+        | Value::Bool(_)
+        | Value::Str(_)
+        | Value::Nil
+        | Value::Closure(..) => {}
     }
 }
 
@@ -140,17 +162,17 @@ fn free_vars(exp: &Exp) -> HashSet<Id> {
                 go(f, bound, out);
                 go(a, bound, out);
             }
-            Exp::BinOp(_, l, r) | Exp::Pair(l, r) => {
+            Exp::BinOp(_, l, r) | Exp::Pair(l, r) | Exp::Cons(l, r) => {
                 go(l, bound, out);
                 go(r, bound, out);
             }
-            Exp::If(c, t, e) => {
+            Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
                 go(c, bound, out);
                 go(t, bound, out);
                 go(e, bound, out);
             }
             Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => go(e, bound, out),
-            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => {}
+            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {}
         }
     }
     let mut out = HashSet::new();
@@ -158,6 +180,9 @@ fn free_vars(exp: &Exp) -> HashSet<Id> {
     go(exp, &mut bound, &mut out);
     out
 }
+
+const CONS_HEAD_SALT: Digest = [0xc0; 32];
+const CONS_TAIL_SALT: Digest = [0xc1; 32];
 
 fn combine(a: Digest, b: Digest) -> Digest {
     let mut hasher = blake3::Hasher::new();
@@ -355,6 +380,58 @@ impl IncrEngine {
         (value, digest)
     }
 
+    fn apply_value(&mut self, fun: Value, arg: Value, arg_digest: Digest) -> Value {
+        match fun {
+            Value::Closure(id, ty, body, cenv) => {
+                if self.fuel == 0 {
+                    self.exhausted = true;
+                    Value::Ap(Box::new(Value::Closure(id, ty, body, cenv)), Box::new(arg))
+                } else {
+                    self.fuel -= 1;
+                    let inner_env = cenv.update(id, (arg, arg_digest));
+                    self.eval_node(&body, &inner_env).0
+                }
+            }
+            other => Value::Ap(Box::new(other), Box::new(arg)),
+        }
+    }
+
+    fn fold_value(
+        &mut self,
+        list: Value,
+        list_digest: Digest,
+        init: Value,
+        init_digest: Digest,
+        step: Value,
+        step_digest: Digest,
+    ) -> Value {
+        let mut spine: Vec<(Value, Digest)> = Vec::new();
+        let mut rest = list;
+        let mut rest_digest = list_digest;
+        loop {
+            match rest {
+                Value::Cons(head, tail) => {
+                    let head_digest = combine(rest_digest, CONS_HEAD_SALT);
+                    rest_digest = combine(rest_digest, CONS_TAIL_SALT);
+                    spine.push((*head, head_digest));
+                    rest = *tail;
+                }
+                Value::Nil => break,
+                blocked => {
+                    return Value::Fold(Box::new(blocked), Box::new(init), Box::new(step));
+                }
+            }
+        }
+        let mut acc = init;
+        let mut acc_digest = init_digest;
+        for (head, head_digest) in spine.into_iter().rev() {
+            let partial = self.apply_value(step.clone(), head, head_digest);
+            acc_digest = combine(combine(head_digest, acc_digest), step_digest);
+            acc = self.apply_value(partial, acc, acc_digest);
+        }
+        acc
+    }
+
     fn eval_uncached(&mut self, exp: &Exp, env: &IncrEnv) -> Value {
         match exp {
             Exp::Var(id) => match env.get(id) {
@@ -377,19 +454,7 @@ impl IncrEngine {
             Exp::Ap(f, a) => {
                 let (vf, _) = self.eval_node(f, env);
                 let (va, va_dig) = self.eval_node(a, env);
-                match vf {
-                    Value::Closure(id, ty, body, cenv) => {
-                        if self.fuel == 0 {
-                            self.exhausted = true;
-                            Value::Ap(Box::new(Value::Closure(id, ty, body, cenv)), Box::new(va))
-                        } else {
-                            self.fuel -= 1;
-                            let inner_env = cenv.update(id, (va, va_dig));
-                            self.eval_node(&body, &inner_env).0
-                        }
-                    }
-                    other => Value::Ap(Box::new(other), Box::new(va)),
-                }
+                self.apply_value(vf, va, va_dig)
             }
             Exp::BinOp(op, l, r) => {
                 let (vl, _) = self.eval_node(l, env);
@@ -426,6 +491,18 @@ impl IncrEngine {
                 let (vl, _) = self.eval_node(l, env);
                 let (vr, _) = self.eval_node(r, env);
                 Value::Pair(Box::new(vl), Box::new(vr))
+            }
+            Exp::Nil => Value::Nil,
+            Exp::Cons(head, tail) => {
+                let (vh, _) = self.eval_node(head, env);
+                let (vt, _) = self.eval_node(tail, env);
+                Value::Cons(Box::new(vh), Box::new(vt))
+            }
+            Exp::Fold(list, init, step) => {
+                let (vl, dl) = self.eval_node(list, env);
+                let (vi, di) = self.eval_node(init, env);
+                let (vs, ds) = self.eval_node(step, env);
+                self.fold_value(vl, dl, vi, di, vs, ds)
             }
             Exp::Proj(side, inner) => {
                 let (vi, _) = self.eval_node(inner, env);
@@ -517,19 +594,21 @@ fn walk_with_table(
             }
             hash
         }
-        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => next_hash(table, idx),
+        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            next_hash(table, idx)
+        }
         Exp::Lam(id, _, body) => {
             let mut inner: Vec<(Id, Digest)> =
                 scope.iter().filter(|(bid, _)| bid != id).cloned().collect();
             walk_with_table(body, table, idx, &mut inner, dependents);
             next_hash(table, idx)
         }
-        Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Pair(a, b) => {
+        Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Pair(a, b) | Exp::Cons(a, b) => {
             walk_with_table(a, table, idx, scope, dependents);
             walk_with_table(b, table, idx, scope, dependents);
             next_hash(table, idx)
         }
-        Exp::If(c, t, e) => {
+        Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
             walk_with_table(c, table, idx, scope, dependents);
             walk_with_table(t, table, idx, scope, dependents);
             walk_with_table(e, table, idx, scope, dependents);
@@ -719,6 +798,66 @@ mod tests {
         assert_eq!(after.str(), Some("hello, there"));
         let delta = engine.node_evals - baseline;
         assert!(delta > 0 && delta < 5, "re-evaluated {delta} nodes");
+    }
+
+    #[test]
+    fn a_fold_over_a_list_caches_and_re_evaluates_only_the_element_that_changed() {
+        let x = Id::from_u128(1);
+        let y = Id::from_u128(2);
+        let plus = Exp::lam(
+            x,
+            Ty::Num,
+            Exp::lam(y, Ty::Num, Exp::bin_op(Op::Add, Exp::var(x), Exp::var(y))),
+        );
+        let program = Exp::fold(
+            Exp::list([Exp::num(1), Exp::num(2), Exp::num(3), Exp::num(4)]),
+            Exp::num(0),
+            plus.clone(),
+        );
+        let mut engine = IncrEngine::new();
+        assert_eq!(engine.eval_with_fuel(&program, 100_000).num(), Some(10));
+        let baseline = engine.node_evals;
+        assert!(baseline > 0);
+
+        assert_eq!(engine.eval_with_fuel(&program, 100_000).num(), Some(10));
+        assert_eq!(
+            engine.node_evals, baseline,
+            "a second fold over the same list evaluates nothing"
+        );
+
+        let edited = Exp::fold(
+            Exp::list([Exp::num(1), Exp::num(2), Exp::num(3), Exp::num(9)]),
+            Exp::num(0),
+            plus,
+        );
+        engine.invalidate(&dirty_set(&program, content_hash(&Exp::num(4))));
+        assert_eq!(engine.eval_with_fuel(&edited, 100_000).num(), Some(15));
+        let delta = engine.node_evals - baseline;
+        assert!(
+            delta > 0 && delta < baseline,
+            "changing the last element re-evaluated {delta} of {baseline} nodes"
+        );
+    }
+
+    #[test]
+    fn a_list_long_enough_to_blow_a_recursive_fold_still_evaluates() {
+        let x = Id::from_u128(1);
+        let y = Id::from_u128(2);
+        let program = Exp::fold(
+            Exp::list((0..1_200).map(Exp::num)),
+            Exp::num(0),
+            Exp::lam(
+                x,
+                Ty::Num,
+                Exp::lam(y, Ty::Num, Exp::bin_op(Op::Add, Exp::var(x), Exp::var(y))),
+            ),
+        );
+        let mut engine = IncrEngine::new();
+        assert_eq!(
+            engine.eval_with_fuel(&program, 10_000_000).num(),
+            Some((0..1_200).sum()),
+            "the incremental fold walks the spine iteratively, not by recursion"
+        );
     }
 
     #[test]

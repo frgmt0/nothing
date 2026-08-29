@@ -16,6 +16,18 @@ pub fn phrase(exp: &Exp, names: &NameTable) -> String {
         Exp::EmptyHole(_) => "(blank)".to_string(),
         Exp::NonEmptyHole(_, e) => format!("(not yet fitting: {})", phrase(e, names)),
         Exp::Pair(a, b) => format!("the pair of {} and {}", phrase(a, names), phrase(b, names)),
+        Exp::Nil => "an empty list".to_string(),
+        Exp::Cons(head, tail) => format!(
+            "{} in front of {}",
+            phrase(head, names),
+            phrase(tail, names)
+        ),
+        Exp::Fold(list, init, step) => format!(
+            "combining {}, starting from {}, with {}",
+            phrase(list, names),
+            phrase(init, names),
+            phrase(step, names)
+        ),
         Exp::Proj(side, e) => format!("the {} part of {}", side_word(*side), phrase(e, names)),
         Exp::Ap(f, a) => format!("{} applied to {}", phrase(f, names), phrase(a, names)),
         Exp::BinOp(op, l, r) => binop_phrase(*op, &phrase(l, names), &phrase(r, names)),
@@ -66,6 +78,7 @@ pub fn ty_phrase(ty: &Ty) -> String {
         Ty::Hole => "an unknown type".to_string(),
         Ty::Arrow(a, b) => format!("a function from {} to {}", ty_phrase(a), ty_phrase(b)),
         Ty::Prod(a, b) => format!("a pair of {} and {}", ty_phrase(a), ty_phrase(b)),
+        Ty::List(elem) => format!("a list of {}", ty_phrase(elem)),
     }
 }
 
@@ -108,6 +121,23 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
         Frame::PairFst(snd) => format!("the pair of {child} and {}", phrase(snd, names)),
         Frame::PairSnd(fst) => format!("the pair of {} and {child}", phrase(fst, names)),
         Frame::ProjBody(side) => format!("the {} part of {child}", side_word(*side)),
+        Frame::ConsHead(tail) => format!("{child} in front of {}", phrase(tail, names)),
+        Frame::ConsTail(head) => format!("{} in front of {child}", phrase(head, names)),
+        Frame::FoldList(init, step) => format!(
+            "combining {child}, starting from {}, with {}",
+            phrase(init, names),
+            phrase(step, names)
+        ),
+        Frame::FoldInit(list, step) => format!(
+            "combining {}, starting from {child}, with {}",
+            phrase(list, names),
+            phrase(step, names)
+        ),
+        Frame::FoldStep(list, init) => format!(
+            "combining {}, starting from {}, with {child}",
+            phrase(list, names),
+            phrase(init, names)
+        ),
         Frame::NonEmptyHoleBody(_) => format!("(not yet fitting: {child})"),
     }
 }
@@ -281,6 +311,36 @@ mod tests {
         assert_eq!(
             phrase(&replayed.exp(), &replayed.names),
             "a function taking x0 (a number) and returning if whether x0 equals 0 then 1 otherwise if whether x0 equals 1 then 2 otherwise 0"
+        );
+    }
+
+    #[test]
+    fn a_list_reads_as_a_list() {
+        let e = Exp::list([Exp::num(1), Exp::num(2), Exp::num(3)]);
+        assert_eq!(
+            phrase(&e, &names()),
+            "1 in front of 2 in front of 3 in front of an empty list"
+        );
+        assert_eq!(phrase(&Exp::nil(), &names()), "an empty list");
+        assert_eq!(
+            ty_phrase(&Ty::List(Box::new(Ty::Num))),
+            "a list of a number"
+        );
+        assert_eq!(
+            ty_phrase(&Ty::List(Box::new(Ty::List(Box::new(Ty::Bool))))),
+            "a list of a list of a yes-or-no value"
+        );
+        assert_eq!(
+            phrase(
+                &Exp::fold(
+                    e,
+                    Exp::num(0),
+                    Exp::var(nothing_core::exp::Id::from_u128(1))
+                ),
+                &names()
+            ),
+            "combining 1 in front of 2 in front of 3 in front of an empty list, \
+             starting from 0, with _00000000"
         );
     }
 

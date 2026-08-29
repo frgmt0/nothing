@@ -133,15 +133,17 @@ mod tests {
             match e {
                 Exp::EmptyHole(_) => true,
                 Exp::NonEmptyHole(_, inner) => contains_empty_hole(inner),
-                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => false,
+                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => false,
                 Exp::Lam(_, _, body) => contains_empty_hole(body),
                 Exp::Ap(f, a) => contains_empty_hole(f) || contains_empty_hole(a),
                 Exp::BinOp(_, l, r) => contains_empty_hole(l) || contains_empty_hole(r),
-                Exp::If(c, t, e) => {
+                Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
                     contains_empty_hole(c) || contains_empty_hole(t) || contains_empty_hole(e)
                 }
                 Exp::Let(_, bound, body) => contains_empty_hole(bound) || contains_empty_hole(body),
-                Exp::Pair(l, r) => contains_empty_hole(l) || contains_empty_hole(r),
+                Exp::Pair(l, r) | Exp::Cons(l, r) => {
+                    contains_empty_hole(l) || contains_empty_hole(r)
+                }
                 Exp::Proj(_, e) => contains_empty_hole(e),
             }
         }
@@ -167,11 +169,11 @@ mod tests {
             match e {
                 Exp::NonEmptyHole(_, _) => true,
                 Exp::EmptyHole(_) => false,
-                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => false,
+                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => false,
                 Exp::Lam(_, _, body) => contains_non_empty_hole(body),
                 Exp::Ap(f, a) => contains_non_empty_hole(f) || contains_non_empty_hole(a),
                 Exp::BinOp(_, l, r) => contains_non_empty_hole(l) || contains_non_empty_hole(r),
-                Exp::If(c, t, e) => {
+                Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
                     contains_non_empty_hole(c)
                         || contains_non_empty_hole(t)
                         || contains_non_empty_hole(e)
@@ -179,7 +181,9 @@ mod tests {
                 Exp::Let(_, bound, body) => {
                     contains_non_empty_hole(bound) || contains_non_empty_hole(body)
                 }
-                Exp::Pair(l, r) => contains_non_empty_hole(l) || contains_non_empty_hole(r),
+                Exp::Pair(l, r) | Exp::Cons(l, r) => {
+                    contains_non_empty_hole(l) || contains_non_empty_hole(r)
+                }
                 Exp::Proj(_, e) => contains_non_empty_hole(e),
             }
         }

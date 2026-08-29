@@ -77,7 +77,7 @@ pub fn touches_ordering(chain_root: &[usize], len: usize, other: &[usize]) -> bo
     true
 }
 
-pub fn longest_common_subsequence(a: &[Id], b: &[Id]) -> Vec<Id> {
+pub fn common_subsequence_indices<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
     let n = a.len();
     let m = b.len();
     let mut table = vec![vec![0usize; m + 1]; n + 1];
@@ -94,7 +94,7 @@ pub fn longest_common_subsequence(a: &[Id], b: &[Id]) -> Vec<Id> {
     let (mut i, mut j) = (0usize, 0usize);
     while i < n && j < m {
         if a[i] == b[j] {
-            out.push(a[i]);
+            out.push((i, j));
             i += 1;
             j += 1;
         } else if table[i + 1][j] >= table[i][j + 1] {
@@ -104,6 +104,13 @@ pub fn longest_common_subsequence(a: &[Id], b: &[Id]) -> Vec<Id> {
         }
     }
     out
+}
+
+pub fn longest_common_subsequence(a: &[Id], b: &[Id]) -> Vec<Id> {
+    common_subsequence_indices(a, b)
+        .into_iter()
+        .map(|(i, _)| a[i])
+        .collect()
 }
 
 #[cfg(test)]

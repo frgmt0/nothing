@@ -499,3 +499,104 @@ second worst and is under a seventh of the 3× guard. Both tripwires
 (`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
 and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
 now cover six programs and pass.
+
+---
+
+## 2026-08-29 — Phase B2, lists (`List τ`, `nil`, `::`, `fold`)
+
+Reproduce with:
+
+```
+cargo run -p nothing-bench -- keytable
+cargo run -p nothing-bench -- table
+```
+
+The re-run required by Phase B2's list checkbox. One fixture changed:
+**reference 2, `list_map`, is now a real list map**. Every other fixture
+and every other keystroke is byte-identical to 2026-08-29's strings entry,
+which is what makes this a controlled measurement of one feature.
+
+### Reference 2 was upgraded, not re-measured
+
+Since 2026-08-26 the `list_map` fixture has been map over a *pair*
+(`λf:Num -> Num. λxs:Num * Num. (f (fst xs), f (snd xs))`), because Phase 1
+had no lists, and `bench/references.md` §2 said so in a paragraph headed
+*what is lost: arbitrary length, and with it the `match`/recursion that
+makes the reference 114 keystrokes*. Lists exist now, so that paragraph
+was cashed in. The fixture is
+
+```
+λx0:Num -> Num. λx1:List Num. fold x1 nil (λx2:Num. λx3:List Num. x0 x2 :: x3)
+```
+
+**The denominator did not move.** 114 was hand-counted once on 2026-08-26
+by the method in `bench/references.md` — `i`, then every character of the
+reference pseudocode including newlines, then `Esc`: 1 + 112 + 1 = 114 — and
+that method was applied to the reference text, which has not changed. Only
+the numerator moved, and it moved the wrong way on purpose:
+
+| reference 2 | keystrokes | actions | ratio |
+|---|---:|---:|---:|
+| old fixture (map over a pair, 2026-08-28) | 29 | 35 | 0.25× |
+| new fixture (map over a list, this entry) | 44 | 37 | 0.39× |
+
+Fifteen more keystrokes and a ratio half again as large, for a program that
+now does what reference 2 actually describes. The old 0.25× was charging
+Neovim 114 keystrokes for a `match`-and-recurse function while charging
+`nothing` for a two-element tuple; this entry stops doing that. Two
+approximations remain and are marked `*`: no polymorphism (the map is
+`List Num -> List Num`), and the eliminator is `fold` rather than `match`.
+
+### Keystrokes
+
+| # | Program | Neovim keystrokes | `nothing` keystrokes | `nothing` actions | Ratio | vs. 2026-08-29 (strings) | Guard |
+|---|---------|------------------:|----------------------:|-------------------:|------:|:------------------------:|:-----:|
+| 1 | factorial | 84 | 28 | 33 | 0.33x | unchanged | OK |
+| 2 | list_map * | 114 | 44 | 53 | 0.39x | 0.25x → 0.39x | OK |
+| 3 | record | 65 | 46 | 40 | 0.71x | unchanged | OK |
+| 4 | state_machine * | 151 | 24 | 33 | 0.16x | unchanged | OK |
+| 5 | nested_conditional | 146 | 31 | 42 | 0.21x | unchanged | OK |
+| 6 | greeting * | 127 | 52 | 56 | 0.41x | unchanged | OK |
+
+### Where the 44 keystrokes go
+
+| part of the program | keystrokes |
+|---------------------|-----------:|
+| the four lambdas and their annotations | 25 |
+| `/` and the list argument (`x1`) | 3 |
+| `Tab` `n` — the seed, where `nil` is a candidate and not a key | 3 |
+| `:` — the cons cell | 1 |
+| `space` and the two variable references in the head (`x0`, `x2`) | 7 |
+| `Tab` and the tail reference (`x3`) | 5 |
+
+Twenty-five of the 44 are lambdas and their type annotations, which lists
+did not make more expensive; the list feature itself costs seven keystrokes
+in this program (`/`, `:`, `n`, and the four `[`/`n` characters of the two
+`List Num` annotations). The three new bindings — `:` for cons, `/` for
+fold, `[` for `List` inside an annotation slot — each cost exactly one
+keystroke wherever they appear, and `nil` costs one because it is a
+completion candidate rather than a key (`KEYS.md` item 18).
+
+### Action counts, for comparison with the earlier tables
+
+```
+cargo run -p nothing-bench -- table
+```
+
+| # | Program | Neovim | actions | Ratio | 2026-08-29 actions |
+|---|---------|-------:|--------:|------:|-------------------:|
+| 1 | factorial | 84 | 23 | 0.27x | 23 |
+| 2 | list_map * | 114 | 37 | 0.32x | 22 |
+| 3 | record | 65 | 25 | 0.38x | 25 |
+| 4 | state_machine * | 151 | 24 | 0.16x | 24 |
+| 5 | nested_conditional | 146 | 35 | 0.24x | 35 |
+| 6 | greeting * | 127 | 27 | 0.21x | 27 |
+
+### Guard status: PASS
+
+Worst case is still `record` at **0.71×**. `list_map` moved from the third
+best ratio to the third worst and is still under a seventh of the 3× guard.
+Both tripwires
+(`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
+and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
+cover six programs and pass.

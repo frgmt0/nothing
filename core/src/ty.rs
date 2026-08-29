@@ -7,6 +7,7 @@ pub enum Ty {
     Str,
     Arrow(Box<Ty>, Box<Ty>),
     Prod(Box<Ty>, Box<Ty>),
+    List(Box<Ty>),
     Hole,
 }
 
@@ -50,6 +51,18 @@ fn fmt_prec(ty: &Ty, min_prec: u8, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             }
             Ok(())
         }
+        Ty::List(elem) => {
+            let needs_parens = min_prec > 2;
+            if needs_parens {
+                write!(f, "(")?;
+            }
+            write!(f, "List ")?;
+            fmt_prec(elem, 3, f)?;
+            if needs_parens {
+                write!(f, ")")?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -59,6 +72,7 @@ pub fn is_consistent(a: &Ty, b: &Ty) -> bool {
         (Ty::Num, Ty::Num) | (Ty::Bool, Ty::Bool) | (Ty::Str, Ty::Str) => true,
         (Ty::Arrow(a1, a2), Ty::Arrow(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
         (Ty::Prod(a1, a2), Ty::Prod(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
+        (Ty::List(a), Ty::List(b)) => is_consistent(a, b),
         _ => false,
     }
 }
@@ -77,6 +91,18 @@ pub fn matched_prod(ty: &Ty) -> Option<(Ty, Ty)> {
         Ty::Prod(a, b) => Some((a.as_ref().clone(), b.as_ref().clone())),
         _ => None,
     }
+}
+
+pub fn matched_list(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::Hole => Some(Ty::Hole),
+        Ty::List(elem) => Some(elem.as_ref().clone()),
+        _ => None,
+    }
+}
+
+pub fn list(elem: Ty) -> Ty {
+    Ty::List(Box::new(elem))
 }
 
 #[cfg(test)]
@@ -268,5 +294,51 @@ mod tests {
         assert_eq!(matched_prod(&Ty::Num), None);
         assert_eq!(matched_prod(&Ty::Bool), None);
         assert_eq!(matched_prod(&arrow(Ty::Num, Ty::Bool)), None);
+    }
+
+    #[test]
+    fn display_list_binds_tighter_than_every_infix_type() {
+        assert_eq!(list(Ty::Num).to_string(), "List Num");
+        assert_eq!(list(Ty::Hole).to_string(), "List ?");
+        assert_eq!(arrow(list(Ty::Num), Ty::Num).to_string(), "List Num -> Num");
+        assert_eq!(prod(list(Ty::Num), Ty::Bool).to_string(), "List Num * Bool");
+        assert_eq!(list(list(Ty::Num)).to_string(), "List (List Num)");
+        assert_eq!(
+            list(prod(Ty::Num, Ty::Bool)).to_string(),
+            "List (Num * Bool)"
+        );
+        assert_eq!(
+            list(arrow(Ty::Num, Ty::Num)).to_string(),
+            "List (Num -> Num)"
+        );
+    }
+
+    #[test]
+    fn consistency_of_lists_is_consistency_of_their_elements() {
+        assert!(is_consistent(&list(Ty::Num), &list(Ty::Num)));
+        assert!(is_consistent(&list(Ty::Num), &list(Ty::Hole)));
+        assert!(is_consistent(&list(Ty::Hole), &list(Ty::Num)));
+        assert!(is_consistent(&list(Ty::Num), &Ty::Hole));
+        assert!(is_consistent(&Ty::Hole, &list(Ty::Num)));
+
+        assert!(!is_consistent(&list(Ty::Num), &list(Ty::Bool)));
+        assert!(!is_consistent(&list(Ty::Num), &Ty::Num));
+        assert!(!is_consistent(&list(Ty::Num), &prod(Ty::Num, Ty::Num)));
+        assert!(!is_consistent(&list(list(Ty::Num)), &list(list(Ty::Bool))));
+    }
+
+    #[test]
+    fn matched_list_hole_and_concrete() {
+        assert_eq!(matched_list(&Ty::Hole), Some(Ty::Hole));
+        assert_eq!(matched_list(&list(Ty::Num)), Some(Ty::Num));
+        assert_eq!(matched_list(&list(list(Ty::Bool))), Some(list(Ty::Bool)));
+    }
+
+    #[test]
+    fn matched_list_failure() {
+        assert_eq!(matched_list(&Ty::Num), None);
+        assert_eq!(matched_list(&Ty::Str), None);
+        assert_eq!(matched_list(&arrow(Ty::Num, Ty::Bool)), None);
+        assert_eq!(matched_list(&prod(Ty::Num, Ty::Bool)), None);
     }
 }
