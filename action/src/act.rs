@@ -9,7 +9,7 @@ use nothing_core::names::{
     NameTable, fresh_binder_name, fresh_constructor_name, fresh_definition_name, fresh_field_name,
 };
 use nothing_core::ty::{
-    Ty, matched_arrow, matched_list, matched_prod, matched_record, matched_variant,
+    Ty, matched_arrow, matched_cmd, matched_list, matched_prod, matched_record, matched_variant,
     variant_constructors,
 };
 use nothing_core::typing::{ana, arm_payload_ty, is_comparable, operand_expectation, step_ty, syn};
@@ -44,6 +44,10 @@ pub enum Action {
     ConstructField(Id),
     ConstructInj,
     ConstructMatch,
+    ConstructPrint,
+    ConstructReadline,
+    ConstructPure,
+    ConstructBind,
     ConstructNonEmptyHole,
 
     AddField,
@@ -126,7 +130,13 @@ impl Fresh {
                 self.observe(f);
                 self.observe(a);
             }
-            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
+            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline => {}
+            Exp::Print(e) | Exp::CmdPure(e) => self.observe(e),
+            Exp::CmdBind(command, id, body) => {
+                self.bump_id(*id);
+                self.observe(command);
+                self.observe(body);
+            }
             Exp::BinOp(_, l, r) | Exp::Pair(l, r) | Exp::Cons(l, r) => {
                 self.observe(l);
                 self.observe(r);
@@ -359,6 +369,19 @@ pub fn ctx_and_expected_ty_at_in(scope: &DefScope, zipper: &Zipper) -> (Ctx, Ty)
                 }
             }
 
+            Frame::PrintText => expected = Ty::Str,
+            Frame::PureValue => {
+                expected = matched_cmd(&expected).unwrap_or(Ty::Hole);
+            }
+            Frame::BindCommand(..) => expected = Ty::Cmd(Box::new(Ty::Hole)),
+            Frame::BindBody(id, command) => {
+                let command_ty = syn(&ctx, command).unwrap_or(Ty::Hole);
+                ctx = ctx.extend(*id, matched_cmd(&command_ty).unwrap_or(Ty::Hole));
+                if matched_cmd(&expected).is_none() {
+                    expected = Ty::Cmd(Box::new(Ty::Hole));
+                }
+            }
+
             Frame::NonEmptyHoleBody(_) => expected = Ty::Hole,
         }
     }
@@ -492,6 +515,26 @@ pub fn apply_with_in(
 
         Action::ConstructInj => construct_inj(scope, zipper, fresh, names),
         Action::ConstructMatch => construct_match(scope, zipper, fresh, names),
+
+        Action::ConstructPrint => {
+            construct_wrapping(scope, zipper, Ty::Str, fresh, |text, _| Exp::print(text))
+        }
+        Action::ConstructReadline => construct_leaf(scope, zipper, Exp::readline(), fresh),
+        Action::ConstructPure => construct_wrapping(scope, zipper, Ty::Hole, fresh, |value, _| {
+            Exp::cmd_pure(value)
+        }),
+        Action::ConstructBind => {
+            let id = fresh.id();
+            let built = construct_wrapping(
+                scope,
+                zipper,
+                Ty::Cmd(Box::new(Ty::Hole)),
+                fresh,
+                |command, fresh| Exp::cmd_bind(command, id, Exp::empty_hole(fresh.hole())),
+            );
+            name_new_binder(id, &built, names);
+            built
+        }
 
         Action::AddArm => {
             let ctor = fresh.id();
@@ -747,9 +790,16 @@ fn same_constructor_set(arms: &[(Id, Id, Exp)], target: &[Id]) -> bool {
 
 fn map_children(exp: &Exp, f: &mut dyn FnMut(&Exp) -> Exp) -> Exp {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            exp.clone()
-        }
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Print(e) => Exp::print(f(e)),
+        Exp::CmdPure(e) => Exp::cmd_pure(f(e)),
+        Exp::CmdBind(command, id, body) => Exp::cmd_bind(f(command), *id, f(body)),
         Exp::Lam(id, ty, body) => Exp::lam(*id, ty.clone(), f(body)),
         Exp::Let(id, bound, body) => Exp::let_(*id, f(bound), f(body)),
         Exp::Ap(fun, arg) => Exp::ap(f(fun), f(arg)),
@@ -906,9 +956,13 @@ fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
         children.iter().position(|c| matches!(c, Exp::EmptyHole(_)))
     }
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            None
-        }
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => None,
         Exp::Record(fields) => fields
             .iter()
             .position(|(_, e)| matches!(e, Exp::EmptyHole(_))),
@@ -921,11 +975,14 @@ fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
         | Exp::Proj(_, b)
         | Exp::Field(b, _)
         | Exp::Inj(_, b)
+        | Exp::Print(b)
+        | Exp::CmdPure(b)
         | Exp::NonEmptyHole(_, b) => first(&[b]),
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
         | Exp::Pair(a, b)
+        | Exp::CmdBind(a, _, b)
         | Exp::Cons(a, b) => first(&[a, b]),
         Exp::If(c, t, e) | Exp::Fold(c, t, e) => first(&[c, t, e]),
     }
@@ -1048,6 +1105,7 @@ fn set_binder_id(scope: &DefScope, zipper: Zipper, id: Id) -> Option<Zipper> {
     let updated = match &zipper.focus {
         Exp::Lam(_, ann, body) => Exp::Lam(id, ann.clone(), body.clone()),
         Exp::Let(_, bound, body) => Exp::Let(id, bound.clone(), body.clone()),
+        Exp::CmdBind(command, _, body) => Exp::CmdBind(command.clone(), id, body.clone()),
         _ => return None,
     };
     keep_if_well_typed(scope, zipper.replace_focus(updated))
@@ -2161,8 +2219,12 @@ mod tests {
     fn contains_a_hole(e: &Exp) -> bool {
         match e {
             Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => true,
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => false,
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline => {
+                false
+            }
             Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => contains_a_hole(b),
+            Exp::Print(b) | Exp::CmdPure(b) => contains_a_hole(b),
+            Exp::CmdBind(a, _, b) => contains_a_hole(a) || contains_a_hole(b),
             Exp::Record(fields) => fields.iter().any(|(_, e)| contains_a_hole(e)),
             Exp::Ap(a, b)
             | Exp::BinOp(_, a, b)

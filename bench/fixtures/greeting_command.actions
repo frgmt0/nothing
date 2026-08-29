@@ -1,0 +1,24 @@
+# 7. Greeting command (bench/references.md §7). A command that reads a line
+# of text from whoever runs it and greets them by name:
+#
+#   bind line <- readline in print ("hello, " ++ line)
+#
+# The reference writes the two steps as two lines; `nothing` writes the
+# sequencing as `bind`, which is the same two steps and the same binder.
+
+# bind line <- ⦇⦈ in ⦇⦈
+construct-bind
+move-parent
+rename line
+
+# the command it runs first
+move-child 0
+construct-readline
+
+# and what it does with the line it got
+move-parent
+move-child 1
+construct-print
+construct-str "hello, "
+construct-binop concat
+construct-var line

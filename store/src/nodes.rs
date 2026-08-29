@@ -229,6 +229,34 @@ fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32
             let idx = push_entry(table, hash, 19, payload, child_idxs);
             (idx, hash)
         }
+        Exp::Print(text) => {
+            let (text_idx, text_hash) = build_rec(text, stack, table);
+            let hash = hash_node(20, &[], &[text_hash]);
+            let idx = push_entry(table, hash, 20, vec![], vec![text_idx]);
+            (idx, hash)
+        }
+        Exp::Readline => {
+            let hash = hash_node(21, &[], &[]);
+            let idx = push_entry(table, hash, 21, vec![], vec![]);
+            (idx, hash)
+        }
+        Exp::CmdPure(value) => {
+            let (value_idx, value_hash) = build_rec(value, stack, table);
+            let hash = hash_node(22, &[], &[value_hash]);
+            let idx = push_entry(table, hash, 22, vec![], vec![value_idx]);
+            (idx, hash)
+        }
+        Exp::CmdBind(command, id, body) => {
+            let (command_idx, command_hash) = build_rec(command, stack, table);
+            stack.push(*id);
+            let (body_idx, body_hash) = build_rec(body, stack, table);
+            stack.pop();
+            let hash = hash_node(23, &[], &[command_hash, body_hash]);
+            let mut payload = Vec::new();
+            write_id(&mut payload, *id);
+            let idx = push_entry(table, hash, 23, payload, vec![command_idx, body_idx]);
+            (idx, hash)
+        }
         Exp::EmptyHole(h) => {
             let hash = hash_node(10, &[], &[]);
             let mut payload = Vec::new();
@@ -386,6 +414,15 @@ fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
                 arms.push((ctor, binder, decode_child(entries, entry, which + 1)?));
             }
             Ok(Exp::Match(Box::new(scrutinee), arms))
+        }
+        20 => Ok(Exp::print(decode_child(entries, entry, 0)?)),
+        21 => Ok(Exp::readline()),
+        22 => Ok(Exp::cmd_pure(decode_child(entries, entry, 0)?)),
+        23 => {
+            let id = read_id(&entry.payload, &mut pos)?;
+            let command = decode_child(entries, entry, 0)?;
+            let body = decode_child(entries, entry, 1)?;
+            Ok(Exp::cmd_bind(command, id, body))
         }
         10 => {
             let h = read_hole_id(&entry.payload, &mut pos)?;

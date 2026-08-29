@@ -218,6 +218,10 @@ editing:
   construct-field NAME    e becomes e.NAME, projecting an existing field
   construct-inj           e becomes `C0 e, an injection into a fresh case
   construct-match         e becomes match e {…}, one hole arm per constructor
+  construct-print         e becomes print e, a command that writes text
+  construct-readline      write readline, the command that reads a line
+  construct-pure          e becomes pure e, the command that yields e
+  construct-bind          e becomes bind x <- e in ⦇⦈
   add-arm                 one more constructor, in every match on this variant
   remove-arm              drop this arm, in every match on this variant
   set-constructor NAME    re-aim this injection, or this arm, at another case
@@ -232,7 +236,7 @@ editing:
   set-field-id UUID       re-identify this record's field
   construct-non-empty-hole  e becomes ⦇e⦈
   set-ann TY              set the focused lambda's annotation
-                          TY := Num | Bool | Str | ? | List TY
+                          TY := Num | Bool | Str | ? | List TY | Cmd TY
                                 | TY -> TY | TY * TY | ( TY )
   set-binder-id UUID      re-identify the focused lambda or let binder
   rename NAME             give the focused binder the display name NAME
@@ -312,6 +316,10 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
         "construct-field" => Ok(Step::Field(parse_name(head, rest)?)),
         "construct-inj" => no_arg(Action::ConstructInj),
         "construct-match" => no_arg(Action::ConstructMatch),
+        "construct-print" => no_arg(Action::ConstructPrint),
+        "construct-readline" => no_arg(Action::ConstructReadline),
+        "construct-pure" => no_arg(Action::ConstructPure),
+        "construct-bind" => no_arg(Action::ConstructBind),
         "add-arm" => no_arg(Action::AddArm),
         "remove-arm" => no_arg(Action::RemoveArm),
         "set-constructor" => Ok(Step::PickConstructor(parse_name(head, rest)?)),
@@ -384,6 +392,10 @@ pub fn action_name(action: &Action) -> String {
         Action::ConstructField(id) => format!("construct-field {id}"),
         Action::ConstructInj => "construct-inj".to_string(),
         Action::ConstructMatch => "construct-match".to_string(),
+        Action::ConstructPrint => "construct-print".to_string(),
+        Action::ConstructReadline => "construct-readline".to_string(),
+        Action::ConstructPure => "construct-pure".to_string(),
+        Action::ConstructBind => "construct-bind".to_string(),
         Action::AddArm => "add-arm".to_string(),
         Action::RemoveArm => "remove-arm".to_string(),
         Action::SetConstructor(id) => format!("set-constructor {id}"),
@@ -597,6 +609,7 @@ fn ty_atom(tokens: &[String], pos: &mut usize) -> Result<Ty, ParseError> {
         "str" => Ok(Ty::Str),
         "?" | "hole" => Ok(Ty::Hole),
         "list" => Ok(Ty::List(Box::new(ty_atom(tokens, pos)?))),
+        "cmd" => Ok(Ty::Cmd(Box::new(ty_atom(tokens, pos)?))),
         "(" => {
             let inner = ty_arrow(tokens, pos)?;
             if tokens.get(*pos).map(String::as_str) != Some(")") {

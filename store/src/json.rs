@@ -40,6 +40,7 @@ fn ty_json(ty: &Ty) -> String {
             ty_json(b)
         ),
         Ty::List(elem) => format!("{{\"ty\":\"List\",\"elem\":{}}}", ty_json(elem)),
+        Ty::Cmd(result) => format!("{{\"ty\":\"Cmd\",\"yields\":{}}}", ty_json(result)),
         Ty::Record(fields) => {
             let items: Vec<String> = fields
                 .iter()
@@ -133,6 +134,15 @@ fn exp_json(exp: &Exp) -> String {
             exp_json(e)
         ),
         Exp::Nil => "{\"exp\":\"Nil\"}".to_string(),
+        Exp::Readline => "{\"exp\":\"Readline\"}".to_string(),
+        Exp::Print(text) => format!("{{\"exp\":\"Print\",\"text\":{}}}", exp_json(text)),
+        Exp::CmdPure(value) => format!("{{\"exp\":\"CmdPure\",\"value\":{}}}", exp_json(value)),
+        Exp::CmdBind(command, id, body) => format!(
+            "{{\"exp\":\"CmdBind\",\"command\":{},\"id\":{},\"body\":{}}}",
+            exp_json(command),
+            escape(&id.to_string()),
+            exp_json(body)
+        ),
         Exp::Cons(head, tail) => format!(
             "{{\"exp\":\"Cons\",\"head\":{},\"tail\":{}}}",
             exp_json(head),
@@ -232,6 +242,10 @@ fn action_json(action: &Action) -> String {
         Action::ConstructNil => "{\"action\":\"ConstructNil\"}".to_string(),
         Action::ConstructCons => "{\"action\":\"ConstructCons\"}".to_string(),
         Action::ConstructFold => "{\"action\":\"ConstructFold\"}".to_string(),
+        Action::ConstructPrint => "{\"action\":\"ConstructPrint\"}".to_string(),
+        Action::ConstructReadline => "{\"action\":\"ConstructReadline\"}".to_string(),
+        Action::ConstructPure => "{\"action\":\"ConstructPure\"}".to_string(),
+        Action::ConstructBind => "{\"action\":\"ConstructBind\"}".to_string(),
         Action::ConstructLam => "{\"action\":\"ConstructLam\"}".to_string(),
         Action::ConstructAp => "{\"action\":\"ConstructAp\"}".to_string(),
         Action::ConstructBinOp(op) => format!(

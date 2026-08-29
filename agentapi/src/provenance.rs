@@ -6,8 +6,9 @@ use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, Id, Side};
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    ARM_SEP_STR, ARM_STR, CONS_STR, FIELD_STR, FOLD_STR, INJ_STR, MATCH_STR, NIL_STR, PREC_APP,
-    PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec, op_prec, op_str, quote_str, render_id,
+    ARM_SEP_STR, ARM_STR, BIND_ARROW_STR, BIND_STR, CONS_STR, FIELD_STR, FOLD_STR, INJ_STR,
+    MATCH_STR, NIL_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, PRINT_STR, PURE_STR,
+    Prec, READLINE_STR, op_prec, op_str, quote_str, render_id,
 };
 use nothing_merge::path::{Path, arity, at, child, extend};
 
@@ -125,6 +126,10 @@ fn shallow_key(exp: &Exp) -> String {
                 .collect::<Vec<String>>()
                 .join(",")
         ),
+        Exp::Print(..) => "Print".to_string(),
+        Exp::Readline => "Readline".to_string(),
+        Exp::CmdPure(..) => "CmdPure".to_string(),
+        Exp::CmdBind(_, id, _) => format!("CmdBind:{id}"),
         Exp::EmptyHole(h) => format!("EmptyHole:{h}"),
         Exp::NonEmptyHole(h, _) => format!("NonEmptyHole:{h}"),
     }
@@ -364,11 +369,17 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::Record(_)
         | Exp::Field(_, _)
         | Exp::Match(_, _)
+        | Exp::Readline
         | Exp::Pair(_, _) => PREC_ATOM,
         Exp::Cons(_, _) => PREC_CONS,
-        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) | Exp::Inj(_, _) => PREC_APP,
+        Exp::Ap(_, _)
+        | Exp::Proj(_, _)
+        | Exp::Fold(..)
+        | Exp::Inj(_, _)
+        | Exp::Print(_)
+        | Exp::CmdPure(_) => PREC_APP,
         Exp::BinOp(op, _, _) => op_prec(*op),
-        Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) => PREC_BINDER,
+        Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) | Exp::CmdBind(..) => PREC_BINDER,
     }
 }
 
@@ -467,6 +478,26 @@ impl Marker<'_> {
             }
             Exp::Let(id, ..) => {
                 out.push_str(&format!("let {} = ", render_id(*id, self.names)));
+                self.kid(exp, path, 0, PREC_CMP, class, out);
+                out.push_str(" in ");
+                self.kid(exp, path, 1, PREC_BINDER, class, out);
+            }
+            Exp::Readline => out.push_str(READLINE_STR),
+            Exp::Print(..) => {
+                out.push_str(PRINT_STR);
+                out.push(' ');
+                self.kid(exp, path, 0, PREC_ATOM, class, out);
+            }
+            Exp::CmdPure(..) => {
+                out.push_str(PURE_STR);
+                out.push(' ');
+                self.kid(exp, path, 0, PREC_ATOM, class, out);
+            }
+            Exp::CmdBind(_, id, _) => {
+                out.push_str(&format!(
+                    "{BIND_STR} {} {BIND_ARROW_STR} ",
+                    render_id(*id, self.names)
+                ));
                 self.kid(exp, path, 0, PREC_CMP, class, out);
                 out.push_str(" in ");
                 self.kid(exp, path, 1, PREC_BINDER, class, out);
@@ -722,6 +753,46 @@ mod tests {
                 &Palette::plain()
             ),
             render(&session.exp(), session.names())
+        );
+    }
+
+    #[test]
+    fn a_command_annotates_to_exactly_what_the_ordinary_projection_shows() {
+        let mut session = AgentSession::new(HUMAN);
+        for step in [
+            "construct-bind",
+            "move-parent",
+            "rename line",
+            "move-child 0",
+            "construct-readline",
+            "move-parent",
+            "move-child 1",
+            "construct-print",
+            "construct-var line",
+        ] {
+            assert!(session.apply_text(step).unwrap(), "{step}");
+        }
+        assert_eq!(
+            render(&session.exp(), session.names()),
+            "bind line <- readline in print line"
+        );
+
+        let map = provenance_of(session.base(), &session.applied_entries());
+        assert_eq!(
+            map.len(),
+            paths_of(&session.exp()).len(),
+            "every command node has a provenance slot"
+        );
+        assert_eq!(
+            annotate(
+                &session.exp(),
+                session.names(),
+                &map,
+                &[MODEL],
+                &Palette::plain()
+            ),
+            render(&session.exp(), session.names()),
+            "the marker's command arms agree with the renderer's, character for character"
         );
     }
 

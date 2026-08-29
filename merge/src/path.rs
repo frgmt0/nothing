@@ -18,9 +18,25 @@ pub fn extend(base: &[usize], step: usize) -> Path {
 
 pub fn arity(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 0,
-        Exp::Lam(..) | Exp::Proj(..) | Exp::Field(..) | Exp::NonEmptyHole(..) => 1,
-        Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => 0,
+        Exp::Lam(..)
+        | Exp::Proj(..)
+        | Exp::Field(..)
+        | Exp::Print(..)
+        | Exp::CmdPure(..)
+        | Exp::NonEmptyHole(..) => 1,
+        Exp::Ap(..)
+        | Exp::BinOp(..)
+        | Exp::Let(..)
+        | Exp::Pair(..)
+        | Exp::CmdBind(..)
+        | Exp::Cons(..) => 2,
         Exp::If(..) | Exp::Fold(..) => 3,
         Exp::Record(fields) => fields.len(),
         Exp::Inj(..) => 1,
@@ -52,6 +68,10 @@ pub fn child(exp: &Exp, n: usize) -> Option<&Exp> {
         (Exp::Field(subject, _), 0) => Some(subject),
         (Exp::Record(fields), n) => fields.get(n).map(|(_, value)| value),
         (Exp::Inj(_, payload), 0) => Some(payload),
+        (Exp::Print(text), 0) => Some(text),
+        (Exp::CmdPure(value), 0) => Some(value),
+        (Exp::CmdBind(command, _, _), 0) => Some(command),
+        (Exp::CmdBind(_, _, body), 1) => Some(body),
         (Exp::Match(scrutinee, _), 0) => Some(scrutinee),
         (Exp::Match(_, arms), n) => arms.get(n - 1).map(|(_, _, body)| body),
         _ => None,
@@ -86,6 +106,10 @@ pub fn with_child(exp: &Exp, n: usize, new: Exp) -> Option<Exp> {
             Exp::Record(fields)
         }
         (Exp::Inj(ctor, _), 0) => Exp::Inj(*ctor, Box::new(new)),
+        (Exp::Print(_), 0) => Exp::Print(Box::new(new)),
+        (Exp::CmdPure(_), 0) => Exp::CmdPure(Box::new(new)),
+        (Exp::CmdBind(_, id, body), 0) => Exp::CmdBind(Box::new(new), *id, body.clone()),
+        (Exp::CmdBind(command, id, _), 1) => Exp::CmdBind(command.clone(), *id, Box::new(new)),
         (Exp::Match(_, arms), 0) => Exp::Match(Box::new(new), arms.clone()),
         (Exp::Match(scrutinee, arms), n) if n <= arms.len() => {
             let mut arms = arms.clone();
@@ -149,6 +173,10 @@ pub fn label(exp: &Exp, path: &[usize]) -> String {
             (Exp::Inj(..), _) => "the payload of an injection",
             (Exp::Match(..), 0) => "the subject of a match",
             (Exp::Match(..), _) => "the body of a match arm",
+            (Exp::Print(..), _) => "the text a command prints",
+            (Exp::CmdPure(..), _) => "the value a command yields",
+            (Exp::CmdBind(..), 0) => "the command a bind performs first",
+            (Exp::CmdBind(..), _) => "what a bind does with the result",
             _ => "an unreachable position",
         };
         words.push(word);

@@ -75,6 +75,23 @@ fn build(target: &Exp, actions: &mut Vec<Action>) {
             build_children(&[list, init, step], actions);
         }
 
+        Exp::Print(text) => {
+            actions.push(Action::ConstructPrint);
+            build_children(&[text], actions);
+        }
+        Exp::Readline => actions.push(Action::ConstructReadline),
+        Exp::CmdPure(value) => {
+            actions.push(Action::ConstructPure);
+            build_children(&[value], actions);
+        }
+        Exp::CmdBind(command, id, body) => {
+            actions.push(Action::ConstructBind);
+            actions.push(Action::MoveParent);
+            actions.push(Action::SetBinderId(*id));
+            actions.push(Action::MoveChild(0));
+            build_children(&[command, body], actions);
+        }
+
         Exp::Record(fields) => {
             actions.push(Action::ConstructNonEmptyHole);
             actions.push(Action::ConstructRecord);
@@ -188,6 +205,12 @@ fn canonical_hole_ids(exp: &Exp) -> Exp {
             Exp::Bool(b) => Exp::Bool(*b),
             Exp::Str(text) => Exp::Str(text.clone()),
             Exp::Nil => Exp::Nil,
+            Exp::Readline => Exp::Readline,
+            Exp::Print(text) => Exp::print(go(text, next)),
+            Exp::CmdPure(value) => Exp::cmd_pure(go(value, next)),
+            Exp::CmdBind(command, id, body) => {
+                Exp::cmd_bind(go(command, next), *id, go(body, next))
+            }
             Exp::EmptyHole(_) => Exp::EmptyHole(fresh()),
             Exp::NonEmptyHole(_, inner) => {
                 let h = fresh();
@@ -231,13 +254,15 @@ fn eq_up_to_hole_ids(x: &Exp, y: &Exp) -> bool {
 fn is_hole_free(exp: &Exp) -> bool {
     match exp {
         Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => false,
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => true,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline => true,
         Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => is_hole_free(b),
+        Exp::Print(b) | Exp::CmdPure(b) => is_hole_free(b),
         Exp::Record(fields) => fields.iter().all(|(_, e)| is_hole_free(e)),
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
         | Exp::Pair(a, b)
+        | Exp::CmdBind(a, _, b)
         | Exp::Cons(a, b) => is_hole_free(a) && is_hole_free(b),
         Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
             is_hole_free(c) && is_hole_free(t) && is_hole_free(e)
@@ -463,6 +488,20 @@ fn the_targets_cover_the_hard_cases() {
                 survey(inner, seen);
             }
             Exp::Nil => note("Nil", seen),
+            Exp::Readline => note("Readline", seen),
+            Exp::Print(text) => {
+                note("Print", seen);
+                survey(text, seen);
+            }
+            Exp::CmdPure(value) => {
+                note("CmdPure", seen);
+                survey(value, seen);
+            }
+            Exp::CmdBind(command, _, body) => {
+                note("CmdBind", seen);
+                survey(command, seen);
+                survey(body, seen);
+            }
             Exp::Cons(head, tail) => {
                 note("Cons", seen);
                 survey(head, seen);
@@ -539,6 +578,10 @@ fn the_targets_cover_the_hard_cases() {
         "Inj",
         "Match",
         "WideMatch",
+        "Print",
+        "Readline",
+        "CmdPure",
+        "CmdBind",
     ] {
         assert!(
             seen.contains(&form),

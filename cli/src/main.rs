@@ -17,7 +17,7 @@ Usage: nothing <command> [args]
 
 Commands:
   edit <file>            open <file> in the TUI editor
-  run <file>             evaluate <file> and print the outcome
+  run <file>             evaluate <file>, or perform it if it is a command
   check <file>           check <file> is well-typed
   repl                   the action-name REPL
   protocol               speak the JSON agent protocol over stdio
@@ -54,7 +54,7 @@ fn dispatch(args: &[String]) -> u8 {
             0
         }
         "edit" => run_file_command(rest, edit::HELP, edit::run),
-        "run" => run_file_command(rest, run_cmd::HELP, run_cmd::run),
+        "run" => run_command(rest),
         "check" => run_file_command(rest, check::HELP, check::run),
         "repl" => {
             if wants_help(rest) {
@@ -89,6 +89,54 @@ fn run_file_command(args: &[String], help: &str, f: fn(&std::path::Path) -> i32)
         None => {
             eprintln!("error: missing <file>");
             eprintln!("{help}");
+            1
+        }
+    }
+}
+
+fn run_command(args: &[String]) -> u8 {
+    if wants_help(args) {
+        println!("{}", run_cmd::HELP);
+        return 0;
+    }
+
+    let mut fuel = nothing_eval::DEFAULT_FUEL;
+    let mut path: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--fuel" {
+            let Some(text) = args.get(i + 1) else {
+                eprintln!("error: `--fuel` needs a number of steps");
+                eprintln!("{}", run_cmd::HELP);
+                return 1;
+            };
+            match text.parse::<usize>() {
+                Ok(0) => {
+                    eprintln!("error: `--fuel 0` would not let the program take a single step");
+                    return 1;
+                }
+                Ok(n) => fuel = n,
+                Err(_) => {
+                    eprintln!("error: `--fuel {text}` is not a number of steps");
+                    return 1;
+                }
+            }
+            i += 2;
+        } else if path.is_none() {
+            path = Some(PathBuf::from(&args[i]));
+            i += 1;
+        } else {
+            eprintln!("error: `run` takes one file, and was given more than one");
+            eprintln!("{}", run_cmd::HELP);
+            return 1;
+        }
+    }
+
+    match path {
+        Some(path) => run_cmd::run_with_fuel(&path, fuel) as u8,
+        None => {
+            eprintln!("error: missing <file>");
+            eprintln!("{}", run_cmd::HELP);
             1
         }
     }

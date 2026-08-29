@@ -59,6 +59,16 @@ pub fn phrase(exp: &Exp, names: &NameTable) -> String {
         Exp::Field(subject, id) => {
             format!("the {} of {}", names.display(*id), phrase(subject, names))
         }
+        Exp::Print(text) => print_phrase(&phrase(text, names)),
+        Exp::Readline => readline_phrase(),
+        Exp::CmdPure(value) => pure_phrase(&phrase(value, names)),
+        Exp::CmdBind(command, id, body) => bind_phrase(
+            &phrase(command, names),
+            *id,
+            nothing_core::doc::references(body, *id),
+            &phrase(body, names),
+            names,
+        ),
         Exp::Inj(ctor, payload) => inj_phrase(*ctor, &phrase(payload, names), names),
         Exp::Match(scrutinee, arms) => {
             let parts: Vec<String> = arms
@@ -67,6 +77,35 @@ pub fn phrase(exp: &Exp, names: &NameTable) -> String {
                 .collect();
             match_phrase(&phrase(scrutinee, names), &parts)
         }
+    }
+}
+
+fn print_phrase(text: &str) -> String {
+    format!("print {text}")
+}
+
+fn readline_phrase() -> String {
+    "read a line of text from whoever runs this".to_string()
+}
+
+fn pure_phrase(value: &str) -> String {
+    format!("do nothing and hand back {value}")
+}
+
+fn bind_phrase(
+    command: &str,
+    id: Id,
+    uses_the_result: bool,
+    body: &str,
+    names: &NameTable,
+) -> String {
+    if uses_the_result {
+        format!(
+            "{command}, then with the result named {}, {body}",
+            names.display(id)
+        )
+    } else {
+        format!("{command}, then, ignoring the result, {body}")
     }
 }
 
@@ -142,6 +181,7 @@ pub fn ty_phrase(ty: &Ty) -> String {
             1 => "a choice with 1 case".to_string(),
             n => format!("a choice between {n} cases"),
         },
+        Ty::Cmd(result) => format!("a command that produces {}", ty_phrase(result)),
     }
 }
 
@@ -201,6 +241,18 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
             phrase(list, names),
             phrase(init, names)
         ),
+        Frame::PrintText => print_phrase(child),
+        Frame::PureValue => pure_phrase(child),
+        Frame::BindCommand(id, body) => bind_phrase(
+            child,
+            *id,
+            nothing_core::doc::references(body, *id),
+            &phrase(body, names),
+            names,
+        ),
+        Frame::BindBody(id, command) => {
+            bind_phrase(&phrase(command, names), *id, true, child, names)
+        }
         Frame::NonEmptyHoleBody(_) => format!("(not yet fitting: {child})"),
         Frame::RecordField(others, index, id) => {
             let mut parts: Vec<String> = others
@@ -436,6 +488,51 @@ mod tests {
             ),
             "combining 1 in front of 2 in front of 3 in front of an empty list, \
              starting from 0, with _00000000"
+        );
+    }
+
+    #[test]
+    fn a_command_reads_as_something_to_do_and_a_bind_reads_as_then() {
+        let mut names = names();
+        let line = nothing_core::exp::Id::from_u128(0x11e);
+        names.set(line, "line");
+
+        assert_eq!(
+            phrase(&Exp::print(Exp::str_("hi")), &names),
+            "print the text \"hi\""
+        );
+        assert_eq!(
+            phrase(&Exp::readline(), &names),
+            "read a line of text from whoever runs this"
+        );
+        assert_eq!(
+            phrase(&Exp::cmd_pure(Exp::num(1)), &names),
+            "do nothing and hand back 1"
+        );
+        assert_eq!(
+            ty_phrase(&Ty::Cmd(Box::new(Ty::Str))),
+            "a command that produces a piece of text"
+        );
+
+        assert_eq!(
+            phrase(
+                &Exp::cmd_bind(Exp::readline(), line, Exp::print(Exp::var(line))),
+                &names
+            ),
+            "read a line of text from whoever runs this, then with the result named line, \
+             print line"
+        );
+        assert_eq!(
+            phrase(
+                &Exp::cmd_bind(
+                    Exp::print(Exp::str_("first")),
+                    line,
+                    Exp::print(Exp::str_("second"))
+                ),
+                &names
+            ),
+            "print the text \"first\", then, ignoring the result, print the text \"second\"",
+            "a bind whose binder is never mentioned is what another language would call seq"
         );
     }
 

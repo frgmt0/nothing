@@ -12,6 +12,7 @@ pub enum Ty {
     List(Box<Ty>),
     Record(Vec<(Id, Ty)>),
     Variant(Vec<(Id, Ty)>),
+    Cmd(Box<Ty>),
     Hole,
 }
 
@@ -67,6 +68,18 @@ fn fmt_prec(ty: &Ty, min_prec: u8, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             }
             Ok(())
         }
+        Ty::Cmd(result) => {
+            let needs_parens = min_prec > 2;
+            if needs_parens {
+                write!(f, "(")?;
+            }
+            write!(f, "Cmd ")?;
+            fmt_prec(result, 3, f)?;
+            if needs_parens {
+                write!(f, ")")?;
+            }
+            Ok(())
+        }
         Ty::Record(fields) => {
             write!(f, "{{")?;
             for (i, (id, ty)) in fields.iter().enumerate() {
@@ -99,6 +112,7 @@ pub fn is_consistent(a: &Ty, b: &Ty) -> bool {
         (Ty::Arrow(a1, a2), Ty::Arrow(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
         (Ty::Prod(a1, a2), Ty::Prod(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
         (Ty::List(a), Ty::List(b)) => is_consistent(a, b),
+        (Ty::Cmd(a), Ty::Cmd(b)) => is_consistent(a, b),
         (Ty::Record(a), Ty::Record(b)) => {
             a.len() == b.len()
                 && a.iter().all(|(id, left)| {
@@ -136,6 +150,14 @@ pub fn matched_list(ty: &Ty) -> Option<Ty> {
     match ty {
         Ty::Hole => Some(Ty::Hole),
         Ty::List(elem) => Some(elem.as_ref().clone()),
+        _ => None,
+    }
+}
+
+pub fn matched_cmd(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::Hole => Some(Ty::Hole),
+        Ty::Cmd(result) => Some(result.as_ref().clone()),
         _ => None,
     }
 }
@@ -195,6 +217,10 @@ pub fn unit() -> Ty {
 
 pub fn list(elem: Ty) -> Ty {
     Ty::List(Box::new(elem))
+}
+
+pub fn cmd(result: Ty) -> Ty {
+    Ty::Cmd(Box::new(result))
 }
 
 #[cfg(test)]
@@ -593,6 +619,48 @@ mod tests {
             variant([(f(1), Ty::Num), (f(2), Ty::Str)]).to_string(),
             format!("[#{}: Num | #{}: Str]", f(1).short(), f(2).short())
         );
+    }
+
+    #[test]
+    fn a_command_type_prints_like_a_list_because_it_is_the_same_shape() {
+        assert_eq!(cmd(Ty::Str).to_string(), "Cmd Str");
+        assert_eq!(cmd(unit()).to_string(), "Cmd {}");
+        assert_eq!(cmd(Ty::Hole).to_string(), "Cmd ?");
+        assert_eq!(cmd(cmd(Ty::Num)).to_string(), "Cmd (Cmd Num)");
+        assert_eq!(cmd(list(Ty::Num)).to_string(), "Cmd (List Num)");
+        assert_eq!(list(cmd(Ty::Num)).to_string(), "List (Cmd Num)");
+        assert_eq!(arrow(Ty::Str, cmd(Ty::Num)).to_string(), "Str -> Cmd Num");
+        assert_eq!(cmd(arrow(Ty::Num, Ty::Num)).to_string(), "Cmd (Num -> Num)");
+    }
+
+    #[test]
+    fn consistency_of_commands_is_consistency_of_what_they_yield() {
+        assert!(is_consistent(&cmd(Ty::Str), &cmd(Ty::Str)));
+        assert!(is_consistent(&cmd(Ty::Str), &cmd(Ty::Hole)));
+        assert!(is_consistent(&cmd(Ty::Hole), &cmd(Ty::Str)));
+        assert!(is_consistent(&cmd(Ty::Str), &Ty::Hole));
+        assert!(is_consistent(&Ty::Hole, &cmd(Ty::Str)));
+
+        assert!(!is_consistent(&cmd(Ty::Str), &cmd(Ty::Num)));
+        assert!(
+            !is_consistent(&cmd(Ty::Str), &Ty::Str),
+            "a command that yields text is not text"
+        );
+        assert!(!is_consistent(&cmd(Ty::Num), &list(Ty::Num)));
+        assert!(!is_consistent(&cmd(unit()), &unit()));
+    }
+
+    #[test]
+    fn matched_cmd_fails_open_on_the_unknown_type_like_every_other_matched_rule() {
+        assert_eq!(matched_cmd(&Ty::Hole), Some(Ty::Hole));
+        assert_eq!(matched_cmd(&cmd(Ty::Str)), Some(Ty::Str));
+        assert_eq!(matched_cmd(&cmd(cmd(Ty::Num))), Some(cmd(Ty::Num)));
+        assert_eq!(matched_cmd(&cmd(unit())), Some(unit()));
+
+        assert_eq!(matched_cmd(&Ty::Str), None);
+        assert_eq!(matched_cmd(&list(Ty::Str)), None);
+        assert_eq!(matched_cmd(&arrow(Ty::Num, Ty::Num)), None);
+        assert_eq!(matched_cmd(&record([])), None);
     }
 
     #[test]

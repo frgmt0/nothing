@@ -108,9 +108,13 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
     match d {
         Dyn::Var(id) => defs.get(id).cloned(),
 
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::Nil | Dyn::EmptyHole(..) => {
-            None
-        }
+        Dyn::Num(_)
+        | Dyn::Bool(_)
+        | Dyn::Str(_)
+        | Dyn::Lam(..)
+        | Dyn::Nil
+        | Dyn::Readline
+        | Dyn::EmptyHole(..) => None,
 
         Dyn::Ap(fun, arg) => step_ap(defs, fun, arg),
 
@@ -135,6 +139,14 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
         Dyn::Inj(ctor, payload) => step_inj(defs, *ctor, payload),
 
         Dyn::Match(scrutinee, arms) => step_match(defs, scrutinee, arms),
+
+        Dyn::Print(text) => step_in(defs, text).map(|stepped| Dyn::Print(Box::new(stepped))),
+
+        Dyn::CmdPure(value) => step_in(defs, value).map(|stepped| Dyn::CmdPure(Box::new(stepped))),
+
+        Dyn::CmdBind(command, id, body) => {
+            step_in(defs, command).map(|stepped| Dyn::CmdBind(Box::new(stepped), *id, body.clone()))
+        }
 
         Dyn::NonEmptyHole(h, env, inner) => step_hole(defs, *h, env, inner),
     }
@@ -358,11 +370,15 @@ pub fn run(start: Dyn, fuel: usize) -> Outcome {
 }
 
 pub fn run_in(defs: &Defs, start: Dyn, fuel: usize) -> Outcome {
+    run_in_counted(defs, start, fuel).0
+}
+
+pub fn run_in_counted(defs: &Defs, start: Dyn, fuel: usize) -> (Outcome, usize) {
     let mut d = start;
     let mut steps = 0;
     while steps < fuel {
         match step_in(defs, &d) {
-            None => return settle(d),
+            None => return (settle(d), steps),
             Some(next) => {
                 d = next;
                 steps += 1;
@@ -370,8 +386,8 @@ pub fn run_in(defs: &Defs, start: Dyn, fuel: usize) -> Outcome {
         }
     }
     match step_in(defs, &d) {
-        None => settle(d),
-        Some(_) => Outcome::OutOfFuel { partial: d, steps },
+        None => (settle(d), steps),
+        Some(_) => (Outcome::OutOfFuel { partial: d, steps }, steps),
     }
 }
 
@@ -415,7 +431,12 @@ fn collect(d: &Dyn, out: &mut Vec<Blocked>) {
             collect(init, out);
             collect(folder, out);
         }
-        Dyn::Proj(_, inner) | Dyn::Field(inner, _) | Dyn::Inj(_, inner) => collect(inner, out),
+        Dyn::Proj(_, inner)
+        | Dyn::Field(inner, _)
+        | Dyn::Inj(_, inner)
+        | Dyn::Print(inner)
+        | Dyn::CmdPure(inner) => collect(inner, out),
+        Dyn::CmdBind(command, _, _) => collect(command, out),
         Dyn::Match(scrutinee, _) => collect(scrutinee, out),
         Dyn::Record(fields) => {
             for (_, value) in fields {
@@ -423,7 +444,13 @@ fn collect(d: &Dyn, out: &mut Vec<Blocked>) {
             }
         }
 
-        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::Lam(..) => {}
+        Dyn::Var(_)
+        | Dyn::Num(_)
+        | Dyn::Bool(_)
+        | Dyn::Str(_)
+        | Dyn::Nil
+        | Dyn::Readline
+        | Dyn::Lam(..) => {}
     }
 }
 
@@ -1041,6 +1068,55 @@ mod tests {
             seen.push(render(&d, &names()));
         }
         assert_eq!(seen, vec!["2 * 3 + 4", "6 + 4", "10"]);
+    }
+
+    #[test]
+    fn a_finished_command_is_a_value_and_pure_evaluation_does_not_perform_it() {
+        let program = Exp::cmd_bind(
+            Exp::print(Exp::bin_op(
+                Op::Concat,
+                Exp::str_("hello, "),
+                Exp::str_("world"),
+            )),
+            x(),
+            Exp::cmd_bind(Exp::readline(), y(), Exp::print(Exp::var(y()))),
+        );
+        assert!(is_well_typed(&program));
+
+        let outcome = eval(&program);
+        assert!(
+            outcome.is_value(),
+            "a bind chain with nothing left to compute is a value: {:?}",
+            outcome
+        );
+        assert_eq!(
+            render(outcome.dyn_result(), &names()),
+            "bind x <- print \"hello, world\" in bind y <- readline in print y",
+            "the only reduction that happened is inside print's argument — the command \
+             itself was not performed"
+        );
+        assert!(crate::dynamic::is_value(outcome.dyn_result()));
+    }
+
+    #[test]
+    fn a_command_whose_argument_is_blocked_is_indeterminate_rather_than_a_value() {
+        let program = Exp::cmd_bind(
+            Exp::print(Exp::empty_hole(h(4))),
+            x(),
+            Exp::cmd_pure(Exp::num(1)),
+        );
+        let outcome = eval(&program);
+        assert!(outcome.is_indeterminate());
+        assert_eq!(outcome.blocked().len(), 1);
+        assert_eq!(outcome.blocked()[0].hole, h(4));
+
+        let unwritten = Exp::cmd_bind(Exp::empty_hole(h(5)), x(), Exp::cmd_pure(Exp::num(1)));
+        let outcome = eval(&unwritten);
+        assert!(
+            outcome.is_indeterminate(),
+            "a bind whose command is a hole is not a finished command"
+        );
+        assert_eq!(outcome.blocked()[0].hole, h(5));
     }
 
     #[test]

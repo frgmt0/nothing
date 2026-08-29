@@ -1,0 +1,43 @@
+# 7. Greeting command — bench/references.md §7:
+#
+#   bind line <- readline in print ("hello, " ++ line)
+#
+# A command that reads a line and greets whoever typed it. `>` is bind and
+# lands in the binder-name slot; `=` steps into the command it sequences;
+# `readline` is a completion candidate rather than a key, so it is spelled.
+
+# bind line <- ⦇⦈ in ⦇⦈, naming the binder as it is created
+>
+l
+i
+n
+e
+
+# the first step: the completion commits `readline` as it is typed
+=
+r
+e
+a
+d
+l
+i
+n
+e
+
+# the second step: print the greeting built around the line that was read
+tab
+$
+"
+h
+e
+l
+l
+o
+,
+space
+"
+&
+l
+i
+n
+e

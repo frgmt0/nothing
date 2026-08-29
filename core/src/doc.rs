@@ -170,7 +170,13 @@ pub fn references(exp: &Exp, target: Id) -> bool {
                     .any(|(_, binder, body)| *binder != target && references(body, target))
         }
         Exp::NonEmptyHole(_, e) => references(e, target),
-        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => false,
+        Exp::Print(e) | Exp::CmdPure(e) => references(e, target),
+        Exp::CmdBind(command, id, body) => {
+            references(command, target) || (*id != target && references(body, target))
+        }
+        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline | Exp::EmptyHole(_) => {
+            false
+        }
     }
 }
 
@@ -197,13 +203,19 @@ pub fn constructor_ids(exp: &Exp) -> Vec<Id> {
                     walk(e, out);
                 }
             }
-            Exp::Lam(_, _, e) | Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => {
+            Exp::Lam(_, _, e)
+            | Exp::Proj(_, e)
+            | Exp::Field(e, _)
+            | Exp::Print(e)
+            | Exp::CmdPure(e)
+            | Exp::NonEmptyHole(_, e) => {
                 walk(e, out);
             }
             Exp::Ap(a, b)
             | Exp::BinOp(_, a, b)
             | Exp::Pair(a, b)
             | Exp::Cons(a, b)
+            | Exp::CmdBind(a, _, b)
             | Exp::Let(_, a, b) => {
                 walk(a, out);
                 walk(b, out);
@@ -218,6 +230,7 @@ pub fn constructor_ids(exp: &Exp) -> Vec<Id> {
             | Exp::Bool(_)
             | Exp::Str(_)
             | Exp::Nil
+            | Exp::Readline
             | Exp::EmptyHole(_) => {}
         }
     }
@@ -250,11 +263,16 @@ pub fn field_ids(exp: &Exp) -> Vec<Id> {
                     walk(body, out);
                 }
             }
-            Exp::Lam(_, _, e) | Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => walk(e, out),
+            Exp::Lam(_, _, e)
+            | Exp::Proj(_, e)
+            | Exp::Print(e)
+            | Exp::CmdPure(e)
+            | Exp::NonEmptyHole(_, e) => walk(e, out),
             Exp::Ap(a, b)
             | Exp::BinOp(_, a, b)
             | Exp::Pair(a, b)
             | Exp::Cons(a, b)
+            | Exp::CmdBind(a, _, b)
             | Exp::Let(_, a, b) => {
                 walk(a, out);
                 walk(b, out);
@@ -269,6 +287,7 @@ pub fn field_ids(exp: &Exp) -> Vec<Id> {
             | Exp::Bool(_)
             | Exp::Str(_)
             | Exp::Nil
+            | Exp::Readline
             | Exp::EmptyHole(_) => {}
         }
     }
@@ -282,6 +301,8 @@ pub fn projects(exp: &Exp, field: Id) -> bool {
         Exp::Field(e, id) => *id == field || projects(e, field),
         Exp::Record(fields) => fields.iter().any(|(_, e)| projects(e, field)),
         Exp::Lam(_, _, e) | Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => projects(e, field),
+        Exp::Print(e) | Exp::CmdPure(e) => projects(e, field),
+        Exp::CmdBind(a, _, b) => projects(a, field) || projects(b, field),
         Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Pair(a, b) | Exp::Cons(a, b) => {
             projects(a, field) || projects(b, field)
         }
@@ -293,17 +314,32 @@ pub fn projects(exp: &Exp, field: Id) -> bool {
         Exp::If(a, b, c) | Exp::Fold(a, b, c) => {
             projects(a, field) || projects(b, field) || projects(c, field)
         }
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            false
-        }
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => false,
     }
 }
 
 pub fn quarantine_projections(exp: &Exp, field: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            exp.clone()
-        }
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Print(e) => Exp::print(quarantine_projections(e, field, fresh)),
+        Exp::CmdPure(e) => Exp::cmd_pure(quarantine_projections(e, field, fresh)),
+        Exp::CmdBind(command, id, body) => Exp::cmd_bind(
+            quarantine_projections(command, field, fresh),
+            *id,
+            quarantine_projections(body, field, fresh),
+        ),
         Exp::Lam(id, ty, body) => {
             Exp::lam(*id, ty.clone(), quarantine_projections(body, field, fresh))
         }
@@ -369,8 +405,23 @@ pub fn quarantine_projections(exp: &Exp, field: Id, fresh: &mut dyn FnMut() -> H
 pub fn vacate(exp: &Exp, target: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
     match exp {
         Exp::Var(id) if *id == target => Exp::empty_hole(fresh()),
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            exp.clone()
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Print(e) => Exp::print(vacate(e, target, fresh)),
+        Exp::CmdPure(e) => Exp::cmd_pure(vacate(e, target, fresh)),
+        Exp::CmdBind(command, id, body) => {
+            let command = vacate(command, target, fresh);
+            let body = if *id == target {
+                (**body).clone()
+            } else {
+                vacate(body, target, fresh)
+            };
+            Exp::cmd_bind(command, *id, body)
         }
         Exp::Lam(id, ty, body) => {
             if *id == target {

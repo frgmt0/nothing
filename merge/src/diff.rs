@@ -63,6 +63,12 @@ pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
         }
         (Exp::Field(s1, f1), Exp::Field(s2, f2)) => f1 == f2 && structurally_equal(s1, s2),
         (Exp::Inj(c1, p1), Exp::Inj(c2, p2)) => c1 == c2 && structurally_equal(p1, p2),
+        (Exp::Print(t1), Exp::Print(t2)) => structurally_equal(t1, t2),
+        (Exp::Readline, Exp::Readline) => true,
+        (Exp::CmdPure(v1), Exp::CmdPure(v2)) => structurally_equal(v1, v2),
+        (Exp::CmdBind(c1, x, body1), Exp::CmdBind(c2, y, body2)) => {
+            x == y && structurally_equal(c1, c2) && structurally_equal(body1, body2)
+        }
         (Exp::Match(s1, arms1), Exp::Match(s2, arms2)) => {
             structurally_equal(s1, s2)
                 && arms1.len() == arms2.len()

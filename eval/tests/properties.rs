@@ -11,8 +11,13 @@ fn holes(exp: &Exp) -> usize {
     match exp {
         Exp::EmptyHole(_) => 1,
         Exp::NonEmptyHole(_, inner) => 1 + holes(inner),
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => 0,
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::Inj(_, b) => holes(b),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline => 0,
+        Exp::Lam(_, _, b)
+        | Exp::Proj(_, b)
+        | Exp::Field(b, _)
+        | Exp::Inj(_, b)
+        | Exp::Print(b)
+        | Exp::CmdPure(b) => holes(b),
         Exp::Record(fields) => fields.iter().map(|(_, value)| holes(value)).sum(),
         Exp::Match(scrutinee, arms) => {
             holes(scrutinee) + arms.iter().map(|(_, _, body)| holes(body)).sum::<usize>()
@@ -21,6 +26,7 @@ fn holes(exp: &Exp) -> usize {
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
         | Exp::Pair(a, b)
+        | Exp::CmdBind(a, _, b)
         | Exp::Cons(a, b) => holes(a) + holes(b),
         Exp::If(c, t, e) | Exp::Fold(c, t, e) => holes(c) + holes(t) + holes(e),
     }
@@ -66,15 +72,23 @@ fn free_vars(
             free_vars(t, bound, out);
             free_vars(e, bound, out);
         }
-        Dyn::Proj(_, inner) | Dyn::Field(inner, _) | Dyn::NonEmptyHole(_, _, inner) => {
-            free_vars(inner, bound, out)
+        Dyn::Proj(_, inner)
+        | Dyn::Field(inner, _)
+        | Dyn::Print(inner)
+        | Dyn::CmdPure(inner)
+        | Dyn::NonEmptyHole(_, _, inner) => free_vars(inner, bound, out),
+        Dyn::CmdBind(command, id, body) => {
+            free_vars(command, bound, out);
+            bound.push(*id);
+            free_vars(body, bound, out);
+            bound.pop();
         }
         Dyn::Record(fields) => {
             for (_, value) in fields {
                 free_vars(value, bound, out);
             }
         }
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil => {}
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::Readline => {}
         Dyn::EmptyHole(_, env) => {
             for (id, value) in env.iter() {
                 if value != &Dyn::Var(*id) {

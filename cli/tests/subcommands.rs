@@ -5,7 +5,7 @@ use nothing_action::log::ActionLog;
 use nothing_agentapi::json::parse;
 use nothing_core::doc::{Def, Doc};
 use nothing_core::examples;
-use nothing_core::exp::{Exp, Id};
+use nothing_core::exp::{Exp, HoleId, Id};
 use nothing_core::names::NameTable;
 use nothing_core::ty::Ty;
 use nothing_merge::{DocVersion, merge_documents};
@@ -372,6 +372,140 @@ fn run_lists_the_definitions_when_there_is_no_main() {
     assert!(said.contains("no definition named `main`"), "{said}");
     assert!(said.contains("factorial"), "{said}");
     assert!(said.contains("Num -> Num"), "{said}");
+}
+
+fn command_document(name: &str, body: Exp) -> std::path::PathBuf {
+    let main = Id::fresh();
+    let mut names = NameTable::new();
+    names.set(main, "main");
+    write_document(name, vec![Def::new(main, Ty::Hole, body)], names)
+}
+
+#[test]
+fn run_performs_a_command_and_prints_only_what_the_command_printed() {
+    let path = command_document(
+        "run-hello-command.nothing",
+        Exp::cmd_bind(
+            Exp::print(Exp::str_("hello,")),
+            Id::fresh(),
+            Exp::print(Exp::str_("world")),
+        ),
+    );
+    let (code, stdout, stderr) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout} stderr: {stderr}");
+    assert_eq!(
+        stdout, "hello,\nworld\n",
+        "a command run writes what it printed and nothing else"
+    );
+}
+
+#[test]
+fn run_performs_the_print_before_a_hole_skips_the_one_after_it_and_names_the_hole() {
+    let hole = HoleId::fresh();
+    let path = command_document(
+        "run-print-hole-print.nothing",
+        Exp::cmd_bind(
+            Exp::print(Exp::str_("first")),
+            Id::fresh(),
+            Exp::cmd_bind(
+                Exp::empty_hole(hole),
+                Id::fresh(),
+                Exp::print(Exp::str_("second")),
+            ),
+        ),
+    );
+    let (code, stdout, stderr) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 2, "stdout: {stdout} stderr: {stderr}");
+
+    let printed: Vec<&str> = stdout
+        .lines()
+        .take_while(|line| !line.starts_with("indeterminate"))
+        .collect();
+    assert_eq!(
+        printed,
+        vec!["first"],
+        "exactly the print before the hole happened"
+    );
+    assert!(
+        !stdout.contains("second\n"),
+        "the print after the hole did not happen: {stdout}"
+    );
+    assert!(stdout.contains("blocked on hole"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("{hole:?}")),
+        "the report names the hole {hole:?}: {stdout}"
+    );
+    assert!(
+        stdout.contains("print \"second\""),
+        "the residual is the part that has not run: {stdout}"
+    );
+}
+
+#[test]
+fn run_reads_a_line_from_standard_input() {
+    let line = Id::fresh();
+    let path = command_document(
+        "run-greeting-command.nothing",
+        Exp::cmd_bind(
+            Exp::readline(),
+            line,
+            Exp::print(Exp::bin_op(
+                nothing_core::exp::Op::Concat,
+                Exp::str_("hello, "),
+                Exp::var(line),
+            )),
+        ),
+    );
+    let mut child = Command::new(bin())
+        .args(["run", path.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("the nothing binary runs");
+    child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(b"Grace\n")
+        .expect("the program reads its input");
+    let out = child.wait_with_output().expect("the run finishes");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello, Grace\n");
+}
+
+#[test]
+fn run_stops_an_endless_command_at_its_fuel_budget_instead_of_hanging() {
+    let main = Id::fresh();
+    let mut names = NameTable::new();
+    names.set(main, "main");
+    let body = Exp::cmd_bind(Exp::print(Exp::str_("x")), Id::fresh(), Exp::var(main));
+    let path = write_document(
+        "run-endless-command.nothing",
+        vec![Def::new(main, Ty::Hole, body)],
+        names,
+    );
+
+    let (code, stdout, stderr) = run(&["run", "--fuel", "60", path.to_str().unwrap()]);
+    assert_eq!(code, 3, "stdout: {stdout} stderr: {stderr}");
+    assert!(stdout.contains("out of fuel"), "{stdout}");
+    assert!(stdout.contains("--fuel"), "{stdout}");
+    let printed = stdout.lines().filter(|line| *line == "x").count();
+    assert!(
+        printed > 0 && printed < 60,
+        "the loop printed {printed} lines before its budget ran out"
+    );
+}
+
+#[test]
+fn run_rejects_a_fuel_budget_that_is_not_a_number_of_steps() {
+    let path = command_document("run-fuel-argument.nothing", Exp::print(Exp::str_("hi")));
+    let (code, _, stderr) = run(&["run", "--fuel", "plenty", path.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("not a number of steps"), "{stderr}");
+
+    let (code, _, stderr) = run(&["run", "--fuel", "0", path.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("a single step"), "{stderr}");
 }
 
 #[test]

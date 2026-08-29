@@ -30,16 +30,28 @@ pub enum Value {
     Field(Box<Value>, Id),
     Inj(Id, Box<Value>),
     Match(Box<Value>, Vec<(Id, Id, Arc<Exp>)>),
+    Print(Box<Value>),
+    Readline,
+    CmdPure(Box<Value>),
+    CmdBind(Box<Value>, Id, Arc<Exp>, IncrEnv),
     EmptyHole(HoleId, IncrEnv),
     NonEmptyHole(HoleId, IncrEnv, Box<Value>),
 }
 
 fn is_fully_reduced(v: &Value) -> bool {
     match v {
-        Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) | Value::Nil => true,
+        Value::Num(_)
+        | Value::Bool(_)
+        | Value::Str(_)
+        | Value::Closure(..)
+        | Value::Readline
+        | Value::Nil => true,
         Value::Pair(a, b) | Value::Cons(a, b) => is_fully_reduced(a) && is_fully_reduced(b),
         Value::Record(fields) => fields.iter().all(|(_, value)| is_fully_reduced(value)),
         Value::Inj(_, payload) => is_fully_reduced(payload),
+        Value::Print(text) => is_fully_reduced(text),
+        Value::CmdPure(value) => is_fully_reduced(value),
+        Value::CmdBind(command, _, _, _) => is_fully_reduced(command),
         _ => false,
     }
 }
@@ -91,6 +103,14 @@ pub fn value_to_dyn(v: &Value) -> Dyn {
                 .map(|(ctor, binder, body)| (*ctor, *binder, elaborate(body)))
                 .collect(),
         ),
+        Value::Print(text) => Dyn::Print(Box::new(value_to_dyn(text))),
+        Value::Readline => Dyn::Readline,
+        Value::CmdPure(value) => Dyn::CmdPure(Box::new(value_to_dyn(value))),
+        Value::CmdBind(command, id, body, _env) => Dyn::CmdBind(
+            Box::new(value_to_dyn(command)),
+            *id,
+            Box::new(elaborate(body)),
+        ),
         Value::EmptyHole(h, env) => Dyn::EmptyHole(*h, env_to_dyn_env(env)),
         Value::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, env_to_dyn_env(env), Box::new(value_to_dyn(inner)))
@@ -123,9 +143,12 @@ fn collect_blocked(v: &Value, out: &mut Vec<Blocked>) {
             collect_blocked(init, out);
             collect_blocked(step, out);
         }
-        Value::Proj(_, inner) | Value::Field(inner, _) | Value::Inj(_, inner) => {
-            collect_blocked(inner, out)
-        }
+        Value::Proj(_, inner)
+        | Value::Field(inner, _)
+        | Value::Inj(_, inner)
+        | Value::Print(inner)
+        | Value::CmdPure(inner) => collect_blocked(inner, out),
+        Value::CmdBind(command, _, _, _) => collect_blocked(command, out),
         Value::Match(scrutinee, _) => collect_blocked(scrutinee, out),
         Value::Record(fields) => {
             for (_, value) in fields {
@@ -137,6 +160,7 @@ fn collect_blocked(v: &Value, out: &mut Vec<Blocked>) {
         | Value::Bool(_)
         | Value::Str(_)
         | Value::Nil
+        | Value::Readline
         | Value::Closure(..) => {}
     }
 }
@@ -215,7 +239,19 @@ fn free_vars(exp: &Exp) -> HashSet<Id> {
                     bound.pop();
                 }
             }
-            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {}
+            Exp::Print(e) | Exp::CmdPure(e) => go(e, bound, out),
+            Exp::CmdBind(command, id, body) => {
+                go(command, bound, out);
+                bound.push(*id);
+                go(body, bound, out);
+                bound.pop();
+            }
+            Exp::Num(_)
+            | Exp::Bool(_)
+            | Exp::Str(_)
+            | Exp::Nil
+            | Exp::Readline
+            | Exp::EmptyHole(_) => {}
         }
     }
     let mut out = HashSet::new();
@@ -579,6 +615,19 @@ impl IncrEngine {
                 let (vp, _) = self.eval_node(payload, env);
                 Value::Inj(*ctor, Box::new(vp))
             }
+            Exp::Print(text) => {
+                let (vt, _) = self.eval_node(text, env);
+                Value::Print(Box::new(vt))
+            }
+            Exp::Readline => Value::Readline,
+            Exp::CmdPure(value) => {
+                let (vv, _) = self.eval_node(value, env);
+                Value::CmdPure(Box::new(vv))
+            }
+            Exp::CmdBind(command, id, body) => {
+                let (vc, _) = self.eval_node(command, env);
+                Value::CmdBind(Box::new(vc), *id, Arc::new((**body).clone()), env.clone())
+            }
             Exp::Match(scrutinee, arms) => {
                 let (vs, ds) = self.eval_node(scrutinee, env);
                 match &vs {
@@ -672,7 +721,18 @@ fn walk_with_table(
             }
             hash
         }
-        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline | Exp::EmptyHole(_) => {
+            next_hash(table, idx)
+        }
+        Exp::Print(e) | Exp::CmdPure(e) => {
+            walk_with_table(e, table, idx, scope, dependents);
+            next_hash(table, idx)
+        }
+        Exp::CmdBind(command, id, body) => {
+            let command_hash = walk_with_table(command, table, idx, scope, dependents);
+            scope.push((*id, command_hash));
+            walk_with_table(body, table, idx, scope, dependents);
+            scope.pop();
             next_hash(table, idx)
         }
         Exp::Lam(id, _, body) => {
@@ -754,6 +814,45 @@ mod tests {
             let r = balanced_sum_tree(depth - 1, counter);
             Exp::bin_op(Op::Add, l, r)
         }
+    }
+
+    #[test]
+    fn the_incremental_engine_agrees_that_a_finished_command_is_a_value() {
+        let line = Id::from_u128(0xB11D);
+        let program = Exp::cmd_bind(
+            Exp::readline(),
+            line,
+            Exp::print(Exp::bin_op(
+                Op::Concat,
+                Exp::str_("hello, "),
+                Exp::var(line),
+            )),
+        );
+
+        let mut engine = IncrEngine::new();
+        let incremental = engine.eval_with_fuel(&program, 10_000);
+        assert!(
+            incremental.is_value(),
+            "a command with nothing left to compute is a value here too: {incremental:?}"
+        );
+
+        let small_step = crate::step::eval_with_fuel(&program, 10_000);
+        assert!(small_step.is_value());
+        assert_eq!(
+            crate::dynamic::render(incremental.dyn_result(), &NameTable::new()),
+            crate::dynamic::render(small_step.dyn_result(), &NameTable::new()),
+            "the two engines agree on what the command is"
+        );
+
+        let blocked = Exp::cmd_bind(
+            Exp::empty_hole(nothing_core::exp::HoleId::from_u128(3)),
+            line,
+            Exp::print(Exp::var(line)),
+        );
+        assert!(
+            engine.eval_with_fuel(&blocked, 10_000).is_indeterminate(),
+            "and that one with a hole in the command position is not"
+        );
     }
 
     #[test]

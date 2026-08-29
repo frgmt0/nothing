@@ -62,6 +62,7 @@ pub fn ty_json(ty: &Ty) -> Json {
             ("snd", ty_json(b)),
         ]),
         Ty::List(elem) => Json::obj(vec![("ty", Json::str("List")), ("elem", ty_json(elem))]),
+        Ty::Cmd(result) => Json::obj(vec![("ty", Json::str("Cmd")), ("yields", ty_json(result))]),
         Ty::Variant(ctors) => Json::obj(vec![
             ("ty", Json::str("Variant")),
             (
@@ -129,6 +130,12 @@ pub fn ty_from_json(value: &Json) -> Result<Ty, String> {
                 .get("elem")
                 .ok_or_else(|| "List needs `elem`".to_string())?;
             Ok(Ty::List(Box::new(ty_from_json(elem)?)))
+        }
+        "Cmd" => {
+            let result = value
+                .get("yields")
+                .ok_or_else(|| "Cmd needs `yields`".to_string())?;
+            Ok(Ty::Cmd(Box::new(ty_from_json(result)?)))
         }
         "Prod" => {
             let fst = value
@@ -263,6 +270,22 @@ pub fn exp_json(exp: &Exp, names: &NameTable) -> Json {
                 ),
             ),
         ]),
+        Exp::Print(text) => Json::obj(vec![
+            ("exp", Json::str("Print")),
+            ("text", exp_json(text, names)),
+        ]),
+        Exp::Readline => Json::obj(vec![("exp", Json::str("Readline"))]),
+        Exp::CmdPure(value) => Json::obj(vec![
+            ("exp", Json::str("CmdPure")),
+            ("value", exp_json(value, names)),
+        ]),
+        Exp::CmdBind(command, id, body) => Json::obj(vec![
+            ("exp", Json::str("CmdBind")),
+            ("command", exp_json(command, names)),
+            ("id", Json::str(id.to_string())),
+            ("name", named(*id)),
+            ("body", exp_json(body, names)),
+        ]),
         Exp::EmptyHole(h) => Json::obj(vec![
             ("exp", Json::str("EmptyHole")),
             ("hole", Json::str(h.to_string())),
@@ -295,6 +318,10 @@ pub fn exp_kind(exp: &Exp) -> &'static str {
         Exp::Field(..) => "Field",
         Exp::Inj(..) => "Inj",
         Exp::Match(..) => "Match",
+        Exp::Print(..) => "Print",
+        Exp::Readline => "Readline",
+        Exp::CmdPure(..) => "CmdPure",
+        Exp::CmdBind(..) => "CmdBind",
         Exp::EmptyHole(_) => "EmptyHole",
         Exp::NonEmptyHole(..) => "NonEmptyHole",
     }
@@ -329,6 +356,10 @@ pub fn action_json(action: &Action) -> Json {
         Action::ConstructNil => Json::obj(vec![("action", Json::str("ConstructNil"))]),
         Action::ConstructCons => Json::obj(vec![("action", Json::str("ConstructCons"))]),
         Action::ConstructFold => Json::obj(vec![("action", Json::str("ConstructFold"))]),
+        Action::ConstructPrint => Json::obj(vec![("action", Json::str("ConstructPrint"))]),
+        Action::ConstructReadline => Json::obj(vec![("action", Json::str("ConstructReadline"))]),
+        Action::ConstructPure => Json::obj(vec![("action", Json::str("ConstructPure"))]),
+        Action::ConstructBind => Json::obj(vec![("action", Json::str("ConstructBind"))]),
         Action::ConstructLam => Json::obj(vec![("action", Json::str("ConstructLam"))]),
         Action::ConstructAp => Json::obj(vec![("action", Json::str("ConstructAp"))]),
         Action::ConstructBinOp(op) => Json::obj(vec![
@@ -469,6 +500,10 @@ pub fn action_from_json(value: &Json) -> Result<Action, String> {
                 .map(Action::ConstructProj)
                 .ok_or_else(|| format!("unknown projection side `{text}`"))
         }
+        "ConstructPrint" => Ok(Action::ConstructPrint),
+        "ConstructReadline" => Ok(Action::ConstructReadline),
+        "ConstructPure" => Ok(Action::ConstructPure),
+        "ConstructBind" => Ok(Action::ConstructBind),
         "ConstructNonEmptyHole" => Ok(Action::ConstructNonEmptyHole),
         "SetAnn" => Ok(Action::SetAnn(ty_from_json(field(value, "ty", tag)?)?)),
         "SetBinderId" => Ok(Action::SetBinderId(id_field(value, "id", tag)?)),
@@ -532,10 +567,13 @@ pub fn holes(exp: &Exp) -> (usize, usize) {
                 *non_empty += 1;
                 go(inner, empty, non_empty);
             }
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
-            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::Inj(_, b) => {
-                go(b, empty, non_empty)
-            }
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline => {}
+            Exp::Lam(_, _, b)
+            | Exp::Proj(_, b)
+            | Exp::Field(b, _)
+            | Exp::Inj(_, b)
+            | Exp::Print(b)
+            | Exp::CmdPure(b) => go(b, empty, non_empty),
             Exp::Record(fields) => {
                 for (_, value) in fields {
                     go(value, empty, non_empty);
@@ -551,6 +589,7 @@ pub fn holes(exp: &Exp) -> (usize, usize) {
             | Exp::BinOp(_, a, b)
             | Exp::Let(_, a, b)
             | Exp::Pair(a, b)
+            | Exp::CmdBind(a, _, b)
             | Exp::Cons(a, b) => {
                 go(a, empty, non_empty);
                 go(b, empty, non_empty);
@@ -576,8 +615,13 @@ pub fn hole_ids(exp: &Exp) -> Vec<HoleId> {
                 out.push(*h);
                 go(inner, out);
             }
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
-            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::Inj(_, b) => go(b, out),
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline => {}
+            Exp::Lam(_, _, b)
+            | Exp::Proj(_, b)
+            | Exp::Field(b, _)
+            | Exp::Inj(_, b)
+            | Exp::Print(b)
+            | Exp::CmdPure(b) => go(b, out),
             Exp::Record(fields) => {
                 for (_, value) in fields {
                     go(value, out);
@@ -593,6 +637,7 @@ pub fn hole_ids(exp: &Exp) -> Vec<HoleId> {
             | Exp::BinOp(_, a, b)
             | Exp::Let(_, a, b)
             | Exp::Pair(a, b)
+            | Exp::CmdBind(a, _, b)
             | Exp::Cons(a, b) => {
                 go(a, out);
                 go(b, out);

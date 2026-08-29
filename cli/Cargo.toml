@@ -15,3 +15,7 @@ nothing-store = { path = "../store" }
 nothing-tui = { path = "../tui" }
 nothing-merge = { path = "../merge" }
 nothing-agentapi = { path = "../agentapi" }
+
+[dev-dependencies]
+libc = "0.2"
+crossterm = "0.29.0"

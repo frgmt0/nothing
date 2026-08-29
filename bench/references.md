@@ -1,14 +1,14 @@
 # Reference programs and the Neovim keystroke baseline
 
-Five reference programs, chosen per Phase 0, and a sixth added with
-strings in Phase B2 (§6). They are written here as ordinary pseudocode —
-not `nothing`'s own syntax, since `nothing` has no text syntax at all (that
-is the point of the project). This file exists to answer one question
-honestly: *how many keystrokes does a competent text editor need for these
-programs?* That number is the yardstick the projectional editor is measured
-against from Phase 3 onward. A reference, once written, is never
-recomputed; a new language feature may add a reference, and does so with
-its own permanent denominator.
+Five reference programs, chosen per Phase 0, a sixth added with strings in
+Phase B2 (§6) and a seventh added with effects in Phase B3 (§7). They are
+written here as ordinary pseudocode — not `nothing`'s own syntax, since
+`nothing` has no text syntax at all (that is the point of the project).
+This file exists to answer one question honestly: *how many keystrokes does
+a competent text editor need for these programs?* That number is the
+yardstick the projectional editor is measured against from Phase 3 onward.
+A reference, once written, is never recomputed; a new language feature may
+add a reference, and does so with its own permanent denominator.
 
 ## Counting method
 
@@ -121,6 +121,24 @@ denominator is computed by exactly the method above and joins the table
 below on the same permanent terms as the other five — computed once,
 never recomputed.
 
+## 7. Greeting command (added 2026-08-29, Phase B3)
+
+```
+fn main(): Cmd =
+  line <- readline()
+  print("hello, " ++ line)
+```
+
+Content characters: 64. Keystrokes: 1 + 64 + 1 = **66**.
+
+This is the seventh reference, added with effects in Phase B3 because the
+first six do nothing at all — every one of them computes a value and hands
+it back, so none of them could measure the thing B3 adds. It is
+deliberately unremarkable: read one line, greet whoever typed it. The
+Neovim denominator is computed by exactly the method above and joins the
+table below on the same permanent terms as the other six — computed once,
+never recomputed.
+
 ---
 
 ## The baseline
@@ -138,10 +156,12 @@ numbers to get a ratio. This table is that denominator, fixed forever:
 | 4 | Three-case state machine | 151 |
 | 5 | Three-deep nested conditional | 146 |
 | 6 | Greeting formatter | 127 |
+| 7 | Greeting command | 66 |
 
-Row 6 was added on 2026-08-29 with Phase B2. Adding a *new* reference is
-not the same thing as recomputing an old one: rows 1–5 are untouched and
-untouchable, and row 6 is fixed forever from the moment it was written.
+Row 6 was added on 2026-08-29 with Phase B2 and row 7 on the same day with
+Phase B3. Adding a *new* reference is not the same thing as recomputing an
+old one: rows 1–6 are untouched and untouchable, and row 7 is fixed forever
+from the moment it was written.
 
 ---
 

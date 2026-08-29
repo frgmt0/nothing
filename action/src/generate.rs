@@ -62,6 +62,7 @@ enum Form {
     Match,
     BinOp,
     Fold,
+    Bind,
     NonEmptyHole,
 }
 
@@ -92,7 +93,7 @@ impl Gen {
     }
 
     pub fn ty(&mut self, depth: u32) -> Ty {
-        let n = if depth == 0 { 4 } else { 9 };
+        let n = if depth == 0 { 4 } else { 10 };
         match self.rng.below(n) {
             0 => Ty::Num,
             1 => Ty::Bool,
@@ -102,6 +103,7 @@ impl Gen {
             5 => Ty::List(Box::new(self.ty(depth - 1))),
             6 => self.record_ty(depth - 1),
             7 => self.variant_ty(depth - 1),
+            8 => Ty::Cmd(Box::new(self.ty(depth - 1))),
             _ => Ty::Prod(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
         }
     }
@@ -186,6 +188,9 @@ impl Gen {
                 cands.push(Form::BinOp);
                 cands.push(Form::BinOp);
             }
+            if matches!(ty, Ty::Cmd(_)) {
+                cands.push(Form::Bind);
+            }
             if *ty == Ty::Hole {
                 cands.push(Form::NonEmptyHole);
             }
@@ -226,6 +231,17 @@ impl Gen {
                     }
                     Exp::record(written)
                 }
+                Ty::Cmd(result) => match self.rng.below(3) {
+                    0 if **result == Ty::Str => Exp::readline(),
+                    1 if **result == Ty::Record(Vec::new()) => {
+                        let text = self.exp_ana(ctx, &Ty::Str, d);
+                        Exp::print(text)
+                    }
+                    _ => {
+                        let value = self.exp_syn(ctx, result, d);
+                        Exp::cmd_pure(value)
+                    }
+                },
                 Ty::Variant(ctors) => match ctors.split_last() {
                     None => Exp::empty_hole(self.fresh_hole()),
                     Some(((last, last_ty), rest)) => {
@@ -346,6 +362,17 @@ impl Gen {
                 Exp::fold(list, init, step)
             }
 
+            Form::Bind => {
+                let yielded = self.ty(1);
+                let command_ty = Ty::Cmd(Box::new(yielded.clone()));
+                let command = self.exp_syn(ctx, &command_ty, d);
+                let id = self.fresh_id();
+                let mut inner = ctx.to_vec();
+                inner.push((id, yielded));
+                let body = self.exp_syn(&inner, ty, d);
+                Exp::cmd_bind(command, id, body)
+            }
+
             Form::NonEmptyHole => {
                 let sigma = self.ty(1);
                 let inner = self.exp_syn(ctx, &sigma, d);
@@ -389,7 +416,15 @@ pub fn well_typed_exp_of_ty(seed: u64, ty: &Ty, depth: u32) -> Exp {
 
 pub fn size(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 1,
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => 1,
+        Exp::Print(e) | Exp::CmdPure(e) => 1 + size(e),
+        Exp::CmdBind(command, _, body) => 1 + size(command) + size(body),
         Exp::Lam(_, _, body) => 1 + size(body),
         Exp::Ap(f, a) => 1 + size(f) + size(a),
         Exp::BinOp(_, l, r) => 1 + size(l) + size(r),
@@ -468,8 +503,17 @@ mod tests {
                     *non_empty += 1;
                     count(inner, empty, non_empty);
                 }
-                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
-                Exp::Lam(_, _, b) => count(b, empty, non_empty),
+                Exp::Var(_)
+                | Exp::Num(_)
+                | Exp::Bool(_)
+                | Exp::Str(_)
+                | Exp::Nil
+                | Exp::Readline => {}
+                Exp::Lam(_, _, b) | Exp::Print(b) | Exp::CmdPure(b) => count(b, empty, non_empty),
+                Exp::CmdBind(a, _, b) => {
+                    count(a, empty, non_empty);
+                    count(b, empty, non_empty);
+                }
                 Exp::Ap(f, a) => {
                     count(f, empty, non_empty);
                     count(a, empty, non_empty);

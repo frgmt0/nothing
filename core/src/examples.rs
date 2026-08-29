@@ -133,8 +133,18 @@ mod tests {
             match e {
                 Exp::EmptyHole(_) => true,
                 Exp::NonEmptyHole(_, inner) => contains_empty_hole(inner),
-                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => false,
-                Exp::Lam(_, _, body) => contains_empty_hole(body),
+                Exp::Var(_)
+                | Exp::Num(_)
+                | Exp::Bool(_)
+                | Exp::Str(_)
+                | Exp::Nil
+                | Exp::Readline => false,
+                Exp::Lam(_, _, body) | Exp::Print(body) | Exp::CmdPure(body) => {
+                    contains_empty_hole(body)
+                }
+                Exp::CmdBind(command, _, body) => {
+                    contains_empty_hole(command) || contains_empty_hole(body)
+                }
                 Exp::Ap(f, a) => contains_empty_hole(f) || contains_empty_hole(a),
                 Exp::BinOp(_, l, r) => contains_empty_hole(l) || contains_empty_hole(r),
                 Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
@@ -175,8 +185,18 @@ mod tests {
             match e {
                 Exp::NonEmptyHole(_, _) => true,
                 Exp::EmptyHole(_) => false,
-                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => false,
-                Exp::Lam(_, _, body) => contains_non_empty_hole(body),
+                Exp::Var(_)
+                | Exp::Num(_)
+                | Exp::Bool(_)
+                | Exp::Str(_)
+                | Exp::Nil
+                | Exp::Readline => false,
+                Exp::Lam(_, _, body) | Exp::Print(body) | Exp::CmdPure(body) => {
+                    contains_non_empty_hole(body)
+                }
+                Exp::CmdBind(command, _, body) => {
+                    contains_non_empty_hole(command) || contains_non_empty_hole(body)
+                }
                 Exp::Ap(f, a) => contains_non_empty_hole(f) || contains_non_empty_hole(a),
                 Exp::BinOp(_, l, r) => contains_non_empty_hole(l) || contains_non_empty_hole(r),
                 Exp::If(c, t, e) | Exp::Fold(c, t, e) => {

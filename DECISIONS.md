@@ -1539,3 +1539,310 @@ that four features in one phase touched between 50 and 62 files each and added
 between 27 and 49 tests each, with no trend downward and no feature left
 half-built.
 
+
+---
+
+### 2026-08-29 — A command is a value, and only `run` performs it
+
+Phase B3 is effects. The phase brief committed the shape before the phase
+started: `main` may have type `Cmd`, a **value describing effects**, executed
+only by the `nothing run` runtime. Pure evaluation, the live-values pane and
+holes are untouched. A `Cmd` renders in the editor the way `[1, 2]` renders —
+as a thing you are looking at, not a thing that happened while you looked. This
+entry settles the questions the brief left open and records the two designs
+that were rejected to get here.
+
+**`Ty::Cmd(Box<Ty>)` is a new type.** `Cmd τ` is a command that, when
+performed, yields a τ. It has to be a real type rather than a convention on top
+of an existing one, because `bind` needs it:
+
+    bind : Cmd a -> (a -> Cmd b) -> Cmd b
+
+Without a `Cmd` constructor there is nothing for the binder's type to come
+from, and the hole in `bind ⦇⦈ x in ⦇⦈` would inherit `?` on both sides. With
+it, the second hole is analysed against `Cmd ?` and the binder `x` enters the
+context with the element type of whatever the first hole eventually becomes.
+That is the whole reason gradual typing has a `matched_` family, and `Cmd`
+joins it:
+
+    matched_cmd(Cmd τ) = Some(τ)
+    matched_cmd(?)     = Some(?)
+    matched_cmd(_)     = None
+
+failing open on `?` exactly as `matched_arrow`, `matched_list`,
+`matched_record` and `matched_variant` do. Consistency and `join` are
+structural and congruent: `Cmd σ ~ Cmd τ` iff `σ ~ τ`, and `Cmd` is consistent
+with `?` and nothing else.
+
+**The four constructors are expression forms, not builtin definitions.** This
+is the third time this workspace has taken that fork and the third time it has
+gone the same way, for the reasons written down for `fold` (2026-08-29, "A
+fold is a primitive, not a library function"): a builtin is a `Var` bound to
+one monotype, so `print` would have to be `Str -> Cmd {}` and `bind` would have
+to be `Cmd ? -> (? -> Cmd ?) -> Cmd ?` — all-`?` mush that destroys precisely
+the hole expectations the previous paragraph is about; a partially applied
+builtin is not a `Lam`, so both evaluators would grow closure machinery for a
+shape the language does not otherwise have; and it is not cheaper at the
+keyboard, because a builtin still has to be *reached* by name. So:
+
+    Exp::Print(Box<Exp>)             print e
+    Exp::Readline                    readline
+    Exp::CmdPure(Box<Exp>)           pure e
+    Exp::CmdBind(Box<Exp>, Id, Box<Exp>)   bind x <- c in k
+
+`bind` and not `seq`. The brief offered the choice. `seq` — perform this, then
+perform that, discarding the first result — is `bind` with a binder nobody
+mentions, and the editor already has a binder slot with a completion path, a
+rename action and a provenance story (`Let`). Adding `seq` as well would be a
+second form that means a strict subset of the first, and every layer of the
+full-thread checklist would pay for it twice. A program that wants `seq` writes
+`bind` and ignores the name; the beginner projection even says so out loud
+("then, ignoring the result").
+
+**`bind x <- c in k`, spelled like `let`.** The bound command sits at
+`PREC_CMP` and the body at `PREC_BINDER`, and the whole form is `PREC_BINDER`,
+which is character-for-character the treatment `let x = e in body` already
+gets. This is the entire reason no new precedence constant appears in B3: the
+trailing `in` terminates the bound command, so the parenthesisation rules that
+exist already are sufficient and the text-baseline parser needed one keyword
+and one production, not a new level. `print e` and `pure e` are `PREC_APP` with
+their operand at `PREC_ATOM`, like `fst` and `fold`. `readline` is a keyword
+atom, like `nil`.
+
+**Typing.** Synthesis where the shape determines the type, analysis where it
+does not:
+
+    syn(print e)        = Cmd {}      with  ana(e, Str)
+    syn(readline)       = Cmd Str
+    syn(pure e)         = Cmd τ       where syn(e) = τ
+    syn(bind x <- c in k) = Cmd β     where matched_cmd(syn c) = Some α,
+                                            x:α ⊢ syn(k) = γ,
+                                            matched_cmd(γ) = Some β
+
+    ana(print e, τ)     if matched_cmd(τ) = Some υ and υ ~ {}
+    ana(readline, τ)    if matched_cmd(τ) = Some υ and υ ~ Str
+    ana(pure e, τ)      if matched_cmd(τ) = Some υ and ana(e, υ)
+    ana(bind x <- c in k, τ)  if matched_cmd(syn c) = Some α
+                              and x:α ⊢ ana(k, τ)  when matched_cmd(τ) is Some
+
+`print` yields the empty record, not a fresh unit type. The empty record is
+already the thing this language uses for "no information" — it is what a
+nullary constructor's payload is (2026-08-29, variants) — and a unit type would
+be a fourth base type earning its keep on one expression form.
+
+**`readline` yields `Str`.** The brief asked and the answer is the only honest
+one: a line of input is text. Anything else would be a parse, and this language
+does not have one.
+
+**Pure evaluation treats every command form as a value.** This is the guard the
+brief wrote in capital letters and it is enforced in one function:
+
+    is_value(Print(v))         = is_value(v)
+    is_value(Readline)         = true
+    is_value(CmdPure(v))       = is_value(v)
+    is_value(CmdBind(c, _, _)) = is_value(c)
+
+A `bind` chain reduces its *arguments* — `print (concat "a" "b")` becomes
+`print "ab"` in the live-values pane — and then stops. The continuation of a
+bind is a **scope**, not a subterm to reduce, in exactly the sense a lambda
+body is: it is not entered by the stepper, its holes are not collected as
+blocked holes, and the incremental evaluator carries it as
+`Value::CmdBind(Box<Value>, Id, Arc<Exp>, IncrEnv)` — a closure by another
+name. The live pane on a hello-world shows `bind x <- print "hi" in pure {}`
+and never writes to the terminal, which is the property that makes the editor
+safe to type in.
+
+**The runtime dispatches on `main`'s type.** `nothing run` computes
+`join(ann, syn(body))` for `main` — the most precise type known about it — and
+performs it as a command exactly when that type is a `Cmd`. Anything else
+evaluates and prints as it has since Phase 6. The alternative, dispatching on
+the *shape* of main's body, was rejected because it makes
+`main : Cmd {} = ⦇⦈` — the very first state of a program a beginner is
+building — evaluate-and-print rather than run-and-report-the-hole, which is
+the wrong answer at the only moment the difference matters.
+
+**Effects around holes are the runtime twin of evaluation around holes.** The
+executor keeps a stack of pending continuations, pure-evaluates the current
+command, and dispatches on the value it gets. When pure evaluation returns
+`Indeterminate` — because a hole sits where a command should be — the executor
+stops, rebuilds the residual by folding the pending continuations back around
+it, and reports it with the same `Outcome::Indeterminate { result, blocked }`
+vocabulary Phase 6 already prints. The prints that happened *before* the hole
+have happened. They are on the terminal. That is not a bug to be tidied away:
+it is the truthful report that this program does two things and only the first
+one is finished.
+
+**Fuel is one budget and one flag.** `nothing run --fuel N`, default 200 000,
+the same default `eval_doc` has used since Phase 6. Every pure evaluation step
+spends one unit and every command performed spends one unit, from the same
+counter. The two-budget design — steps for evaluation, commands for the
+runtime — was rejected because two numbers require two flags and a user
+staring at "out of fuel" would have to know which one ran out to know which one
+to raise. One counter, one flag, one message naming the steps and the commands
+it got through. An infinite `bind (print "x") _ in main` terminates with exit
+status 3 after printing what it printed, which is the same contract a runaway
+shell loop offers and a better one than hanging.
+
+#### The two designs this replaces
+
+**Direct side-effecting builtins** — `print : Str -> {}` that writes when it is
+applied — is what most languages do and it is unavailable here for a structural
+reason, not a stylistic one. This editor evaluates the program *continuously*.
+The live-values pane re-evaluates on every keystroke; the incremental engine
+caches results keyed on node hash and environment fingerprint and reuses them;
+the sensibility proptest applies ten thousand generated actions to generated
+documents and the merge benchmark evaluates both sides of twenty-one scenarios.
+A side-effecting `print` means every one of those writes to the terminal, that
+the number of writes depends on cache hits, and that typing a character into
+the middle of a string prints eleven prefixes of it. There is no version of
+"just don't evaluate in the editor" that saves this, because evaluating in the
+editor is the product. `Cmd`-as-value is the only design where the pane can
+show you what your program *will* do without doing it.
+
+**Monadic sugar** — do-notation, an `Effect` type class, `>>=` as an operator,
+any of the machinery that makes this ergonomic in a language with a parser —
+was rejected because every piece of it is polymorphism, and this language has
+none. `bind : Cmd a -> (a -> Cmd b) -> Cmd b` is written above with type
+variables for readability but it is not a polymorphic constant in the
+implementation; it is a typing *rule* on a syntactic form, which is how a
+monomorphic language gets the same expressiveness without a type-variable
+grammar, unification, or an instance table. Do-notation specifically is sugar
+over a parser, and there is no parser in the pipeline: the layout of `bind` on
+screen is a projection decision, and if a flat one-per-line rendering of a bind
+chain is wanted later it is a projection, not a syntax.
+
+Sequencing is therefore explicit and visible: four keystrokes per step, one
+form per effect, and a program that does three things has three `bind`s in it
+where you can see them.
+
+---
+
+### 2026-08-29 — What effects cost, and the one thing that fought back
+
+The first Phase B3 feature, and the first feature since the checklist was
+written that adds something the *runtime* has to do rather than something the
+type system has to know.
+
+**Files touched: 56 modified, 23 added** (`eval/src/perform.rs`,
+`store/src/v6.rs`, the seventeen `store/fixtures/v6/` artifacts,
+`cli/tests/authoring.rs`, and reference 7's three fixtures). By layer:
+
+| layer | files | what changed |
+|---|---:|---|
+| type grammar | 1 | `Ty::Cmd`, consistency, `matched_cmd`, `cmd`, `Display` — the smallest type-grammar row any feature has had, because `Cmd τ` is `List τ` with a different word |
+| expression grammar | 1 | `Exp::Print`, `Readline`, `CmdPure`, `CmdBind`, and their constructors |
+| typing | 1 | `syn`/`ana` for all four, `join`, and `syn_cmd_bind`/`ana_cmd_bind` lifted out to fit the stack the way the variant arms were |
+| document | 2 | the scope walk and the examples |
+| rendering | 1 | `print e`/`pure e` at `PREC_APP`, `readline` at `PREC_ATOM`, `bind x <- c in k` bracketed exactly as `let`; **no new precedence constant** |
+| zipper | 1 | four frames, and the `ctx_in` arm that puts the binder in scope at `matched_cmd` of what the command yields |
+| actions | 3 | four actions, the expected-type rules that make `bind ⦇⦈ in ⦇⦈` useful, the generator, the script vocabulary |
+| cursor rendering | 1 | four `assemble` arms and the two precedence rows the plain renderer has |
+| serialisation | 8 (+18 new) | v6→v7, node tags 20–23, `Ty` tag 9, action tags 44–47, `store/src/v6.rs`, 17 v6 fixtures, the migration suite |
+| evaluation | 6 (+1 new) | `Dyn`/`Value` cases, three `step_in` arms, `is_value`, the incremental engine's `CmdBind` closure, `run_in_counted`, and **`eval/src/perform.rs`, the runtime** |
+| diff/merge | 4 | the path walker, the repair walker, `structurally_equal` |
+| hole context / provenance / encode / text baseline | 4 | a command offered where a command is expected, four JSON tags, `bind`/`print`/`pure`/`readline`/`cmd` in the measure parser |
+| TUI | 8 | `$`, `'`, `>`, the `c` annotation prefix, the `readline` candidate, the beginner voice, the key-hint line, the matrix |
+| CLI | 4 | `nothing run --fuel N`, the command dispatch, `StdIo`, the help |
+| property suites | 4 | the action-variant tables, the form survey, the reachability recipe |
+| benchmark | 5 (+3 new) | reference 7, its two fixtures, its keyscript, `RESULTS.md`, `references.md` |
+| docs | 4 | `KEYS.md` item 21, `FORMAT.md` v7, `CHANGELOG.md`, this file |
+
+**Tests: 47 added**, 25 honestly adapted, 0 deleted. The workspace went from
+867 tests to 914.
+
+**Adapted, each for a real reason**, and the twenty-five group into six
+reasons, not twenty-five:
+
+- **Nine** are `tui/tests/matrix.rs` — the eight columns plus the alphabet
+  test. Three new form keys and one new annotation letter adapt all nine by
+  construction, which is the matrix doing its job rather than going stale.
+- **Two** are `tui/src/complete.rs`, where `readline` joins `nil` in every
+  unfiltered candidate list. Each adaptation appends one name to an expected
+  ordering; neither changed a *rank*, because `readline`'s `Cmd Str` is
+  inconsistent with `Num` and `Bool` and so sorts exactly where `nil` does.
+- **Five** are the counts asserted rather than assumed: `Exp`'s constructor
+  survey (20 → 24), the two sensibility generators that enumerate the action
+  alphabet (44 → 48), the reachability target survey, and the generator's
+  own hole census.
+- **Three** are the migration suite, where `every_v6_program()` filters
+  command-carrying programs out of the v6 corpus for the reason the v5 corpus
+  filters variant-carrying ones, and
+  `a_version_six_file_carries_a_variant_no_earlier_version_could` now encodes
+  with `encode_document_v6` and asserts the version byte rather than asserting
+  `VERSION_MAJOR == 6`, which stopped being true the moment the constant moved.
+- **Two** are the benchmark: `there_are_six_reference_programs` became
+  `…seven…`, and the reference list in `tui/tests/references.rs` grew a row
+  that four tests read.
+- **The remaining four** are single assertions widened by a grammar that got
+  bigger: the hole census in `core/src/examples.rs` (two of them), the
+  quarantine-join case in `action/src/act.rs`, and the annotation slot's
+  every-prefix-parses sweep, which now sweeps `c`, `cs`, `cmd`, `c[n`, `[cn`
+  and five more.
+
+**What was free.** Six layers needed no thought at all. `nothing check`
+needed no code. The state-machine projection needed no code — a command is
+not a state machine, and the recognizer already refuses everything that is
+not a chain of equality tests. The precedence table needed no new constant,
+because `bind` was deliberately shaped as `let` (see the design entry above)
+and `print`/`pure` were deliberately shaped as `fst`. Content addressing
+needed one `stack.push` in the `CmdBind` encoder, because a bind's binder
+binds only its body, which is exactly what a `Let` already did. The name
+table needed nothing. And `Ty::Cmd` is the first type constructor whose
+consistency rule, `matched_` rule, `join` and `Display` were all *four* lines
+long, because `List` had already paid for the shape.
+
+**What fought back.** Three things, in ascending order of how long they took.
+
+**One:** the annotation slot's `c`. `KEYS.md` had `c Cmd` written into the
+grammar screen before the code existed, and the code that was supposed to
+implement it did not — `accept` returned `Exit` for `c`, so typing it left
+the slot and started a name run. That is the kind of gap a hand-written
+matrix row catches and a hand-written prose claim does not, which is the
+argument for the matrix. Fixing it turned up a second, real problem: `tokens`
+suppresses a letter that follows a letter, so that `list` does not read as
+`Str` at the `s`, and under that rule `cs` read as one word and meant `Cmd ?`
+rather than `Cmd Str`. The fix is a rule, not a special case — **a type
+prefix ends the word** — and it is right for the same reason `[` never had
+the problem: a prefix is complete when you have typed it and what follows is
+a new operand. `cmd` still spells `Cmd`, because `m` and `d` are not tokens.
+
+**Two:** `structurally_equal` in `merge/src/diff.rs` ends in `_ => false`, so
+adding four `Exp` variants did not produce a compiler error — it produced a
+diff engine that could not reproduce *any* branch containing a command.
+Nothing in the checklist would have caught this by reading; what caught it was
+`replaying_a_diff_onto_its_own_ancestor_reproduces_the_branch`, a proptest
+whose generator had just learned to make commands, failing at case 1345768255
+with a program containing `pure false` and `Cmd Bool`. This is the strongest
+argument the property suites have made for themselves so far: the wildcard arm
+is invisible to `rustc` and to a careful reader, and a generator that quantifies
+over the whole grammar found it in one run. The lesson is recorded here rather
+than fixed structurally, because the alternative — exhaustive matches
+everywhere, no wildcards — is a rule this codebase has not adopted and would
+have to adopt everywhere or nowhere.
+
+**Three, and the real cost of the feature:** the runtime itself. Every other
+layer in the table is a translation of the same idea into another vocabulary,
+and `eval/src/perform.rs` is 185 lines of something the codebase did not have:
+a loop that alternates between *evaluating* and *doing*. Its shape is settled
+by two constraints that pull in opposite directions. Pure evaluation must run
+to a value before anything is performed, or `print ("a" ++ "b")` would write
+`"a" ++ "b"`; and the residual of a run that stops at a hole must be the part
+of the program that has *not* run, which means the pending continuations have
+to be folded back around the blocked command instead of being discarded. The
+executor is therefore a stack of `(binder, continuation)` pairs and a `rebuild`
+that unwinds it, and every early return in the loop goes through `rebuild`.
+That is the whole of the difficulty, and it is worth naming because the naive
+version — recurse on the continuation — passes the hello-world test and
+produces a residual that names no hole at all.
+
+**Verdict: worth it, and the cheapest structured feature yet.** Fifty-six
+modified files sounds like the variant bill, but the layer table is doing
+different work: fourteen of the seventeen rows are one or two files, and the
+mass is in serialisation (a whole extra version's worth of fixtures, which is
+the format's own policy) and in the runtime, which is genuinely new capability
+rather than a translation. The keyboard cost three keys and had three spare;
+the benchmark gained a reference program whose ratio (0.45×) is second-worst
+in the table for the honest reason that it is the shortest program in it. The
+prediction the variants entry made — that the next feature would have to
+retire a key hint — is now literally true rather than nearly true: the hint
+line is at 160 of its 160 columns, pinned by a test.

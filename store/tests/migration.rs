@@ -15,6 +15,7 @@ use nothing_store::v2::encode_document_v2;
 use nothing_store::v3::encode_document_v3;
 use nothing_store::v4::encode_document_v4;
 use nothing_store::v5::encode_document_v5;
+use nothing_store::v6::encode_document_v6;
 use nothing_store::{decode_document, encode_document};
 
 const FACTORIAL: &str = include_str!("../../bench/fixtures/factorial.actions");
@@ -42,6 +43,10 @@ fn v4_fixture_dir() -> PathBuf {
 
 fn v5_fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v5")
+}
+
+fn v6_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v6")
 }
 
 fn sample_log() -> ActionLog {
@@ -180,6 +185,7 @@ fn every_migrated_artifact_round_trips_at_the_current_version() {
         .chain(v3_artifacts())
         .chain(v4_artifacts())
         .chain(v5_artifacts())
+        .chain(v6_artifacts())
     {
         let bytes = fs::read(&path).expect("the artifact is readable");
         let migrated = decode_document(&bytes).expect("the artifact migrates");
@@ -432,7 +438,7 @@ fn mentions(exp: &Exp, ty_hit: fn(&Ty) -> bool, exp_hit: fn(&Exp) -> bool) -> bo
         }
         match ty {
             Ty::Arrow(a, b) | Ty::Prod(a, b) => ty_mentions(a, hit) || ty_mentions(b, hit),
-            Ty::List(a) => ty_mentions(a, hit),
+            Ty::List(a) | Ty::Cmd(a) => ty_mentions(a, hit),
             Ty::Record(fields) | Ty::Variant(fields) => {
                 fields.iter().any(|(_, ty)| ty_mentions(ty, hit))
             }
@@ -445,14 +451,24 @@ fn mentions(exp: &Exp, ty_hit: fn(&Ty) -> bool, exp_hit: fn(&Exp) -> bool) -> bo
     let go = |e: &Exp| mentions(e, ty_hit, exp_hit);
     match exp {
         Exp::Lam(_, ty, body) => ty_mentions(ty, ty_hit) || go(body),
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            false
-        }
-        Exp::Proj(_, e) | Exp::Field(e, _) | Exp::Inj(_, e) | Exp::NonEmptyHole(_, e) => go(e),
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => false,
+        Exp::Proj(_, e)
+        | Exp::Field(e, _)
+        | Exp::Inj(_, e)
+        | Exp::Print(e)
+        | Exp::CmdPure(e)
+        | Exp::NonEmptyHole(_, e) => go(e),
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
         | Exp::Pair(a, b)
+        | Exp::CmdBind(a, _, b)
         | Exp::Cons(a, b) => go(a) || go(b),
         Exp::If(a, b, c) | Exp::Fold(a, b, c) => go(a) || go(b) || go(c),
         Exp::Record(fields) => fields.iter().any(|(_, value)| go(value)),
@@ -473,6 +489,19 @@ fn mentions_a_variant(exp: &Exp) -> bool {
         exp,
         |ty| matches!(ty, Ty::Variant(_)),
         |e| matches!(e, Exp::Inj(_, _) | Exp::Match(_, _)),
+    )
+}
+
+fn mentions_a_command(exp: &Exp) -> bool {
+    mentions(
+        exp,
+        |ty| matches!(ty, Ty::Cmd(_)),
+        |e| {
+            matches!(
+                e,
+                Exp::Print(_) | Exp::Readline | Exp::CmdPure(_) | Exp::CmdBind(..)
+            )
+        },
     )
 }
 
@@ -612,9 +641,8 @@ fn a_version_six_file_carries_a_variant_no_earlier_version_could() {
         [(red, x, Exp::var(x)), (green, y, Exp::num(0))],
     );
     let document = Document::new(program.clone(), NameTable::new(), sample_log());
-    let bytes = encode_document(&document);
-    assert_eq!(bytes[4], VERSION_MAJOR);
-    assert_eq!(VERSION_MAJOR, 6);
+    let bytes = encode_document_v6(&document);
+    assert_eq!(bytes[4], 6);
     let reopened = decode_document(&bytes).expect("a variant document opens");
     assert_eq!(reopened.exp(), program);
     assert_eq!(
@@ -625,6 +653,145 @@ fn a_version_six_file_carries_a_variant_no_earlier_version_could() {
     assert!(
         encode_document_v5(&document) != bytes,
         "the v5 and v6 encoders must at least disagree about the version byte"
+    );
+}
+
+fn every_v6_program() -> Vec<(String, Doc, NameTable)> {
+    every_v4_program()
+        .into_iter()
+        .filter(|(_, doc, _)| !doc.defs().iter().any(|def| mentions_a_command(&def.body)))
+        .collect()
+}
+
+fn ensure_v6_fixtures() {
+    let dir = v6_fixture_dir();
+    fs::create_dir_all(&dir).expect("the fixture directory is creatable");
+    for (name, doc, names) in every_v6_program() {
+        let path = dir.join(format!("{name}.v6.nothing"));
+        if !path.exists() {
+            let document = Document::from_doc(doc, names, sample_log());
+            fs::write(&path, encode_document_v6(&document)).expect("the fixture is writable");
+        }
+    }
+}
+
+fn v6_artifacts() -> Vec<PathBuf> {
+    ensure_v6_fixtures();
+    let mut paths: Vec<PathBuf> = fs::read_dir(v6_fixture_dir())
+        .expect("the fixture directory exists")
+        .map(|entry| entry.expect("a readable directory entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "nothing"))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn there_are_version_six_artifacts_to_migrate() {
+    let paths = v6_artifacts();
+    assert!(
+        paths.len() >= 17,
+        "only {} v6 artifacts were found; the v6 migration path is barely exercised",
+        paths.len()
+    );
+    for path in &paths {
+        let bytes = fs::read(path).expect("the artifact is readable");
+        assert_eq!(&bytes[0..4], b"NTHG", "{path:?} is not a nothing file");
+        assert_eq!(
+            bytes[4], 6,
+            "{path:?} is not version 6, so it does not test migration"
+        );
+    }
+}
+
+#[test]
+fn every_version_six_artifact_opens_under_version_seven() {
+    for path in v6_artifacts() {
+        let bytes = fs::read(&path).expect("the artifact is readable");
+        let doc =
+            decode_document(&bytes).unwrap_or_else(|e| panic!("{path:?} failed to migrate: {e:?}"));
+        assert!(
+            doc.doc.is_well_typed(),
+            "{path:?} migrated to an ill-typed document"
+        );
+        assert!(!doc.doc.is_empty(), "{path:?} migrated to no definitions");
+    }
+}
+
+#[test]
+fn a_version_six_artifact_still_carries_the_variants_that_made_it_version_six() {
+    let paths = v6_artifacts();
+    let with_variants = paths
+        .iter()
+        .filter(|path| {
+            let bytes = fs::read(path).expect("the artifact is readable");
+            let document = decode_document(&bytes).expect("the artifact decodes");
+            document
+                .doc
+                .defs()
+                .iter()
+                .any(|d| mentions_a_variant(&d.body))
+        })
+        .count();
+    assert!(
+        with_variants > 0,
+        "no v6 fixture contains a variant, so the v6 corpus is indistinguishable from the v5 one"
+    );
+}
+
+#[test]
+fn no_version_six_artifact_contains_a_version_seven_form() {
+    for path in v6_artifacts() {
+        let bytes = fs::read(&path).expect("the artifact is readable");
+        let document = decode_document(&bytes).expect("the artifact decodes");
+        for def in document.doc.defs() {
+            assert!(
+                !mentions_a_command(&def.body),
+                "{path:?} contains a command, so it is not bytes a version-6 build could have \
+                 written and it does not test the migration it claims to"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_version_six_document_keeps_every_definition_it_had() {
+    for (name, doc, names) in every_v6_program() {
+        let before = Document::from_doc(doc, names, sample_log());
+        let bytes = encode_document_v6(&before);
+        assert_eq!(bytes[4], 6, "{name} was not written as version 6");
+        let after = decode_document(&bytes).expect("the v6 bytes migrate");
+        assert_eq!(after.doc, before.doc, "{name} lost a definition");
+        assert_eq!(after.log, before.log, "{name} lost its action log");
+    }
+}
+
+#[test]
+fn a_version_seven_file_carries_a_command_no_earlier_version_could() {
+    let line = nothing_core::exp::Id::from_u128(21);
+    let program = Exp::cmd_bind(
+        Exp::readline(),
+        line,
+        Exp::print(Exp::bin_op(
+            nothing_core::exp::Op::Concat,
+            Exp::str_("hello, "),
+            Exp::var(line),
+        )),
+    );
+    let document = Document::new(program.clone(), NameTable::new(), sample_log());
+    let bytes = encode_document(&document);
+    assert_eq!(bytes[4], VERSION_MAJOR);
+    assert_eq!(VERSION_MAJOR, 7);
+    let reopened = decode_document(&bytes).expect("a command document opens");
+    assert_eq!(reopened.exp(), program);
+    assert_eq!(
+        nothing_core::typing::syn(&nothing_core::ctx::Ctx::empty(), &program),
+        Some(Ty::Cmd(Box::new(nothing_core::ty::unit()))),
+        "the fixture must be a well-typed greeting command"
+    );
+    assert!(
+        encode_document_v6(&document) != bytes,
+        "the v6 and v7 encoders must at least disagree about the version byte"
     );
 }
 

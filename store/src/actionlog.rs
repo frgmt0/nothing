@@ -106,6 +106,10 @@ fn encode_action_body(buf: &mut Vec<u8>, action: &Action) {
             buf.push(43);
             write_id(buf, *id);
         }
+        Action::ConstructPrint => buf.push(44),
+        Action::ConstructReadline => buf.push(45),
+        Action::ConstructPure => buf.push(46),
+        Action::ConstructBind => buf.push(47),
     }
 }
 
@@ -203,6 +207,10 @@ fn decode_action_body(bytes: &[u8], pos: &mut usize) -> Result<Action, DecodeErr
             let id = read_id(bytes, pos)?;
             Ok(Action::SetConstructor(id))
         }
+        44 => Ok(Action::ConstructPrint),
+        45 => Ok(Action::ConstructReadline),
+        46 => Ok(Action::ConstructPure),
+        47 => Ok(Action::ConstructBind),
         43 => {
             let id = read_id(bytes, pos)?;
             Ok(Action::SetArmBinderId(id))

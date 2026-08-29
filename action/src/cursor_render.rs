@@ -1,8 +1,9 @@
 use nothing_core::exp::Side;
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    ARM_SEP_STR, ARM_STR, CONS_STR, FIELD_STR, FOLD_STR, INJ_STR, MATCH_STR, PREC_APP, PREC_ATOM,
-    PREC_BINDER, PREC_CMP, PREC_CONS, Prec, op_prec, op_str, render_id, render_prec, render_ty,
+    ARM_SEP_STR, ARM_STR, BIND_ARROW_STR, BIND_STR, CONS_STR, FIELD_STR, FOLD_STR, INJ_STR,
+    MATCH_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, PRINT_STR, PURE_STR, Prec,
+    op_prec, op_str, render_id, render_prec, render_ty,
 };
 
 use crate::zipper::{Frame, Zipper};
@@ -33,6 +34,9 @@ fn min_prec_for(frame: &Frame) -> Prec {
         Frame::InjPayload(..) => PREC_ATOM,
         Frame::MatchScrutinee(..) => PREC_ATOM,
         Frame::MatchArm(..) => PREC_CMP,
+        Frame::PrintText | Frame::PureValue => PREC_ATOM,
+        Frame::BindCommand(..) => PREC_CMP,
+        Frame::BindBody(..) => PREC_BINDER,
         Frame::NonEmptyHoleBody(..) => PREC_BINDER,
     }
 }
@@ -44,6 +48,8 @@ fn own_prec(frame: &Frame) -> Prec {
         | Frame::IfThen(..)
         | Frame::IfElse(..)
         | Frame::LetBound(..)
+        | Frame::BindCommand(..)
+        | Frame::BindBody(..)
         | Frame::LetBody(..) => PREC_BINDER,
         Frame::ApFun(..)
         | Frame::ApArg(..)
@@ -51,6 +57,8 @@ fn own_prec(frame: &Frame) -> Prec {
         | Frame::FoldList(..)
         | Frame::FoldInit(..)
         | Frame::FoldStep(..)
+        | Frame::PrintText
+        | Frame::PureValue
         | Frame::InjPayload(..) => PREC_APP,
         Frame::BinOpLeft(op, _) | Frame::BinOpRight(op, _) => op_prec(*op),
         Frame::ConsHead(..) | Frame::ConsTail(..) => PREC_CONS,
@@ -164,6 +172,18 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
         Frame::InjPayload(ctor) => {
             format!("{INJ_STR}{} {child}", render_id(*ctor, names))
         }
+        Frame::PrintText => format!("{PRINT_STR} {child}"),
+        Frame::PureValue => format!("{PURE_STR} {child}"),
+        Frame::BindCommand(id, body) => format!(
+            "{BIND_STR} {} {BIND_ARROW_STR} {child} in {}",
+            render_id(*id, names),
+            render_prec(body, PREC_BINDER, names)
+        ),
+        Frame::BindBody(id, command) => format!(
+            "{BIND_STR} {} {BIND_ARROW_STR} {} in {child}",
+            render_id(*id, names),
+            render_prec(command, PREC_CMP, names)
+        ),
         Frame::MatchScrutinee(arms) => {
             let written: Vec<String> = arms
                 .iter()

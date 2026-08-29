@@ -300,7 +300,7 @@ impl AppState {
     fn binder_kind(&self) -> Option<BinderKind> {
         match self.focus() {
             Exp::Lam(..) => Some(BinderKind::Lam),
-            Exp::Let(..) => Some(BinderKind::Let),
+            Exp::Let(..) | Exp::CmdBind(..) => Some(BinderKind::Let),
             _ => None,
         }
     }
@@ -359,7 +359,9 @@ impl AppState {
             (Slot::FieldName | Slot::FieldPick, _) => Some(self.in_slot(Slot::Node)),
             (Slot::ConstructorName | Slot::ConstructorPick, _) => Some(self.in_slot(Slot::Node)),
             (Slot::Node, _) => match self.edit.zipper.path.last() {
-                Some(Frame::LamBody(..)) | Some(Frame::LetBody(..)) => None,
+                Some(Frame::LamBody(..)) | Some(Frame::LetBody(..)) | Some(Frame::BindBody(..)) => {
+                    None
+                }
                 Some(Frame::RecordField(..)) => Some(
                     self.apply_actions(&[Action::MoveNextSibling])?
                         .in_slot(Slot::FieldName),
@@ -562,10 +564,19 @@ fn is_unfinished(exp: &Exp) -> bool {
 
 fn children(exp: &Exp) -> Vec<&Exp> {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            Vec::new()
-        }
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::NonEmptyHole(_, b) => vec![b],
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => Vec::new(),
+        Exp::Lam(_, _, b)
+        | Exp::Proj(_, b)
+        | Exp::Field(b, _)
+        | Exp::Print(b)
+        | Exp::CmdPure(b)
+        | Exp::NonEmptyHole(_, b) => vec![b],
         Exp::Inj(_, payload) => vec![payload],
         Exp::Match(scrutinee, arms) => {
             let mut out = vec![&**scrutinee];
@@ -576,6 +587,7 @@ fn children(exp: &Exp) -> Vec<&Exp> {
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
         | Exp::Pair(a, b)
+        | Exp::CmdBind(a, _, b)
         | Exp::Cons(a, b) => vec![a, b],
         Exp::If(c, t, e) | Exp::Fold(c, t, e) => vec![c, t, e],
         Exp::Record(fields) => fields.iter().map(|(_, value)| value).collect(),

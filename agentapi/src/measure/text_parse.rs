@@ -4,6 +4,7 @@ use nothing_core::ty::Ty;
 
 const KEYWORDS: &[&str] = &[
     "if", "then", "else", "let", "in", "true", "false", "fst", "snd", "nil", "fold", "match",
+    "print", "readline", "pure", "bind",
 ];
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -199,6 +200,7 @@ impl Parser<'_> {
                     "str" => Ok(Ty::Str),
                     "hole" => Ok(Ty::Hole),
                     "list" => Ok(Ty::List(Box::new(self.ty_atom()?))),
+                    "cmd" => Ok(Ty::Cmd(Box::new(self.ty_atom()?))),
                     _ => Err(TextError(format!("unknown type `{word}`"))),
                 },
             },
@@ -317,6 +319,9 @@ impl Parser<'_> {
         if self.eat_word("if") {
             return self.if_();
         }
+        if self.eat_word("bind") {
+            return self.bind_();
+        }
         self.cmp()
     }
 
@@ -369,6 +374,29 @@ impl Parser<'_> {
         let body = self.expr();
         self.scope.pop();
         Ok(Exp::let_(id, bound, body?))
+    }
+
+    fn bind_(&mut self) -> Result<Exp, TextError> {
+        self.skip_ws();
+        let name = self
+            .take_word()
+            .ok_or_else(|| TextError("a bind needs a name".to_string()))?;
+        if KEYWORDS.contains(&name.as_str()) {
+            return Err(TextError(format!("`{name}` is a keyword, not a name")));
+        }
+        if !self.eat_symbol("<-") {
+            return Err(TextError("a bind needs `<-`".to_string()));
+        }
+        let command = self.expr()?;
+        if !self.eat_word("in") {
+            return Err(TextError("a bind needs `in`".to_string()));
+        }
+        let id = self.fresh_id();
+        self.names.set(id, name.clone());
+        self.scope.push((name, id));
+        let body = self.expr();
+        self.scope.pop();
+        Ok(Exp::cmd_bind(command, id, body?))
     }
 
     fn if_(&mut self) -> Result<Exp, TextError> {
@@ -458,6 +486,10 @@ impl Parser<'_> {
             Exp::proj(Side::L, self.atom()?)
         } else if self.eat_word("snd") {
             Exp::proj(Side::R, self.atom()?)
+        } else if self.eat_word("print") {
+            Exp::print(self.atom()?)
+        } else if self.eat_word("pure") {
+            Exp::cmd_pure(self.atom()?)
         } else if self.eat_word("fold") {
             let list = self.atom()?;
             let init = self.atom()?;
@@ -593,6 +625,7 @@ impl Parser<'_> {
                     "true" => Ok(Exp::bool_(true)),
                     "false" => Ok(Exp::bool_(false)),
                     "nil" => Ok(Exp::nil()),
+                    "readline" => Ok(Exp::readline()),
                     other if KEYWORDS.contains(&other) => {
                         Err(TextError(format!("`{other}` cannot start an expression")))
                     }

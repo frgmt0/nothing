@@ -46,9 +46,20 @@ fn drop_calls_to(exp: &Exp, target: Id, next: &mut u128) -> Exp {
             *next += 1;
             Exp::empty_hole(HoleId::from_u128(*next))
         }
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            exp.clone()
-        }
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Print(text) => Exp::print(drop_calls_to(text, target, next)),
+        Exp::CmdPure(value) => Exp::cmd_pure(drop_calls_to(value, target, next)),
+        Exp::CmdBind(command, id, body) => Exp::cmd_bind(
+            drop_calls_to(command, target, next),
+            *id,
+            drop_calls_to(body, target, next),
+        ),
         Exp::Lam(id, ty, body) => Exp::lam(*id, ty.clone(), drop_calls_to(body, target, next)),
         Exp::Proj(side, body) => Exp::proj(*side, drop_calls_to(body, target, next)),
         Exp::Inj(ctor, payload) => Exp::inj(*ctor, drop_calls_to(payload, target, next)),

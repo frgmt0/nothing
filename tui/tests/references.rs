@@ -57,6 +57,13 @@ fn references() -> Vec<Reference> {
             expected: include_str!("../../bench/fixtures/greeting.expected"),
             neovim: 127,
         },
+        Reference {
+            name: "greeting_command",
+            keys: include_str!("keys/greeting_command.keys"),
+            actions: include_str!("../../bench/fixtures/greeting_command.actions"),
+            expected: include_str!("../../bench/fixtures/greeting_command.expected"),
+            neovim: 66,
+        },
     ]
 }
 
@@ -108,6 +115,14 @@ fn go(exp: &Exp, next: &mut u128, seen: &mut Vec<Id>) -> Exp {
         }
         Exp::Proj(side, e) => Exp::proj(*side, go(e, next, seen)),
         Exp::Nil => Exp::Nil,
+        Exp::Readline => Exp::Readline,
+        Exp::Print(text) => Exp::print(go(text, next, seen)),
+        Exp::CmdPure(value) => Exp::cmd_pure(go(value, next, seen)),
+        Exp::CmdBind(command, id, body) => {
+            let command = go(command, next, seen);
+            let id = canonical(*id, seen);
+            Exp::cmd_bind(command, id, go(body, next, seen))
+        }
         Exp::Cons(head, tail) => {
             let head = go(head, next, seen);
             Exp::cons(head, go(tail, next, seen))

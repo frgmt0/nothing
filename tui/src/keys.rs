@@ -414,6 +414,9 @@ fn node_key(c: char, state: AppState) -> AppState {
         '[' => wrap(state, PREC_APP, Action::ConstructProj(Side::L), "fst"),
         ']' => wrap(state, PREC_APP, Action::ConstructProj(Side::R), "snd"),
         '/' => wrap(state, PREC_APP, Action::ConstructFold, "fold"),
+        '$' => wrap(state, PREC_APP, Action::ConstructPrint, "print"),
+        '\'' => wrap(state, PREC_APP, Action::ConstructPure, "pure"),
+        '>' => binder(state, Action::ConstructBind, pending, "bind"),
 
         '!' => wrap(
             state,
@@ -667,10 +670,10 @@ fn pick_field(text: String, state: AppState, append: bool) -> AppState {
 fn binder_name_key(c: char, state: AppState) -> AppState {
     match c {
         ':' if matches!(state.focus(), Exp::Lam(..)) => to_annotation(state),
-        '=' if matches!(state.focus(), Exp::Let(..)) => {
+        '=' if matches!(state.focus(), Exp::Let(..) | Exp::CmdBind(..)) => {
             match state.apply_actions(&[Action::MoveChild(0)]) {
                 Some(next) => next,
-                None => state.with_hint("this let has no bound expression"),
+                None => state.with_hint("this binder has no bound expression"),
             }
         }
         '.' => to_body(state),
@@ -1087,6 +1090,7 @@ mod tests {
     use super::*;
     use crate::app::index_path;
     use nothing_core::examples;
+    use nothing_core::ty::Ty;
 
     fn type_chars(text: &str, state: AppState) -> AppState {
         text.chars()
@@ -1095,6 +1099,73 @@ mod tests {
 
     fn typed(text: &str) -> String {
         type_chars(text, AppState::empty()).text()
+    }
+
+    #[test]
+    fn a_dollar_prints_and_lands_on_the_text() {
+        assert_eq!(typed("$"), "print ⦇⦈");
+        let state = type_chars("$", AppState::empty());
+        assert_eq!(state.slot, Slot::Node);
+        assert_eq!(state.expected_ty(), Ty::Str, "the cursor is on the text");
+        assert_eq!(typed("$\"hi\""), "print \"hi\"");
+        assert_eq!(
+            typed("12$"),
+            "print ⦇12⦈",
+            "a number is not text, so the editor quarantines rather than refusing the key"
+        );
+        assert_eq!(
+            typed("1+2$"),
+            "1 + ⦇print ⦇2⦈⦈",
+            "print binds its argument the way fst does: tighter than `+`, so it takes the 2"
+        );
+    }
+
+    #[test]
+    fn a_quote_purifies_a_number_without_quarantining_it() {
+        assert_eq!(typed("'"), "pure ⦇⦈");
+        assert_eq!(
+            typed("12'"),
+            "pure 12",
+            "pure accepts anything, so a focused number needs no quarantine"
+        );
+        assert_eq!(
+            typed("1+2'"),
+            "1 + ⦇pure 2⦈",
+            "pure binds as tightly as print, and its argument is the 2 alone"
+        );
+    }
+
+    #[test]
+    fn an_angle_binds_and_lands_in_the_binder_name_slot() {
+        let state = type_chars(">", AppState::empty());
+        assert_eq!(state.text(), "bind x0 <- ⦇⦈ in ⦇⦈");
+        assert_eq!(
+            state.slot,
+            Slot::BinderName,
+            "the first thing you type is what the result is called"
+        );
+        assert_eq!(typed(">line"), "bind line <- ⦇⦈ in ⦇⦈");
+        assert_eq!(
+            typed("12>"),
+            "bind x0 <- ⦇12⦈ in ⦇⦈",
+            "a focus that is not a command is quarantined, as with every other wrapping key"
+        );
+        assert_eq!(
+            typed(">line="),
+            "bind line <- ⦇⦈ in ⦇⦈",
+            "`=` leaves the name slot for the bound command, exactly as on a let"
+        );
+    }
+
+    #[test]
+    fn an_angle_in_an_annotation_slot_is_still_an_arrow() {
+        assert_eq!(typed("\\x:n>n."), "λx:Num -> Num. ⦇⦈");
+        assert_eq!(
+            typed("\\x:c."),
+            "λx:Cmd ?. ⦇⦈",
+            "and `c` is the command prefix in the same slot"
+        );
+        assert_eq!(typed("\\x:cs."), "λx:Cmd Str. ⦇⦈");
     }
 
     #[test]

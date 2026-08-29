@@ -132,6 +132,10 @@ fn candidate_actions(state: &EditState) -> Vec<Action> {
         Action::ConstructRecord,
         Action::ConstructInj,
         Action::ConstructMatch,
+        Action::ConstructPrint,
+        Action::ConstructReadline,
+        Action::ConstructPure,
+        Action::ConstructBind,
     ]);
     for field in fields_in_view(state) {
         out.push(Action::ConstructField(field));
@@ -582,6 +586,49 @@ mod tests {
             "fold synthesises whatever its accumulator is, so it fits anywhere: {tail_steps:?}"
         );
         assert_constructions_are_clean(&tail);
+    }
+
+    #[test]
+    fn a_command_hole_offers_the_command_forms_and_a_num_hole_does_not() {
+        let command = state_from("set-def-ann Cmd Str\n");
+        assert_eq!(
+            ctx_and_expected_ty_at_in(&command.scope(), &command.zipper).1,
+            Ty::Cmd(Box::new(Ty::Str)),
+            "the body of a `main : Cmd Str` expects a command that yields text"
+        );
+        let steps: Vec<String> = well_typed_constructions(&command)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        for wanted in ["construct-readline", "construct-pure", "construct-bind"] {
+            assert!(
+                steps.iter().any(|s| s == wanted),
+                "a command hole must offer {wanted}: {steps:?}"
+            );
+        }
+        assert!(
+            !steps.iter().any(|s| s == "construct-print"),
+            "print yields the empty record, not text: {steps:?}"
+        );
+        assert_constructions_are_clean(&command);
+
+        let number = state_from("set-def-ann Num\n");
+        let steps: Vec<String> = well_typed_constructions(&number)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        for unwanted in [
+            "construct-readline",
+            "construct-print",
+            "construct-pure",
+            "construct-bind",
+        ] {
+            assert!(
+                !steps.iter().any(|s| s == unwanted),
+                "a command is not a number, so {unwanted} must not be offered: {steps:?}"
+            );
+        }
+        assert_constructions_are_clean(&number);
     }
 
     #[test]

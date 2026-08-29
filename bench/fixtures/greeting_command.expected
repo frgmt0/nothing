@@ -1,0 +1,1 @@
+main : ? = bind line <- readline in print ("hello, " ++ line)

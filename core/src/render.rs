@@ -22,6 +22,11 @@ pub const INJ_STR: &str = "`";
 pub const MATCH_STR: &str = "match";
 pub const ARM_STR: &str = "->";
 pub const ARM_SEP_STR: &str = "|";
+pub const PRINT_STR: &str = "print";
+pub const READLINE_STR: &str = "readline";
+pub const PURE_STR: &str = "pure";
+pub const BIND_STR: &str = "bind";
+pub const BIND_ARROW_STR: &str = "<-";
 
 pub fn op_prec(op: Op) -> Prec {
     match op {
@@ -102,6 +107,17 @@ fn fmt_ty(ty: &Ty, min_prec: u8, names: &NameTable, out: &mut String) {
             }
             out.push_str("List ");
             fmt_ty(elem, 3, names, out);
+            if parens {
+                out.push(')');
+            }
+        }
+        Ty::Cmd(result) => {
+            let parens = min_prec > 2;
+            if parens {
+                out.push('(');
+            }
+            out.push_str("Cmd ");
+            fmt_ty(result, 3, names, out);
             if parens {
                 out.push(')');
             }
@@ -257,6 +273,30 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
             write!(out, "{INJ_STR}{} ", render_id(*ctor, names)).unwrap();
             fmt_prec(payload, PREC_ATOM, names, out);
         }
+        Exp::Print(text) => {
+            out.push_str(PRINT_STR);
+            out.push(' ');
+            fmt_prec(text, PREC_ATOM, names, out);
+        }
+        Exp::Readline => {
+            out.push_str(READLINE_STR);
+        }
+        Exp::CmdPure(value) => {
+            out.push_str(PURE_STR);
+            out.push(' ');
+            fmt_prec(value, PREC_ATOM, names, out);
+        }
+        Exp::CmdBind(command, id, body) => {
+            write!(
+                out,
+                "{BIND_STR} {} {BIND_ARROW_STR} ",
+                render_id(*id, names)
+            )
+            .unwrap();
+            fmt_prec(command, PREC_CMP, names, out);
+            out.push_str(" in ");
+            fmt_prec(body, PREC_BINDER, names, out);
+        }
         Exp::Match(scrutinee, arms) => {
             write!(out, "{MATCH_STR} ").unwrap();
             fmt_prec(scrutinee, PREC_ATOM, names, out);
@@ -298,11 +338,17 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::Record(_)
         | Exp::Field(_, _)
         | Exp::Match(..)
+        | Exp::Readline
         | Exp::Pair(_, _) => PREC_ATOM,
         Exp::Cons(_, _) => PREC_CONS,
-        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) | Exp::Inj(..) => PREC_APP,
+        Exp::Ap(_, _)
+        | Exp::Proj(_, _)
+        | Exp::Fold(..)
+        | Exp::Inj(..)
+        | Exp::Print(_)
+        | Exp::CmdPure(_) => PREC_APP,
         Exp::BinOp(op, _, _) => op_prec(*op),
-        Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) => PREC_BINDER,
+        Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) | Exp::CmdBind(..) => PREC_BINDER,
     }
 }
 
@@ -824,6 +870,77 @@ mod tests {
                 &field_names()
             ),
             "Num -> Bool"
+        );
+    }
+
+    #[test]
+    fn the_command_forms_read_as_words_and_bracket_like_the_forms_they_copy() {
+        let names = names();
+        assert_eq!(render(&Exp::readline(), &names), "readline");
+        assert_eq!(render(&Exp::print(Exp::str_("hi")), &names), "print \"hi\"");
+        assert_eq!(render(&Exp::cmd_pure(Exp::num(1)), &names), "pure 1");
+        assert_eq!(
+            render(
+                &Exp::print(Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::str_("b"))),
+                &names
+            ),
+            "print (\"a\" ++ \"b\")",
+            "print takes an atom, exactly as fst does"
+        );
+        assert_eq!(
+            render(
+                &Exp::cmd_bind(Exp::readline(), x(0), Exp::print(Exp::var(x(0)))),
+                &names
+            ),
+            "bind x0 <- readline in print x0"
+        );
+        assert_eq!(
+            render(
+                &Exp::cmd_bind(
+                    Exp::cmd_bind(Exp::readline(), x(0), Exp::cmd_pure(Exp::var(x(0)))),
+                    x(1),
+                    Exp::print(Exp::var(x(1)))
+                ),
+                &names
+            ),
+            "bind x1 <- (bind x0 <- readline in pure x0) in print x1",
+            "a bind in the bound position is bracketed and one in the body is not, \
+             exactly as a let is"
+        );
+        assert_eq!(
+            render(
+                &Exp::bin_op(
+                    Op::Add,
+                    Exp::num(1),
+                    Exp::cmd_bind(Exp::readline(), x(0), Exp::cmd_pure(Exp::num(2)))
+                ),
+                &names
+            ),
+            "1 + (bind x0 <- readline in pure 2)"
+        );
+    }
+
+    #[test]
+    fn a_command_type_reads_as_a_prefix_like_a_list() {
+        let names = names();
+        assert_eq!(render_ty(&crate::ty::cmd(Ty::Str), &names), "Cmd Str");
+        assert_eq!(
+            render_ty(&crate::ty::cmd(crate::ty::unit()), &names),
+            "Cmd {}"
+        );
+        assert_eq!(
+            render_ty(
+                &crate::ty::cmd(Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Num))),
+                &names
+            ),
+            "Cmd (Num -> Num)"
+        );
+        assert_eq!(
+            render_ty(
+                &Ty::Arrow(Box::new(Ty::Str), Box::new(crate::ty::cmd(Ty::Num))),
+                &names
+            ),
+            "Str -> Cmd Num"
         );
     }
 }

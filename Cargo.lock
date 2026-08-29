@@ -798,6 +798,8 @@ dependencies = [
 name = "nothing-cli"
 version = "0.1.0"
 dependencies = [
+ "crossterm",
+ "libc",
  "nothing-action",
  "nothing-agentapi",
  "nothing-core",

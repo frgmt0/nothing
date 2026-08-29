@@ -90,8 +90,8 @@ MOVEMENT                                   LITERALS & NAMES
   →      next sibling/slot   MoveNextSib     ~     negate the focused Num
   ←      prev sibling/slot   MovePrevSib     a-zA-Z_  name run: live-filtered,
   Tab    next hole, either kind (wraps)            type-ranked, commit-live
-  S-Tab  previous hole, either kind                (true/false/nil are
-                                             "    candidates, not keys)
+  S-Tab  previous hole, either kind                (true/false/nil/readline
+                                             "    are candidates, not keys)
 OPERATORS  (climb, then wrap)                     string run: open, and close
   +   add        e + ⦇⦈    ConstructBinOp        with " again. Inside it every
   -   subtract   e - ⦇⦈         〃                printable key is one character
@@ -104,16 +104,19 @@ OPERATORS  (climb, then wrap)                     string run: open, and close
 IN A BINDER-NAME SLOT                        ;      let ⦇⦈ = e in ⦇⦈       …Let
   a-zA-Z0-9_  name the binder  Rename        ,      pair        (e, ⦇⦈)   …Pair
   :   → annotation slot                      [  ]   fst e / snd e   ConstructProj
-  =   → bound expression (let)               /      fold e ⦇⦈ ⦇⦈    ConstructFold
+  =   → bound expr (let, bind)               /      fold e ⦇⦈ ⦇⦈    ConstructFold
   .   → body                                 !      quarantine  ⦇e⦈   …NonEmptyHole
                                              {      record  {f = e}  ConstructRecord
                                              .      field   e.f     ConstructField
                                              `      inject  `C0 e   ConstructInj
                                              |      match   match e {…}  …Match
+                                             $      print   print e  …Print
+                                             '      pure    pure e   …CmdPure
+                                             >      bind  bind x <- e in ⦇⦈  …CmdBind
 
 IN AN ANNOTATION SLOT (re-issues SetAnn)  HOLES & HISTORY
   n Num  b Bool  s Str  ? unknown           Bksp  run: un-type one char ·
-  > arrow  * product  [ list                      empty hole: ascend · else Delete
+  > arrow  * product  [ list  c Cmd               empty hole: ascend · else Delete
   ( ) grouping                              Del   focus → ⦇⦈           Delete
   Bksp drop tok  .  → body                  Enter Finish the ⦇e⦈ on or around
   Tab/Enter → next hole                           the cursor, else next hole
@@ -149,8 +152,9 @@ IN A CONSTRUCTOR SLOT  (reached by ← from an arm's body, or opened by `` ` ``)
                                  anything else  exit → the node, reprocess
 ```
 
-46 bindings. Deliberately unbound and held in reserve for Phase 6+:
-`( ) } ^ % $ # @ ' >` outside the slots.
+49 bindings. Deliberately unbound and held in reserve for Phase 6+:
+`( ) } ^ % # @` outside the slots. B3 spent `$`, `'` and `>` and left
+`readline` to the completion path (item 21).
 
 `&` rather than a doubled `+`: `++` cannot be two keystrokes, because the
 first `+` would already have committed an addition, and a key whose meaning
@@ -169,7 +173,7 @@ is not a context because it is a pure function of the focused node.
 | | **A** empty hole `⦇⦈` | **B** written expr `e` | **C** focused `Num n` | **D** mid-name run | **E** annotation slot | **F** binder-name slot | **G** non-empty hole `⦇e⦈` | **H** inside a string `"s»«"` |
 |---|---|---|---|---|---|---|---|---|
 | **digit** `0-9` | `ConstructNum(d)` | replace: `ConstructNum(d)` | **append**: `n·10±d` | append to run, re-filter, re-commit | exit → body, reprocess | append to name | descend into `e`, then as its column | append the character |
-| **letter / `_`** | start name run | start name run (commit replaces `e`) | start name run | append, re-filter, re-commit | `n`/`b`/`s` set base type (spelled `num`/`bool`/`str` also works — unknown letters inside a spelled name are swallowed); other letters exit → body, reprocess | append to name | descend, then as inner | append the character |
+| **letter / `_`** | start name run | start name run (commit replaces `e`) | start name run | append, re-filter, re-commit | `n`/`b`/`s` set base type and `c` opens `Cmd`, a prefix taking the next type (spelled `num`/`bool`/`str`/`cmd` also works — unknown letters inside a spelled name are swallowed); other letters exit → body, reprocess | append to name | descend, then as inner | append the character |
 | **op** `+ - * < = &` | wrap: `⦇⦈ op ⦇⦈` | climb, then wrap | climb, then wrap | end run, then as B | `*` product; others exit → body, reprocess | `=` on a `let` → bound slot; others exit → body, reprocess | descend, then as inner | append the character |
 | **form** `space \ ? ; ,` | insert the form | climb (`\ ? ; ,`), then wrap | climb, then wrap | end run, then as B | `?` = the unknown type; others exit → body, reprocess | exit → body, reprocess | descend, then as inner | append — except `\`, which arms the escape |
 | **`"`** | `ConstructStr("")`, run opens | replace: `ConstructStr("")`, run opens — on a focused `Str`, **re-open** at its end | replace: `ConstructStr("")`, run opens | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | **close the run**; armed, append `"` |
@@ -182,6 +186,9 @@ is not a context because it is a pure function of the focused node.
 | **`.`** | `⦇⦈.f`, field slot opens | wrap: `e.f`, field slot opens (never climbs) | wrap: `⦇n⦈.f` (quarantined) | end run, then as B | → body slot | → body slot | descend, then as inner | append the character |
 | **`` ` ``** | `` `C0 ⦇⦈ ``, constructor slot opens | wrap: `` `C0 e ``, constructor slot opens | wrap: `` `C0 n `` | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
 | **`\|`** | `match ⦇⦈ {}`, cursor on the scrutinee | wrap: `match e {…}`, one hole arm per constructor | wrap: `match ⦇n⦈ {}` | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`$`** | `print ⦇⦈` | climb (app-level), then wrap: `print e` | climb, then wrap: `print ⦇n⦈` (quarantined) | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`'`** | `pure ⦇⦈` | climb (app-level), then wrap: `pure e` | climb, then wrap: `pure n` (never quarantined) | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`>`** | `bind x <- ⦇⦈ in ⦇⦈` | climb (binder-level), then wrap: `bind x <- e in ⦇⦈` | climb, then wrap: `bind x <- ⦇n⦈ in ⦇⦈` (quarantined) | end run, then as B | **arrow**, as it always has been | exit → body, reprocess | descend, then as inner | append the character |
 | **anything else** | no-op, status-line hint | no-op, hint | no-op, hint | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | printable: append; otherwise close the run, reprocess |
 
 Five rules generalise the table:
@@ -961,6 +968,88 @@ feature.
    `complete::tests::the_constructors_of_the_expected_variant_outrank_the_rest_of_the_document`,
    and the two new rows of all eight columns of `tui/tests/matrix.rs`.
 
+Item 21 is dated **2026-08-29** and belongs to Phase B3, effects.
+
+21. **Effects cost three keys, not four, and the fourth is a word you type.**
+   `Cmd` adds four expression forms — `print e`, `readline`, `pure e` and
+   `bind x <- c in k` — and exactly three of them can be keys. The rule that
+   decides it was already in the implementation and this is the first feature to
+   *use* it as a design constraint rather than discover it as a bug.
+   **(a)** A name run commits live and re-commits on every keystroke, which
+   `commit_run` implements as `Delete` then the candidate's action. That is only
+   sound for a **leaf** construction: it assumes the cursor ends up on the thing
+   it just built, with nothing wrapped around it. `nil`, `true`, `false` and
+   every variable satisfy that. `print`, `pure` and `bind` do not — they wrap
+   the focus, so re-committing them would nest a second one inside the first and
+   the run would build `print (print (print …))` as you typed. So they must be
+   keys. `readline` **is** a leaf: `Exp::Readline` has no children, `Delete` then
+   `ConstructReadline` lands exactly where it started, and it becomes a
+   completion candidate alongside `nil` — typed `r`, `re`, `readline`, ranked
+   above the rest wherever a `Cmd Str` is expected. It costs no key at all,
+   which is item 18(b)'s argument (`fold` had to be a key *because* it wraps)
+   read in the other direction for the first time.
+   **(b)** `$` is **print**. It is the character every shell puts in front of
+   the line where output happens, it is not an operator on anything in this
+   language, and it was in the reserve list. It climbs at app level like `/`,
+   because `print` binds its argument the way `fst` does: on `1 + 2` with the
+   cursor on the `2` it takes the `2` alone, not the sum. On a focused number it
+   quarantines — `12` then `$` is `print ⦇12⦈` — because a number is not text
+   and the editor says so rather than refusing the key. Two of the three
+   quarantine in column **C** and one does not, and that asymmetry is the type
+   rule showing through: `print` analyses its payload against `Str` and `bind`
+   demands a command, so both wrap a number in a quarantine, while `pure`
+   accepts anything and does not.
+   **(c)** `'` is **pure**. Lisp's quote, for the same reason Lisp chose it:
+   the thing after it is handed back as-is, not performed. Its cell in column C
+   is the one place in the whole matrix where a form key wraps a focused `Num`
+   *without* quarantining it, because `pure 1 : Cmd Num` is simply true. `'`
+   could have gone unbound — `pure` is only strictly needed to end a chain with
+   a value — but a form no keystroke can reach is a form that is not in the
+   language, and the coverage rule below admits no exceptions.
+   **(d)** `>` is **bind**, and it is the one key in this workspace that means
+   two different things in two contexts *on purpose*. In the annotation slot it
+   has been the arrow since Phase 2; on a node it now builds
+   `bind x <- e in ⦇⦈`. Those never collide, because the annotation slot's
+   alphabet is types and a node's alphabet is expressions, and the same
+   character reading as "→" in one and "then" in the other is the same joke
+   twice rather than an ambiguity: both are sequencing, one in the type and one
+   in the term. It climbs at `PREC_BINDER` and wraps exactly as `;` does,
+   because `bind` *is* `let` for commands and every difference would have to be
+   defended: focus becomes the bound command, the body is a fresh hole, the
+   binder is minted, and the cursor lands in the **binder-name slot** so the
+   first thing you type is what the result is called. On a focus that is not a
+   command it quarantines, so `12` then `>` is `bind x0 <- ⦇12⦈ in ⦇⦈`, and `=`
+   leaves the name slot for the bound command exactly as it does on a `let`.
+   **(e)** Nothing else was needed, and three candidates were talked out of.
+   There is **no key for `seq`**, because there is no `seq` (`DECISIONS.md`,
+   2026-08-29): a bind whose binder you never mention is the same six
+   keystrokes and one fewer form. There is **no `run` key**: performing the
+   program is a *command-line* verb, and a key that made the editor perform
+   effects would be the exact footgun the phase was written to avoid — the
+   editor shows you the `Cmd`, the terminal runs it, and no keystroke crosses
+   that line. And there is **no dedicated key for the empty record** that
+   `print` yields, even though B3 is the feature that made `{}` common: `{`
+   already builds a record and `C-d` already empties it, and a second way to
+   spell a value you mostly *read* rather than write is a binding spent on
+   nothing.
+   **(f)** The key-hint line is now exactly full. It was 157 columns of the 160
+   that two 80-column rows allow; `$`, `'` and `>` join the form group and take
+   it to 160 with nothing left over. The variants entry predicted that the next
+   feature would have to drop a hint rather than shorten one, and B3 got in
+   under that by three characters — which means the prediction now holds
+   literally: the feature after this one has no columns at all, and must retire
+   a hint to earn any. The three-row `keys_area` will wrap a longer line without
+   clipping it, but a hint line that needs a third row is a hint line nobody
+   reads.
+   Pinned by `keys::tests::a_dollar_prints_and_lands_on_the_text`,
+   `keys::tests::a_quote_purifies_a_number_without_quarantining_it`,
+   `keys::tests::an_angle_binds_and_lands_in_the_binder_name_slot`,
+   `keys::tests::an_angle_in_an_annotation_slot_is_still_an_arrow`,
+   `annot::tests::a_c_is_the_command_prefix_and_takes_the_next_type`,
+   `complete::tests::readline_is_a_candidate_and_outranks_the_rest_where_a_command_is_expected`,
+   `render::tests::the_key_hint_line_exactly_fills_the_two_rows_it_is_given`,
+   and the three new rows of all eight columns of `tui/tests/matrix.rs`.
+
 Measured, replacing the predicted table's middle column (`tui/tests/keys/`,
 one keystroke per line). The 2026-08-28 column is the definition era: the
 programs are documents now, and `factorial` and `record` were rebuilt to say
@@ -974,6 +1063,7 @@ what they always meant rather than what Phase 1 could express.
 | 4 | state_machine | 151 | 41 | 53 | 0.27× | 24 / 0.16× |
 | 5 | nested_conditional | 146 | 31 | 42 | 0.21× | unchanged |
 | 6 | greeting | 127 | 52 | 56 | 0.41× | new (2026-08-29) |
+| 7 | greeting_command | 66 | 30 | 41 | 0.45× | new (2026-08-29) |
 
 Row 2 changed on 2026-08-29 when lists arrived: the fixture had been map
 over a *pair* since Phase 1 and is now a real map over a cons list, so the
@@ -1006,6 +1096,14 @@ payloads — is 23. The state-machine projection reads a match now
 reads the old if-chain (`…::the_chain_of_equality_tests_is_still_a_state_machine`),
 because a program someone wrote before variants existed does not stop being a
 state machine.
+
+Row 7 arrived with effects on 2026-08-29 and is the first reference program
+that *does* anything rather than computing a value: `bind line <- readline in
+print ("hello, " ++ line)`. Eight of its thirty keystrokes spell `readline`,
+which is item 21(a)'s rule showing up as a number — a leaf is a completion
+candidate and a candidate is typed. The three keys the feature did add
+(`$`, `'`, `>`) cost one keystroke each, and the binder name and the greeting
+literal are content no projection can make cheaper.
 
 Row 6 arrived with strings on 2026-08-29 and is the first reference whose
 cost is mostly *content*: 27 of its 52 keystrokes are the characters and

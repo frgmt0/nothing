@@ -10,6 +10,7 @@ pub enum CandidateKind {
     Var(Id),
     Bool(bool),
     Nil,
+    Readline,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -25,6 +26,7 @@ impl Candidate {
             CandidateKind::Var(id) => Action::ConstructVar(id),
             CandidateKind::Bool(b) => Action::ConstructBool(b),
             CandidateKind::Nil => Action::ConstructNil,
+            CandidateKind::Readline => Action::ConstructReadline,
         }
     }
 
@@ -79,6 +81,15 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
             name: "nil".to_string(),
             ty: Ty::List(Box::new(Ty::Hole)),
             kind: CandidateKind::Nil,
+        };
+        out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
+    }
+
+    if "readline".starts_with(prefix) {
+        let candidate = Candidate {
+            name: "readline".to_string(),
+            ty: Ty::Cmd(Box::new(Ty::Str)),
+            kind: CandidateKind::Readline,
         };
         out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
     }
@@ -185,6 +196,13 @@ mod tests {
             .collect()
     }
 
+    fn position(ranked: &[String], name: &str) -> usize {
+        ranked
+            .iter()
+            .position(|n| n == name)
+            .unwrap_or_else(|| panic!("{name} was not offered at all: {ranked:?}"))
+    }
+
     fn two_binders() -> AppState {
         typed("\\x0:n.\\x1:b.")
     }
@@ -246,8 +264,8 @@ mod tests {
         );
         assert_eq!(
             &ranked[2..],
-            ["main", "x0", "nil"],
-            "neither a function nor an empty list fits a Bool hole: {ranked:?}"
+            ["main", "x0", "nil", "readline"],
+            "neither a function, an empty list nor a command fits a Bool hole: {ranked:?}"
         );
     }
 
@@ -258,7 +276,7 @@ mod tests {
 
         assert_eq!(
             names(&state, ""),
-            vec!["x2", "x1", "x0", "nil", "main", "true", "false"],
+            vec!["x2", "x1", "x0", "nil", "main", "true", "false", "readline"],
             "the definition the cursor is in is a name like any other"
         );
 
@@ -268,7 +286,37 @@ mod tests {
         let empty = AppState::empty();
         assert_eq!(empty.expected_ty(), Ty::Hole);
         assert!(candidates(&empty, "x").is_empty());
-        assert_eq!(names(&empty, ""), vec!["nil", "main", "true", "false"]);
+        assert_eq!(
+            names(&empty, ""),
+            vec!["nil", "main", "true", "false", "readline"]
+        );
+    }
+
+    #[test]
+    fn readline_is_a_candidate_and_outranks_the_rest_where_a_command_is_expected() {
+        let state = typed(">a=");
+        assert_eq!(state.expected_ty(), Ty::Cmd(Box::new(Ty::Hole)));
+        let ranked = names(&state, "");
+        let readline = position(&ranked, "readline");
+        for wrong in ["true", "false", "nil"] {
+            assert!(
+                readline < position(&ranked, wrong),
+                "readline fits a command slot and {wrong} does not: {ranked:?}"
+            );
+        }
+        assert_eq!(names(&state, "r"), vec!["readline"]);
+        assert_eq!(
+            candidates(&state, "readline")[0].action(),
+            Action::ConstructReadline
+        );
+
+        let num = typed("\\x0:n.+");
+        assert_eq!(num.expected_ty(), Ty::Num);
+        assert_eq!(
+            names(&num, "").last().map(String::as_str),
+            Some("readline"),
+            "a command is the worst thing to put where a number goes"
+        );
     }
 
     #[test]

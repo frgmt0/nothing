@@ -66,9 +66,9 @@ Four features, applied one at a time through the full-thread checklist. The spec
 
 A language that cannot print is a calculator. Smallest honest design, decided before built.
 
-- [ ] **Write the effect design into DECISIONS.md before code.** Committed direction: `main` may have type `Cmd` — a value describing effects (print, read line, read file, args), executed only by the `nothing run` runtime. Pure evaluation, the live-values pane, and holes are untouched: a `Cmd` renders as a value in the editor and *executes* only under `run`. No effect polymorphism, no async. **Done when** the entry exists with the rejected alternatives (direct side-effecting builtins; monadic sugar) and why.
-- [ ] **Implement `Cmd`.** Constructors: `print`, `readline`, `pure`, `bind` (or `seq`). Full-thread checklist applies. **Done when** `nothing run hello.n` prints text a stranger typed into the editor five minutes earlier.
-- [ ] **Effects around holes.** Running a `Cmd` containing a hole executes up to the hole, then stops with the indeterminate report and the captured environment — the run-time twin of Phase 6. **Done when** a program that prints twice with a hole in between performs the first print, skips the second, and reports the hole.
+- [x] **Write the effect design into DECISIONS.md before code.** Committed direction: `main` may have type `Cmd` — a value describing effects (print, read line, read file, args), executed only by the `nothing run` runtime. Pure evaluation, the live-values pane, and holes are untouched: a `Cmd` renders as a value in the editor and *executes* only under `run`. No effect polymorphism, no async. **Done when** the entry exists with the rejected alternatives (direct side-effecting builtins; monadic sugar) and why.
+- [x] **Implement `Cmd`.** Constructors: `print`, `readline`, `pure`, `bind` (or `seq`). Full-thread checklist applies. **Done when** `nothing run hello.n` prints text a stranger typed into the editor five minutes earlier.
+- [x] **Effects around holes.** Running a `Cmd` containing a hole executes up to the hole, then stops with the indeterminate report and the captured environment — the run-time twin of Phase 6. **Done when** a program that prints twice with a hole in between performs the first print, skips the second, and reports the hole.
 
 ---
 

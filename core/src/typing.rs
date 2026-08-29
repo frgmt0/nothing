@@ -1,8 +1,8 @@
 use crate::ctx::Ctx;
 use crate::exp::{Exp, Id, Op, Side};
 use crate::ty::{
-    Ty, is_consistent, matched_arrow, matched_list, matched_prod, matched_record,
-    matched_record_fields, matched_variant, variant_constructors,
+    Ty, is_consistent, matched_arrow, matched_cmd, matched_list, matched_prod, matched_record,
+    matched_record_fields, matched_variant, unit, variant_constructors,
 };
 
 pub fn fields_are_distinct(ids: &[Id]) -> bool {
@@ -60,6 +60,7 @@ pub fn join(a: &Ty, b: &Ty) -> Option<Ty> {
             Some(Ty::Prod(Box::new(join(a1, b1)?), Box::new(join(a2, b2)?)))
         }
         (Ty::List(a), Ty::List(b)) => Some(Ty::List(Box::new(join(a, b)?))),
+        (Ty::Cmd(a), Ty::Cmd(b)) => Some(Ty::Cmd(Box::new(join(a, b)?))),
         (Ty::Record(a), Ty::Record(b)) if a.len() == b.len() => {
             let mut fields = Vec::with_capacity(a.len());
             for (id, left) in a {
@@ -158,6 +159,27 @@ fn syn_match(ctx: &Ctx, scrutinee: &Exp, arms: &[(Id, Id, Exp)]) -> Option<Ty> {
     Some(result)
 }
 
+fn syn_cmd_bind(ctx: &Ctx, command: &Exp, id: Id, body: &Exp) -> Option<Ty> {
+    let command_ty = syn(ctx, command)?;
+    let yielded = matched_cmd(&command_ty)?;
+    let body_ty = syn(&ctx.extend(id, yielded), body)?;
+    let result = matched_cmd(&body_ty)?;
+    Some(Ty::Cmd(Box::new(result)))
+}
+
+fn ana_cmd_bind(ctx: &Ctx, command: &Exp, id: Id, body: &Exp, ty: &Ty) -> bool {
+    if matched_cmd(ty).is_none() {
+        return false;
+    }
+    let Some(command_ty) = syn(ctx, command) else {
+        return false;
+    };
+    let Some(yielded) = matched_cmd(&command_ty) else {
+        return false;
+    };
+    ana(&ctx.extend(id, yielded), body, ty)
+}
+
 pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
     match exp {
         Exp::Var(id) => ctx.lookup(id),
@@ -238,6 +260,23 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
         }
 
         Exp::Match(scrutinee, arms) => syn_match(ctx, scrutinee, arms),
+
+        Exp::Print(text) => {
+            if ana(ctx, text, &Ty::Str) {
+                Some(Ty::Cmd(Box::new(unit())))
+            } else {
+                None
+            }
+        }
+
+        Exp::Readline => Some(Ty::Cmd(Box::new(Ty::Str))),
+
+        Exp::CmdPure(value) => {
+            let value_ty = syn(ctx, value)?;
+            Some(Ty::Cmd(Box::new(value_ty)))
+        }
+
+        Exp::CmdBind(command, id, body) => syn_cmd_bind(ctx, command, *id, body),
 
         Exp::EmptyHole(_) => Some(Ty::Hole),
 
@@ -330,6 +369,13 @@ pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
                 ana(&ctx.extend(*binder, payload), body, ty)
             })
         }
+
+        Exp::CmdPure(value) => match matched_cmd(ty) {
+            Some(yielded) => ana(ctx, value, &yielded),
+            None => false,
+        },
+
+        Exp::CmdBind(command, id, body) => ana_cmd_bind(ctx, command, *id, body, ty),
 
         _ => match syn(ctx, exp) {
             Some(syn_ty) => is_consistent(&syn_ty, ty),
@@ -1021,5 +1067,112 @@ mod tests {
         assert!(ana(&Ctx::empty(), &e, &Ty::Num));
         assert!(ana(&Ctx::empty(), &e, &Ty::Hole));
         assert!(!ana(&Ctx::empty(), &e, &Ty::Bool));
+    }
+
+    fn cmd(result: Ty) -> Ty {
+        Ty::Cmd(Box::new(result))
+    }
+
+    #[test]
+    fn the_three_leaf_commands_synthesise_what_they_yield() {
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::print(Exp::str_("hi"))),
+            Some(cmd(crate::ty::unit())),
+            "print yields the empty record, not a unit type of its own"
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::print(Exp::num(1))),
+            None,
+            "print analyses its payload against Str"
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::print(Exp::empty_hole(h(0)))),
+            Some(cmd(crate::ty::unit())),
+            "a hole is consistent with Str, so print of a hole still has a type"
+        );
+        assert_eq!(syn(&Ctx::empty(), &Exp::readline()), Some(cmd(Ty::Str)));
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::cmd_pure(Exp::num(1))),
+            Some(cmd(Ty::Num))
+        );
+    }
+
+    #[test]
+    fn a_bind_puts_what_the_command_yields_into_scope_for_the_body() {
+        let e = Exp::cmd_bind(Exp::readline(), x(), Exp::cmd_pure(Exp::var(x())));
+        assert_eq!(
+            syn(&Ctx::empty(), &e),
+            Some(cmd(Ty::Str)),
+            "the binder is a Str because readline yields one"
+        );
+
+        let mismatched = Exp::cmd_bind(
+            Exp::readline(),
+            x(),
+            Exp::print(Exp::bin_op(crate::exp::Op::Add, Exp::var(x()), Exp::num(1))),
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &mismatched),
+            None,
+            "and adding one to it is not something the rule lets through"
+        );
+
+        assert_eq!(
+            syn(
+                &Ctx::empty(),
+                &Exp::cmd_bind(Exp::num(1), x(), Exp::readline())
+            ),
+            None,
+            "the thing bound must be a command"
+        );
+        assert_eq!(
+            syn(
+                &Ctx::empty(),
+                &Exp::cmd_bind(Exp::readline(), x(), Exp::num(1))
+            ),
+            None,
+            "and so must the body"
+        );
+    }
+
+    #[test]
+    fn a_hole_in_a_bind_still_has_a_type_because_matched_cmd_fails_open() {
+        let e = Exp::cmd_bind(
+            Exp::empty_hole(h(0)),
+            x(),
+            Exp::print(Exp::empty_hole(h(1))),
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &e),
+            Some(cmd(crate::ty::unit())),
+            "an unwritten command is consistent with every command"
+        );
+        assert!(ana(&Ctx::empty(), &e, &cmd(crate::ty::unit())));
+        assert!(ana(&Ctx::empty(), &e, &Ty::Hole));
+        assert!(!ana(&Ctx::empty(), &e, &Ty::Num));
+    }
+
+    #[test]
+    fn analysis_pushes_the_expected_command_type_through_pure_and_bind() {
+        assert!(ana(
+            &Ctx::empty(),
+            &Exp::cmd_pure(Exp::empty_hole(h(0))),
+            &cmd(Ty::Num)
+        ));
+        assert!(!ana(
+            &Ctx::empty(),
+            &Exp::cmd_pure(Exp::bool_(true)),
+            &cmd(Ty::Num)
+        ));
+
+        let e = Exp::cmd_bind(Exp::readline(), x(), Exp::cmd_pure(Exp::empty_hole(h(1))));
+        assert!(
+            ana(&Ctx::empty(), &e, &cmd(Ty::Num)),
+            "the expectation reaches the hole at the end of the chain"
+        );
+        assert!(
+            !ana(&Ctx::empty(), &e, &Ty::Num),
+            "a command is not its result"
+        );
     }
 }

@@ -311,7 +311,7 @@ fn entry_line(state: &AppState) -> Option<String> {
 }
 
 pub fn key_line() -> &'static str {
-    "↑↓←→ move · Tab hole · 0-9a-z\" lit · +-*<=&: op · space\\?;,[]/!{`| form · :.` slot · \
+    "↑↓←→ move · Tab hole · 0-9a-z\" lit · +-*<=&: op · space\\?;,[]/!{`|>$' form · :.` slot · \
      Enter fit · C-↑↓ defs · C-n/d ±row · C-l/t name/ty · C-z undo · C-q quit"
 }
 
@@ -335,6 +335,10 @@ fn focus_label(exp: &Exp) -> &'static str {
         Exp::Field(..) => "field projection",
         Exp::Inj(..) => "injection",
         Exp::Match(..) => "match",
+        Exp::Print(..) => "print",
+        Exp::Readline => "readline",
+        Exp::CmdPure(..) => "pure",
+        Exp::CmdBind(..) => "bind",
         Exp::EmptyHole(_) => "empty hole",
         Exp::NonEmptyHole(..) => "quarantined ⦇e⦈",
     }
@@ -647,6 +651,22 @@ mod tests {
             "{}",
             status_line(&fixed)
         );
+    }
+
+    #[test]
+    fn the_key_hint_line_exactly_fills_the_two_rows_it_is_given() {
+        let width = key_line().chars().count();
+        assert_eq!(
+            width, 160,
+            "the hint line is {width} columns; two 80-column rows hold exactly 160, so the \
+             next feature must retire a hint rather than add one (KEYS.md item 21(f))"
+        );
+        for c in ['$', '\'', '>'] {
+            assert!(
+                key_line().contains(c),
+                "`{c}` is a form key and is not in the hint line"
+            );
+        }
     }
 
     #[test]

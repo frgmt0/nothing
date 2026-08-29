@@ -24,6 +24,10 @@ pub enum Dyn {
     Field(Box<Dyn>, Id),
     Inj(Id, Box<Dyn>),
     Match(Box<Dyn>, Vec<(Id, Id, Dyn)>),
+    Print(Box<Dyn>),
+    Readline,
+    CmdPure(Box<Dyn>),
+    CmdBind(Box<Dyn>, Id, Box<Dyn>),
 
     EmptyHole(HoleId, Env),
     NonEmptyHole(HoleId, Env, Box<Dyn>),
@@ -96,6 +100,14 @@ pub fn elaborate_in(exp: &Exp, sigma: &Env) -> Dyn {
                 .collect();
             Dyn::Match(Box::new(scrutinee), arms)
         }
+        Exp::Print(text) => Dyn::Print(Box::new(elaborate_in(text, sigma))),
+        Exp::Readline => Dyn::Readline,
+        Exp::CmdPure(value) => Dyn::CmdPure(Box::new(elaborate_in(value, sigma))),
+        Exp::CmdBind(command, id, body) => {
+            let command = elaborate_in(command, sigma);
+            let inner = sigma.update(*id, Dyn::Var(*id));
+            Dyn::CmdBind(Box::new(command), *id, Box::new(elaborate_in(body, &inner)))
+        }
         Exp::EmptyHole(h) => Dyn::EmptyHole(*h, sigma.clone()),
         Exp::NonEmptyHole(h, inner) => {
             Dyn::NonEmptyHole(*h, sigma.clone(), Box::new(elaborate_in(inner, sigma)))
@@ -166,6 +178,18 @@ pub fn subst(x: Id, v: &Dyn, d: &Dyn) -> Dyn {
                 })
                 .collect(),
         ),
+        Dyn::Print(text) => Dyn::Print(Box::new(subst(x, v, text))),
+        Dyn::Readline => Dyn::Readline,
+        Dyn::CmdPure(value) => Dyn::CmdPure(Box::new(subst(x, v, value))),
+        Dyn::CmdBind(command, id, body) => {
+            let command = Box::new(subst(x, v, command));
+            let body = if *id == x {
+                body.clone()
+            } else {
+                Box::new(subst(x, v, body))
+            };
+            Dyn::CmdBind(command, *id, body)
+        }
         Dyn::EmptyHole(h, env) => Dyn::EmptyHole(*h, subst_env(x, v, env)),
         Dyn::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, subst_env(x, v, env), Box::new(subst(x, v, inner)))
@@ -179,10 +203,13 @@ fn subst_env(x: Id, v: &Dyn, env: &Env) -> Env {
 
 pub fn is_value(d: &Dyn) -> bool {
     match d {
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::Nil => true,
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::Nil | Dyn::Readline => true,
         Dyn::Pair(fst, snd) | Dyn::Cons(fst, snd) => is_value(fst) && is_value(snd),
         Dyn::Record(fields) => fields.iter().all(|(_, value)| is_value(value)),
         Dyn::Inj(_, payload) => is_value(payload),
+        Dyn::Print(text) => is_value(text),
+        Dyn::CmdPure(value) => is_value(value),
+        Dyn::CmdBind(command, _, _) => is_value(command),
         _ => false,
     }
 }
@@ -225,6 +252,12 @@ pub fn to_exp(d: &Dyn) -> Exp {
                 .map(|(ctor, binder, body)| (*ctor, *binder, to_exp(body)))
                 .collect(),
         ),
+        Dyn::Print(text) => Exp::Print(Box::new(to_exp(text))),
+        Dyn::Readline => Exp::Readline,
+        Dyn::CmdPure(value) => Exp::CmdPure(Box::new(to_exp(value))),
+        Dyn::CmdBind(command, id, body) => {
+            Exp::CmdBind(Box::new(to_exp(command)), *id, Box::new(to_exp(body)))
+        }
         Dyn::EmptyHole(h, _) => Exp::EmptyHole(*h),
         Dyn::NonEmptyHole(h, _, inner) => Exp::NonEmptyHole(*h, Box::new(to_exp(inner))),
     }
@@ -236,11 +269,19 @@ pub fn render(d: &Dyn, names: &NameTable) -> String {
 
 pub fn size(d: &Dyn) -> usize {
     match d {
-        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::EmptyHole(..) => 1,
+        Dyn::Var(_)
+        | Dyn::Num(_)
+        | Dyn::Bool(_)
+        | Dyn::Str(_)
+        | Dyn::Nil
+        | Dyn::Readline
+        | Dyn::EmptyHole(..) => 1,
         Dyn::Lam(_, _, b)
         | Dyn::Proj(_, b)
         | Dyn::Field(b, _)
         | Dyn::Inj(_, b)
+        | Dyn::Print(b)
+        | Dyn::CmdPure(b)
         | Dyn::NonEmptyHole(_, _, b) => 1 + size(b),
         Dyn::Record(fields) => 1 + fields.iter().map(|(_, value)| size(value)).sum::<usize>(),
         Dyn::Match(scrutinee, arms) => {
@@ -250,6 +291,7 @@ pub fn size(d: &Dyn) -> usize {
         | Dyn::BinOp(_, a, b)
         | Dyn::Let(_, a, b)
         | Dyn::Pair(a, b)
+        | Dyn::CmdBind(a, _, b)
         | Dyn::Cons(a, b) => 1 + size(a) + size(b),
         Dyn::If(c, t, e) | Dyn::Fold(c, t, e) => 1 + size(c) + size(t) + size(e),
     }

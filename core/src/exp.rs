@@ -172,6 +172,10 @@ pub enum Exp {
     Field(Box<Exp>, Id),
     Inj(Id, Box<Exp>),
     Match(Box<Exp>, Vec<(Id, Id, Exp)>),
+    Print(Box<Exp>),
+    Readline,
+    CmdPure(Box<Exp>),
+    CmdBind(Box<Exp>, Id, Box<Exp>),
 
     /// A gap where an expression has not been written yet. It synthesises
     /// type `Hole` so the program stays well-typed mid-edit: an empty hole
@@ -272,6 +276,22 @@ impl Exp {
         Exp::Match(scrutinee.into(), arms.into_iter().collect())
     }
 
+    pub fn print(text: impl Into<Box<Exp>>) -> Exp {
+        Exp::Print(text.into())
+    }
+
+    pub fn readline() -> Exp {
+        Exp::Readline
+    }
+
+    pub fn cmd_pure(value: impl Into<Box<Exp>>) -> Exp {
+        Exp::CmdPure(value.into())
+    }
+
+    pub fn cmd_bind(command: impl Into<Box<Exp>>, id: Id, body: impl Into<Box<Exp>>) -> Exp {
+        Exp::CmdBind(command.into(), id, body.into())
+    }
+
     pub fn unit() -> Exp {
         Exp::Record(Vec::new())
     }
@@ -323,11 +343,15 @@ mod tests {
             Exp::field(Exp::record([(x, Exp::num(1))]), x),
             Exp::inj(x, Exp::unit()),
             Exp::match_(Exp::inj(x, Exp::unit()), [(x, x, Exp::num(1))]),
+            Exp::print(Exp::str_("hello")),
+            Exp::readline(),
+            Exp::cmd_pure(Exp::num(1)),
+            Exp::cmd_bind(Exp::readline(), x, Exp::print(Exp::var(x))),
             Exp::empty_hole(h0),
             Exp::non_empty_hole(h1, Exp::bool_(true)),
         ];
 
-        assert_eq!(exps.len(), 20);
+        assert_eq!(exps.len(), 24);
     }
 
     #[test]

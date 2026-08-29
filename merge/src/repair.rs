@@ -4,7 +4,8 @@ use nothing_core::exp::{Exp, Id, Op};
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
 use nothing_core::ty::{
-    Ty, matched_arrow, matched_list, matched_prod, matched_record, variant_constructors,
+    Ty, matched_arrow, matched_cmd, matched_list, matched_prod, matched_record,
+    variant_constructors,
 };
 use nothing_core::typing::{
     ana, arm_payload_ty, is_comparable, is_well_typed_in, join, operand_expectation, step_ty, syn,
@@ -123,7 +124,56 @@ impl State {
                     self.vacate(exp, path, "the merge left this variable unbound")
                 }
             }
-            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => exp.clone(),
+            Exp::Num(_)
+            | Exp::Bool(_)
+            | Exp::Str(_)
+            | Exp::Nil
+            | Exp::Readline
+            | Exp::EmptyHole(_) => exp.clone(),
+
+            Exp::Print(text) => {
+                let text = self.go(ctx, text, &extend(path, 0));
+                let text = self.ensure_ana(
+                    ctx,
+                    text,
+                    &Ty::Str,
+                    &extend(path, 0),
+                    "the merge left something other than text for `print` to write",
+                );
+                Exp::Print(Box::new(text))
+            }
+
+            Exp::CmdPure(value) => {
+                let value = self.go(ctx, value, &extend(path, 0));
+                Exp::CmdPure(Box::new(value))
+            }
+
+            Exp::CmdBind(command, id, body) => {
+                let mut command = self.go(ctx, command, &extend(path, 0));
+                let command_ty = syn(ctx, &command).unwrap_or(Ty::Hole);
+                let yielded = match matched_cmd(&command_ty) {
+                    Some(yielded) => yielded,
+                    None => {
+                        command = self.quarantine(
+                            command,
+                            &extend(path, 0),
+                            "the merge left something that is not a command for `bind` to perform",
+                        );
+                        Ty::Hole
+                    }
+                };
+                let inner = ctx.extend(*id, yielded);
+                let mut body = self.go(&inner, body, &extend(path, 1));
+                let body_ty = syn(&inner, &body).unwrap_or(Ty::Hole);
+                if matched_cmd(&body_ty).is_none() {
+                    body = self.quarantine(
+                        body,
+                        &extend(path, 1),
+                        "the merge left something that is not a command after `in`",
+                    );
+                }
+                Exp::CmdBind(Box::new(command), *id, Box::new(body))
+            }
 
             Exp::Lam(id, ann, body) => {
                 let inner = ctx.extend(*id, ann.clone());

@@ -25,7 +25,7 @@ pub fn accept(buffer: &str, c: char) -> Accept {
         ')' if open_parens(buffer) > 0 => Accept::Append,
         ')' => Accept::Ignore,
         c if c.is_alphabetic() && in_word(buffer) => Accept::Swallow,
-        'n' | 'N' | 'b' | 'B' | 's' | 'S' => Accept::Append,
+        'n' | 'N' | 'b' | 'B' | 's' | 'S' | 'c' | 'C' => Accept::Append,
         _ => Accept::Exit,
     }
 }
@@ -43,7 +43,7 @@ fn tokens(buffer: &str) -> Vec<Tok> {
     let mut out = Vec::new();
     let mut prev_alpha = false;
     for c in buffer.chars() {
-        let alpha = c.is_alphabetic();
+        let mut alpha = c.is_alphabetic();
         if !(alpha && prev_alpha) {
             match c {
                 'n' | 'N' => out.push(Tok::Base("Num")),
@@ -51,6 +51,10 @@ fn tokens(buffer: &str) -> Vec<Tok> {
                 's' | 'S' => out.push(Tok::Base("Str")),
                 '?' => out.push(Tok::Base("?")),
                 '[' => out.push(Tok::Prefix("List")),
+                'c' | 'C' => {
+                    out.push(Tok::Prefix("Cmd"));
+                    alpha = false;
+                }
                 '>' => out.push(Tok::Op("->")),
                 '*' => out.push(Tok::Op("*")),
                 '(' => out.push(Tok::Open),
@@ -157,7 +161,8 @@ mod tests {
     fn every_prefix_of_every_buffer_parses() {
         for buffer in [
             "n", "n>n", "n*n", "num>bool", "(n>n)>n", "n>(n*b)", "?>?", "n*n*n", "(((n", "n>>n",
-            "*n", "()", "(n*)", "[n", "[[n", "[n>n", "([n)", "n>[b", "[n*[b", "[", "n[",
+            "*n", "()", "(n*)", "[n", "[[n", "[n>n", "([n)", "n>[b", "[n*[b", "[", "n[", "c", "cs",
+            "cmd", "c[n", "[cn", "cn>cb", "c(n>n)", "cc", "c*n", "nc",
         ] {
             let mut prefix = String::new();
             for c in buffer.chars() {
@@ -208,5 +213,23 @@ mod tests {
         assert_eq!(accept("", '['), Accept::Append);
         assert_eq!(accept("n", '['), Accept::Append);
         assert_eq!(parse("n["), parse("n"));
+    }
+
+    fn cmd(result: Ty) -> Ty {
+        Ty::Cmd(Box::new(result))
+    }
+
+    #[test]
+    fn a_c_is_the_command_prefix_and_takes_the_next_type() {
+        assert_eq!(parse("c"), cmd(Ty::Hole));
+        assert_eq!(parse("cs"), cmd(Ty::Str));
+        assert_eq!(parse("cmd"), parse("c"));
+        assert_eq!(parse("c[n"), cmd(list(Ty::Num)));
+        assert_eq!(parse("[cn"), list(cmd(Ty::Num)));
+        assert_eq!(parse("cn>cb"), arrow(cmd(Ty::Num), cmd(Ty::Bool)));
+        assert_eq!(parse("c(n>n)"), cmd(arrow(Ty::Num, Ty::Num)));
+        assert_eq!(accept("", 'c'), Accept::Append);
+        assert_eq!(accept("c", 'm'), Accept::Swallow);
+        assert_eq!(parse("nc"), parse("n"));
     }
 }

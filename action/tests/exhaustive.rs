@@ -15,7 +15,22 @@ struct MissingArm {
 
 fn missing_arms(ctx: &Ctx, exp: &Exp, out: &mut Vec<MissingArm>) {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {}
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => {}
+        Exp::Print(e) | Exp::CmdPure(e) => missing_arms(ctx, e, out),
+        Exp::CmdBind(command, id, body) => {
+            missing_arms(ctx, command, out);
+            let yielded = syn(ctx, command)
+                .as_ref()
+                .and_then(nothing_core::ty::matched_cmd)
+                .unwrap_or(Ty::Hole);
+            missing_arms(&ctx.extend(*id, yielded), body, out);
+        }
         Exp::Lam(id, ann, body) => missing_arms(&ctx.extend(*id, ann.clone()), body, out),
         Exp::Let(id, bound, body) => {
             missing_arms(ctx, bound, out);
@@ -80,15 +95,25 @@ fn matches_in(doc: &Doc) -> usize {
 
 fn children(exp: &Exp) -> Vec<&Exp> {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
-            Vec::new()
-        }
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::NonEmptyHole(_, b) => vec![b],
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => Vec::new(),
+        Exp::Lam(_, _, b)
+        | Exp::Proj(_, b)
+        | Exp::Field(b, _)
+        | Exp::Print(b)
+        | Exp::CmdPure(b)
+        | Exp::NonEmptyHole(_, b) => vec![b],
         Exp::Inj(_, b) => vec![b],
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
         | Exp::Pair(a, b)
+        | Exp::CmdBind(a, _, b)
         | Exp::Cons(a, b) => vec![a, b],
         Exp::If(a, b, c) | Exp::Fold(a, b, c) => vec![a, b, c],
         Exp::Record(fields) => fields.iter().map(|(_, value)| value).collect(),

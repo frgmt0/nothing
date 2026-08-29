@@ -9,11 +9,15 @@ magic bytes below.
 A "document" is the three things a saved program needs: the **definitions**,
 the name table, and the action log that produced it.
 
-**Format version 6** (this revision) adds variants: two node tags (`Inj`,
-`Match`), one `Ty` tag (`Variant`), and six action tags, and nothing else —
-the layout of §3.1 is unchanged from version 2. Versions 1, 2, 3, 4 and 5
-still open — see §11, which is normative: a migrating reader for every
-previous version ships with every format change from here on.
+**Format version 7** (this revision) adds effects: four node tags (`Print`,
+`Readline`, `CmdPure`, `CmdBind`), one `Ty` tag (`Cmd`), and four action
+tags, and nothing else — the layout of §3.1 is unchanged from version 2.
+Versions 1, 2, 3, 4, 5 and 6 still open — see §11, which is normative: a
+migrating reader for every previous version ships with every format change
+from here on.
+
+**Format version 6** added variants: two node tags (`Inj`, `Match`), one
+`Ty` tag (`Variant`), and six action tags.
 
 **Format version 5** added records: two node tags (`Record`, `Field`), one
 `Ty` tag (`Record`), and eight action tags.
@@ -111,7 +115,7 @@ raw bytes.
 ```
 offset  size  field
 0       4     magic:   4E 54 48 47   ("NTHG", ASCII)
-4       1     version_major:  0x05
+4       1     version_major:  0x07
 5       1     version_minor:  0x00
 6       1     kind:    0x01 (Document — the only kind this version defines)
 ```
@@ -254,14 +258,21 @@ decode").
 | 17 | `Field(subject, id)` | 16 bytes: `id` | `[subject]` |
 | 18 | `Inj(ctor, payload)` | 16 bytes: `ctor` | `[payload]` |
 | 19 | `Match(scrutinee, arms)` | a varint arm count `n`, then `n` × 16 bytes: the constructor `id`s in order, then `n` × 16 bytes: the arm payload-binder `id`s in the same order | the scrutinee, then the `n` arm bodies in the same order |
+| 20 | `Print(text)` | empty | `[text]` |
+| 21 | `Readline` | empty | none |
+| 22 | `CmdPure(value)` | empty | `[value]` |
+| 23 | `CmdBind(command, id, body)` | 16 bytes: `id` | `[command, body]` |
 
-This table is exhaustive over the twenty `Exp` variants as of Phase B2's
-variant feature. Tags 0–11 are unchanged from version 2, tag `12` is the
+This table is exhaustive over the twenty-four `Exp` variants as of Phase
+B3's effect feature. Tags 0–11 are unchanged from version 2, tag `12` is the
 version-3 addition, tags `13`–`15` are the version-4 additions, tags
-`16`–`17` are the version-5 additions, and tags `18`–`19` are the
-version-6 additions.
-If a twenty-first variant is added to `core::exp::Exp`, it gets the next tag
-(`20`) and a row here; a reader must treat an unrecognised tag as a hard
+`16`–`17` are the version-5 additions, tags `18`–`19` are the version-6
+additions, and tags `20`–`23` are the version-7 additions.
+A `CmdBind`'s binder binds only its *body*, so it is pushed on the de-Bruijn
+stack around the second child and never reaches the hash — exactly like a
+`Let`'s binder (§6), which is the node it is shaped after.
+If a twenty-fifth variant is added to `core::exp::Exp`, it gets the next tag
+(`24`) and a row here; a reader must treat an unrecognised tag as a hard
 decode error, not skip it silently (the `payload_len`/`children_count`
 framing lets it skip the *bytes*, but it cannot reconstruct an `Exp` it has
 no variant for).
@@ -289,6 +300,7 @@ determined entirely by the tag byte):
 | 6 | `List(a)` | `Ty(a)` |
 | 7 | `Record(fields)` | a varint field count `n`, then `n` × (16 bytes: the field `id`, then `Ty` of that field) |
 | 8 | `Variant(ctors)` | a varint constructor count `n`, then `n` × (16 bytes: the constructor `id`, then `Ty` of that case's payload) |
+| 9 | `Cmd(a)` | `Ty(a)` |
 
 #### 5.2 `Op` encoding (1 byte)
 
@@ -485,14 +497,18 @@ log_entry:
 | 41 | `RemoveArm` | empty |
 | 42 | `SetConstructor(id)` | 16 bytes |
 | 43 | `SetArmBinderId(id)` | 16 bytes |
+| 44 | `ConstructPrint` | empty |
+| 45 | `ConstructReadline` | empty |
+| 46 | `ConstructPure` | empty |
+| 47 | `ConstructBind` | empty |
 
-This table is exhaustive over the forty-four `Action` variants as of
-format version 6. Tags 0–19 are unchanged from version 1, tags 0–25 from
-version 2, tags 0–26 from version 3, tags 0–29 from version 4 and tags
-0–37 from version 5, so an older log decodes under the current reader
-without translation. The same rule as §5 applies to a future forty-fifth
-variant: next tag, new row, hard decode error on an unrecognised tag
-rather than a silent skip.
+This table is exhaustive over the forty-eight `Action` variants as of
+format version 7. Tags 0–19 are unchanged from version 1, tags 0–25 from
+version 2, tags 0–26 from version 3, tags 0–29 from version 4, tags
+0–37 from version 5 and tags 0–43 from version 6, so an older log decodes
+under the current reader without translation. The same rule as §5 applies
+to a future forty-ninth variant: next tag, new row, hard decode error on an
+unrecognised tag rather than a silent skip.
 
 `AddArm` and `RemoveArm` carry no payload for the reason `AddField` and
 `RemoveField` carry none: the identities they mint come from the
@@ -558,7 +574,7 @@ byte-for-byte here the way the binary format is; it is not a wire format,
 and Phase 7 only asks that it exist.
 
 
-## 11. Migration from versions 1, 2, 3 and 4
+## 11. Migration from versions 1, 2, 3, 4, 5 and 6
 
 Format stability starts at version 1, so every earlier version's files
 open. The reader dispatches on `version_major` in the header (§3):
@@ -604,7 +620,17 @@ open. The reader dispatches on `version_major` in the header (§3):
   of them carry record nodes, which are the thing version 5 could express
   and version 4 could not, asserted by
   `a_version_five_artifact_still_carries_the_records_that_made_it_version_five`.
-- `0x06` → the current layout in §3.1.
+- `0x06` → the same version-2/§3.1 body layout, minus the tags added in
+  version 7. `store::v6::encode_document_v6` exists for the same reason
+  `encode_document_v5` does — the committed v6 fixtures under
+  `store/fixtures/v6/` contain nothing a version-6 build could not have
+  written — asserted, not assumed, by
+  `store/tests/migration.rs::no_version_six_artifact_contains_a_version_seven_form`
+  — so the version-7 reader is exercised against real older bytes. Several
+  of them carry variant nodes, which are the thing version 6 could express
+  and version 5 could not, asserted by
+  `a_version_six_artifact_still_carries_the_variants_that_made_it_version_six`.
+- `0x07` → the current layout in §3.1.
 - anything else → `DecodeError::UnsupportedVersion`.
 
 A version-1 file is a single expression. It becomes a document with
@@ -624,17 +650,17 @@ hashes are stable. And two people who migrate the *same* v1 file
 independently get the same definition id, so the merge engine matches
 their definitions instead of seeing an add-and-delete pair.
 
-Version 2 → 3, version 3 → 4, version 4 → 5 and version 5 → 6 need no
-rewriting at all: every earlier node, type, operator and action tag means
+Version 2 → 3, version 3 → 4, version 4 → 5, version 5 → 6 and version
+6 → 7 need no rewriting at all: every earlier node, type, operator and action tag means
 the same thing under the current version, and each new version only added
 tags the older one never wrote. The migration is the header bump, and it
 happens on save.
 
 Migration is read-only and lossless in the direction that matters: the
 name table and the action log carry across untouched (§8's tags 0–19 are
-version-stable across all six versions, 20–25 across the last five, 26–29
-across the last three, 30–37 across the last two, and 38–43 are new in
-version 6),
+version-stable across all seven versions, 20–25 across the last six, 26–29
+across the last four, 30–37 across the last three, 38–43 across the last
+two, and 44–47 are new in version 7),
 and the expression is byte-identical after re-encoding as the single
 definition's node table. There is no downgrading writer; saving a migrated
 file writes the current version, and the older bytes on disk are only

@@ -61,6 +61,14 @@ fn reference_programs() -> Vec<ReferenceProgram> {
             neovim_keystrokes: 127,
             approximate: true,
         },
+        ReferenceProgram {
+            name: "greeting_command",
+            reference: 7,
+            fixture: "greeting_command.actions",
+            keys_fixture: "greeting_command.keys",
+            neovim_keystrokes: 66,
+            approximate: false,
+        },
     ]
 }
 
@@ -269,8 +277,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn there_are_six_reference_programs() {
-        assert_eq!(reference_programs().len(), 6);
+    fn there_are_seven_reference_programs() {
+        assert_eq!(reference_programs().len(), 7);
     }
 
     #[test]

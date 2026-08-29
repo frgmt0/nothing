@@ -1,6 +1,7 @@
 use nothing_core::ctx::Ctx;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::ty::Ty;
+use nothing_core::ty::matched_cmd;
 use nothing_core::typing::{arm_payload_ty, syn};
 
 #[derive(Clone, PartialEq, Debug)]
@@ -28,6 +29,10 @@ pub enum Frame {
     InjPayload(Id),
     MatchScrutinee(Vec<(Id, Id, Exp)>),
     MatchArm(Exp, Vec<(Id, Id, Exp)>, usize, Id, Id),
+    PrintText,
+    PureValue,
+    BindCommand(Id, Exp),
+    BindBody(Id, Exp),
     NonEmptyHoleBody(HoleId),
 }
 
@@ -71,6 +76,10 @@ impl Frame {
                 arms.insert(index, (ctor, binder, focus));
                 Exp::Match(Box::new(scrutinee), arms)
             }
+            Frame::PrintText => Exp::Print(Box::new(focus)),
+            Frame::PureValue => Exp::CmdPure(Box::new(focus)),
+            Frame::BindCommand(id, body) => Exp::CmdBind(Box::new(focus), id, Box::new(body)),
+            Frame::BindBody(id, command) => Exp::CmdBind(Box::new(command), id, Box::new(focus)),
             Frame::NonEmptyHoleBody(h) => Exp::NonEmptyHole(h, Box::new(focus)),
         }
     }
@@ -97,6 +106,9 @@ impl Frame {
             | Frame::InjPayload(..)
             | Frame::MatchScrutinee(..)
             | Frame::MatchArm(..)
+            | Frame::PrintText
+            | Frame::PureValue
+            | Frame::BindCommand(..)
             | Frame::NonEmptyHoleBody(..) => 0,
             Frame::ApArg(..)
             | Frame::BinOpRight(..)
@@ -104,6 +116,7 @@ impl Frame {
             | Frame::LetBody(..)
             | Frame::PairSnd(..)
             | Frame::ConsTail(..)
+            | Frame::BindBody(..)
             | Frame::FoldInit(..) => 1,
             Frame::IfElse(..) | Frame::FoldStep(..) => 2,
         }
@@ -127,6 +140,8 @@ impl Frame {
             | Frame::InjPayload(..)
             | Frame::MatchScrutinee(..)
             | Frame::MatchArm(..)
+            | Frame::PrintText
+            | Frame::PureValue
             | Frame::NonEmptyHoleBody(..) => 1,
             Frame::ApFun(..)
             | Frame::ApArg(..)
@@ -137,7 +152,9 @@ impl Frame {
             | Frame::PairFst(..)
             | Frame::PairSnd(..)
             | Frame::ConsHead(..)
-            | Frame::ConsTail(..) => 2,
+            | Frame::ConsTail(..)
+            | Frame::BindCommand(..)
+            | Frame::BindBody(..) => 2,
             Frame::IfCond(..)
             | Frame::IfThen(..)
             | Frame::IfElse(..)
@@ -150,11 +167,28 @@ impl Frame {
 
 pub fn arity(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 0,
+        Exp::Var(_)
+        | Exp::Num(_)
+        | Exp::Bool(_)
+        | Exp::Str(_)
+        | Exp::Nil
+        | Exp::Readline
+        | Exp::EmptyHole(_) => 0,
         Exp::Record(fields) => fields.len(),
         Exp::Match(_, arms) => arms.len() + 1,
-        Exp::Lam(..) | Exp::Proj(..) | Exp::Field(..) | Exp::Inj(..) | Exp::NonEmptyHole(..) => 1,
-        Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
+        Exp::Lam(..)
+        | Exp::Proj(..)
+        | Exp::Field(..)
+        | Exp::Inj(..)
+        | Exp::Print(..)
+        | Exp::CmdPure(..)
+        | Exp::NonEmptyHole(..) => 1,
+        Exp::Ap(..)
+        | Exp::BinOp(..)
+        | Exp::Let(..)
+        | Exp::Pair(..)
+        | Exp::Cons(..)
+        | Exp::CmdBind(..) => 2,
         Exp::If(..) | Exp::Fold(..) => 3,
     }
 }
@@ -278,12 +312,22 @@ impl Zipper {
                 }
             }
             Exp::NonEmptyHole(h, inner) => (Frame::NonEmptyHoleBody(h), *inner),
+            Exp::Print(text) => (Frame::PrintText, *text),
+            Exp::CmdPure(value) => (Frame::PureValue, *value),
+            Exp::CmdBind(command, id, body) => {
+                if n == 0 {
+                    (Frame::BindCommand(id, *body), *command)
+                } else {
+                    (Frame::BindBody(id, *command), *body)
+                }
+            }
 
             Exp::Var(_)
             | Exp::Num(_)
             | Exp::Bool(_)
             | Exp::Str(_)
             | Exp::Nil
+            | Exp::Readline
             | Exp::EmptyHole(_) => {
                 return None;
             }
@@ -332,6 +376,7 @@ impl Zipper {
                 Frame::LamBody(id, _) => Some(*id),
                 Frame::LetBody(id, _) => Some(*id),
                 Frame::MatchArm(_, _, _, _, binder) => Some(*binder),
+                Frame::BindBody(id, _) => Some(*id),
                 _ => None,
             })
             .filter(|id| ctx.lookup(id).is_some())
@@ -382,7 +427,7 @@ impl Zipper {
 
     pub fn binder_id(&self) -> Option<Id> {
         match &self.focus {
-            Exp::Lam(id, _, _) | Exp::Let(id, _, _) => Some(*id),
+            Exp::Lam(id, _, _) | Exp::Let(id, _, _) | Exp::CmdBind(_, id, _) => Some(*id),
             _ => None,
         }
     }
@@ -403,6 +448,10 @@ impl Zipper {
                 Frame::MatchArm(scrutinee, _, _, ctor, binder) => {
                     let scrutinee_ty = syn(&ctx, scrutinee).unwrap_or(Ty::Hole);
                     ctx = ctx.extend(*binder, arm_payload_ty(&scrutinee_ty, *ctor));
+                }
+                Frame::BindBody(id, command) => {
+                    let command_ty = syn(&ctx, command).unwrap_or(Ty::Hole);
+                    ctx = ctx.extend(*id, matched_cmd(&command_ty).unwrap_or(Ty::Hole));
                 }
 
                 _ => {}
@@ -576,6 +625,40 @@ mod tests {
         assert_eq!(
             body.ctx().lookup(&p),
             Some(Ty::Prod(Box::new(Ty::Num), Box::new(Ty::Bool)))
+        );
+    }
+
+    #[test]
+    fn ctx_at_a_bind_body_sees_the_binder_at_whatever_the_command_yields() {
+        let line = Id::from_u128(0xB11D);
+        let program = Exp::cmd_bind(Exp::readline(), line, Exp::print(Exp::var(line)));
+        let root = unzip(program);
+
+        let command = root.clone().move_child(0).unwrap();
+        assert_eq!(
+            command.ctx().lookup(&line),
+            None,
+            "a bind does not bind its own command, exactly as a let does not bind its RHS"
+        );
+
+        let body = root.move_child(1).unwrap();
+        assert_eq!(
+            body.ctx().lookup(&line),
+            Some(Ty::Str),
+            "readline yields a Str, so that is what the binder is"
+        );
+
+        let unwritten = unzip(Exp::cmd_bind(
+            Exp::empty_hole(HoleId::from_u128(1)),
+            line,
+            Exp::print(Exp::var(line)),
+        ))
+        .move_child(1)
+        .unwrap();
+        assert_eq!(
+            unwritten.ctx().lookup(&line),
+            Some(Ty::Hole),
+            "and an unwritten command yields an unknown, not nothing at all"
         );
     }
 

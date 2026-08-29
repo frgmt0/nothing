@@ -14,7 +14,7 @@ pub fn count_holes(exp: &Exp) -> HoleCounts {
 
 fn walk(exp: &Exp, counts: &mut HoleCounts) {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::Readline => {}
         Exp::EmptyHole(_) => counts.empty += 1,
         Exp::NonEmptyHole(_, inner) => {
             counts.non_empty += 1;
@@ -42,7 +42,15 @@ fn walk(exp: &Exp, counts: &mut HoleCounts) {
             walk(l, counts);
             walk(r, counts);
         }
-        Exp::Proj(_, inner) | Exp::Field(inner, _) | Exp::Inj(_, inner) => walk(inner, counts),
+        Exp::Proj(_, inner)
+        | Exp::Field(inner, _)
+        | Exp::Inj(_, inner)
+        | Exp::Print(inner)
+        | Exp::CmdPure(inner) => walk(inner, counts),
+        Exp::CmdBind(command, _, body) => {
+            walk(command, counts);
+            walk(body, counts);
+        }
         Exp::Match(scrutinee, arms) => {
             walk(scrutinee, counts);
             for (_, _, body) in arms {

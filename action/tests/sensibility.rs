@@ -54,10 +54,14 @@ fn variant_name(action: &Action) -> &'static str {
         Action::RemoveArm => "RemoveArm",
         Action::SetConstructor(_) => "SetConstructor",
         Action::SetArmBinderId(_) => "SetArmBinderId",
+        Action::ConstructPrint => "ConstructPrint",
+        Action::ConstructReadline => "ConstructReadline",
+        Action::ConstructPure => "ConstructPure",
+        Action::ConstructBind => "ConstructBind",
     }
 }
 
-const ALL_VARIANTS: [&str; 44] = [
+const ALL_VARIANTS: [&str; 48] = [
     "MoveChild",
     "MoveParent",
     "MoveNextSibling",
@@ -102,6 +106,10 @@ const ALL_VARIANTS: [&str; 44] = [
     "RemoveArm",
     "SetConstructor",
     "SetArmBinderId",
+    "ConstructPrint",
+    "ConstructReadline",
+    "ConstructPure",
+    "ConstructBind",
 ];
 
 fn arb_op() -> impl Strategy<Value = Op> {
@@ -194,6 +202,10 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
         Just(Action::RemoveArm).boxed(),
         arb_id().prop_map(Action::SetConstructor).boxed(),
         arb_id().prop_map(Action::SetArmBinderId).boxed(),
+        Just(Action::ConstructPrint).boxed(),
+        Just(Action::ConstructReadline).boxed(),
+        Just(Action::ConstructPure).boxed(),
+        Just(Action::ConstructBind).boxed(),
     ])
 }
 
@@ -269,6 +281,12 @@ fn one_of_every_action_in(scope: &[Id], fields: &[Id], constructors: &[Id]) -> V
         Action::SetConstructor(Id::from_u128(9)),
         Action::SetArmBinderId(Id::from_u128(0)),
         Action::SetArmBinderId(Id::from_u128(9)),
+        Action::ConstructPrint,
+        Action::ConstructReadline,
+        Action::ConstructPure,
+        Action::ConstructBind,
+        Action::SetAnn(Ty::Cmd(Box::new(Ty::Str))),
+        Action::SetDefAnn(Ty::Cmd(Box::new(Ty::Str))),
     ];
     actions.extend(scope.iter().copied().map(Action::ConstructVar));
     actions.extend(scope.iter().copied().map(Action::MoveToDef));

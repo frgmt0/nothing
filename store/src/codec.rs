@@ -188,6 +188,10 @@ pub fn encode_ty(buf: &mut Vec<u8>, ty: &Ty) {
                 encode_ty(buf, ty);
             }
         }
+        Ty::Cmd(result) => {
+            buf.push(9);
+            encode_ty(buf, result);
+        }
         Ty::Variant(ctors) => {
             buf.push(8);
             write_varint(buf, ctors.len() as u64);
@@ -234,6 +238,7 @@ pub fn decode_ty(bytes: &[u8], pos: &mut usize) -> Result<Ty, DecodeError> {
             }
             Ok(Ty::Variant(ctors))
         }
+        9 => Ok(Ty::Cmd(Box::new(decode_ty(bytes, pos)?))),
         other => Err(DecodeError::BadTag(other)),
     }
 }
