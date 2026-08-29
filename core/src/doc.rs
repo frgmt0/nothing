@@ -110,6 +110,18 @@ impl Doc {
         out
     }
 
+    pub fn constructor_ids(&self) -> Vec<Id> {
+        let mut out = Vec::new();
+        for def in &self.defs {
+            for id in constructor_ids(&def.body) {
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
     pub fn render(&self, names: &NameTable) -> String {
         self.defs
             .iter()
@@ -150,9 +162,68 @@ pub fn references(exp: &Exp, target: Id) -> bool {
         Exp::Proj(_, e) => references(e, target),
         Exp::Field(e, _) => references(e, target),
         Exp::Record(fields) => fields.iter().any(|(_, e)| references(e, target)),
+        Exp::Inj(_, payload) => references(payload, target),
+        Exp::Match(scrutinee, arms) => {
+            references(scrutinee, target)
+                || arms
+                    .iter()
+                    .any(|(_, binder, body)| *binder != target && references(body, target))
+        }
         Exp::NonEmptyHole(_, e) => references(e, target),
         Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => false,
     }
+}
+
+pub fn constructor_ids(exp: &Exp) -> Vec<Id> {
+    fn walk(exp: &Exp, out: &mut Vec<Id>) {
+        match exp {
+            Exp::Inj(ctor, payload) => {
+                if !out.contains(ctor) {
+                    out.push(*ctor);
+                }
+                walk(payload, out);
+            }
+            Exp::Match(scrutinee, arms) => {
+                walk(scrutinee, out);
+                for (ctor, _, body) in arms {
+                    if !out.contains(ctor) {
+                        out.push(*ctor);
+                    }
+                    walk(body, out);
+                }
+            }
+            Exp::Record(fields) => {
+                for (_, e) in fields {
+                    walk(e, out);
+                }
+            }
+            Exp::Lam(_, _, e) | Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => {
+                walk(e, out);
+            }
+            Exp::Ap(a, b)
+            | Exp::BinOp(_, a, b)
+            | Exp::Pair(a, b)
+            | Exp::Cons(a, b)
+            | Exp::Let(_, a, b) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            Exp::If(a, b, c) | Exp::Fold(a, b, c) => {
+                walk(a, out);
+                walk(b, out);
+                walk(c, out);
+            }
+            Exp::Var(_)
+            | Exp::Num(_)
+            | Exp::Bool(_)
+            | Exp::Str(_)
+            | Exp::Nil
+            | Exp::EmptyHole(_) => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(exp, &mut out);
+    out
 }
 
 pub fn field_ids(exp: &Exp) -> Vec<Id> {
@@ -171,6 +242,13 @@ pub fn field_ids(exp: &Exp) -> Vec<Id> {
                     out.push(*id);
                 }
                 walk(e, out);
+            }
+            Exp::Inj(_, payload) => walk(payload, out),
+            Exp::Match(scrutinee, arms) => {
+                walk(scrutinee, out);
+                for (_, _, body) in arms {
+                    walk(body, out);
+                }
             }
             Exp::Lam(_, _, e) | Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => walk(e, out),
             Exp::Ap(a, b)
@@ -208,6 +286,10 @@ pub fn projects(exp: &Exp, field: Id) -> bool {
             projects(a, field) || projects(b, field)
         }
         Exp::Let(_, a, b) => projects(a, field) || projects(b, field),
+        Exp::Inj(_, payload) => projects(payload, field),
+        Exp::Match(scrutinee, arms) => {
+            projects(scrutinee, field) || arms.iter().any(|(_, _, body)| projects(body, field))
+        }
         Exp::If(a, b, c) | Exp::Fold(a, b, c) => {
             projects(a, field) || projects(b, field) || projects(c, field)
         }
@@ -262,6 +344,15 @@ pub fn quarantine_projections(exp: &Exp, field: Id, fresh: &mut dyn FnMut() -> H
             fields
                 .iter()
                 .map(|(id, e)| (*id, quarantine_projections(e, field, fresh))),
+        ),
+        Exp::Inj(ctor, payload) => Exp::inj(*ctor, quarantine_projections(payload, field, fresh)),
+        Exp::Match(scrutinee, arms) => Exp::match_(
+            quarantine_projections(scrutinee, field, fresh),
+            arms.iter()
+                .map(|(ctor, binder, body)| {
+                    (*ctor, *binder, quarantine_projections(body, field, fresh))
+                })
+                .collect::<Vec<_>>(),
         ),
         Exp::NonEmptyHole(h, e) => Exp::non_empty_hole(*h, quarantine_projections(e, field, fresh)),
         Exp::Field(e, id) => {
@@ -318,6 +409,20 @@ pub fn vacate(exp: &Exp, target: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
         Exp::Record(fields) => {
             Exp::record(fields.iter().map(|(id, e)| (*id, vacate(e, target, fresh))))
         }
+        Exp::Inj(ctor, payload) => Exp::inj(*ctor, vacate(payload, target, fresh)),
+        Exp::Match(scrutinee, arms) => Exp::match_(
+            vacate(scrutinee, target, fresh),
+            arms.iter()
+                .map(|(ctor, binder, body)| {
+                    let body = if *binder == target {
+                        body.clone()
+                    } else {
+                        vacate(body, target, fresh)
+                    };
+                    (*ctor, *binder, body)
+                })
+                .collect::<Vec<_>>(),
+        ),
         Exp::NonEmptyHole(h, e) => {
             let inner = vacate(e, target, fresh);
             if matches!(inner, Exp::EmptyHole(_)) {

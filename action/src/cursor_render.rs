@@ -1,8 +1,8 @@
 use nothing_core::exp::Side;
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    CONS_STR, FIELD_STR, FOLD_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec,
-    op_prec, op_str, render_id, render_prec, render_ty,
+    ARM_SEP_STR, ARM_STR, CONS_STR, FIELD_STR, FOLD_STR, INJ_STR, MATCH_STR, PREC_APP, PREC_ATOM,
+    PREC_BINDER, PREC_CMP, PREC_CONS, Prec, op_prec, op_str, render_id, render_prec, render_ty,
 };
 
 use crate::zipper::{Frame, Zipper};
@@ -30,6 +30,9 @@ fn min_prec_for(frame: &Frame) -> Prec {
         Frame::FoldList(..) | Frame::FoldInit(..) | Frame::FoldStep(..) => PREC_ATOM,
         Frame::RecordField(..) => PREC_BINDER,
         Frame::FieldSubject(..) => PREC_ATOM,
+        Frame::InjPayload(..) => PREC_ATOM,
+        Frame::MatchScrutinee(..) => PREC_ATOM,
+        Frame::MatchArm(..) => PREC_CMP,
         Frame::NonEmptyHoleBody(..) => PREC_BINDER,
     }
 }
@@ -47,13 +50,16 @@ fn own_prec(frame: &Frame) -> Prec {
         | Frame::ProjBody(..)
         | Frame::FoldList(..)
         | Frame::FoldInit(..)
-        | Frame::FoldStep(..) => PREC_APP,
+        | Frame::FoldStep(..)
+        | Frame::InjPayload(..) => PREC_APP,
         Frame::BinOpLeft(op, _) | Frame::BinOpRight(op, _) => op_prec(*op),
         Frame::ConsHead(..) | Frame::ConsTail(..) => PREC_CONS,
         Frame::PairFst(..)
         | Frame::PairSnd(..)
         | Frame::RecordField(..)
         | Frame::FieldSubject(..)
+        | Frame::MatchScrutinee(..)
+        | Frame::MatchArm(..)
         | Frame::NonEmptyHoleBody(..) => PREC_ATOM,
     }
 }
@@ -155,7 +161,61 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
             format!("{{{}}}", fields.join(", "))
         }
         Frame::FieldSubject(id) => format!("{child}{FIELD_STR}{}", render_id(*id, names)),
+        Frame::InjPayload(ctor) => {
+            format!("{INJ_STR}{} {child}", render_id(*ctor, names))
+        }
+        Frame::MatchScrutinee(arms) => {
+            let written: Vec<String> = arms
+                .iter()
+                .map(|(ctor, binder, body)| arm_text(*ctor, *binder, body, names))
+                .collect();
+            format!("{MATCH_STR} {child} {}", braces(&written))
+        }
+        Frame::MatchArm(scrutinee, others, index, ctor, binder) => {
+            let mut written: Vec<String> = Vec::with_capacity(others.len() + 1);
+            let here = format!(
+                "{} {} {ARM_STR} {child}",
+                render_id(*ctor, names),
+                render_id(*binder, names)
+            );
+            for (i, (other_ctor, other_binder, body)) in others.iter().enumerate() {
+                if i == *index {
+                    written.push(here.clone());
+                }
+                written.push(arm_text(*other_ctor, *other_binder, body, names));
+            }
+            if *index >= others.len() {
+                written.push(here);
+            }
+            format!(
+                "{MATCH_STR} {} {}",
+                render_prec(scrutinee, PREC_ATOM, names),
+                braces(&written)
+            )
+        }
         Frame::NonEmptyHoleBody(_) => format!("⦇{child}⦈"),
+    }
+}
+
+fn arm_text(
+    ctor: nothing_core::exp::Id,
+    binder: nothing_core::exp::Id,
+    body: &nothing_core::exp::Exp,
+    names: &NameTable,
+) -> String {
+    format!(
+        "{} {} {ARM_STR} {}",
+        render_id(ctor, names),
+        render_id(binder, names),
+        render_prec(body, PREC_CMP, names)
+    )
+}
+
+fn braces(arms: &[String]) -> String {
+    if arms.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{ {} }}", arms.join(&format!(" {ARM_SEP_STR} ")))
     }
 }
 

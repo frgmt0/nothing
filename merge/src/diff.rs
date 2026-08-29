@@ -62,6 +62,17 @@ pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
                     .all(|((id1, v1), (id2, v2))| id1 == id2 && structurally_equal(v1, v2))
         }
         (Exp::Field(s1, f1), Exp::Field(s2, f2)) => f1 == f2 && structurally_equal(s1, s2),
+        (Exp::Inj(c1, p1), Exp::Inj(c2, p2)) => c1 == c2 && structurally_equal(p1, p2),
+        (Exp::Match(s1, arms1), Exp::Match(s2, arms2)) => {
+            structurally_equal(s1, s2)
+                && arms1.len() == arms2.len()
+                && arms1
+                    .iter()
+                    .zip(arms2.iter())
+                    .all(|((c1, b1, body1), (c2, b2, body2))| {
+                        c1 == c2 && b1 == b2 && structurally_equal(body1, body2)
+                    })
+        }
         _ => false,
     }
 }
@@ -165,6 +176,16 @@ fn diff_exp(a: &Exp, b: &Exp, path: &[usize], out: &mut Vec<Operation>) {
         (Exp::Record(fields_a), Exp::Record(fields_b)) => {
             diff_record(fields_a, fields_b, a, b, path, out)
         }
+        (Exp::Inj(ctor_a, ..), Exp::Inj(ctor_b, ..)) => {
+            if ctor_a == ctor_b {
+                diff_children(a, b, path, 1, out);
+            } else {
+                out.push(replace(path, a, b));
+            }
+        }
+        (Exp::Match(_, arms_a), Exp::Match(_, arms_b)) => {
+            diff_match(arms_a, arms_b, a, b, path, out)
+        }
         _ => diff_shapes(a, b, path, out),
     }
 }
@@ -201,6 +222,31 @@ fn diff_record(
         if let Some((_, other)) = fields_b.iter().find(|(other_id, _)| other_id == id) {
             diff_exp(value, other, &extend(path, index), out);
         }
+    }
+}
+
+fn diff_match(
+    arms_a: &[(Id, Id, Exp)],
+    arms_b: &[(Id, Id, Exp)],
+    a: &Exp,
+    b: &Exp,
+    path: &[usize],
+    out: &mut Vec<Operation>,
+) {
+    let ids_a: Vec<(Id, Id)> = arms_a.iter().map(|(c, x, _)| (*c, *x)).collect();
+    let ids_b: Vec<(Id, Id)> = arms_b.iter().map(|(c, x, _)| (*c, *x)).collect();
+    if ids_a != ids_b {
+        diff_shapes(a, b, path, out);
+        return;
+    }
+    diff_exp(
+        child(a, 0).expect("a match always has a scrutinee"),
+        child(b, 0).expect("a match always has a scrutinee"),
+        &extend(path, 0),
+        out,
+    );
+    for (index, ((_, _, body_a), (_, _, body_b))) in arms_a.iter().zip(arms_b.iter()).enumerate() {
+        diff_exp(body_a, body_b, &extend(path, index + 1), out);
     }
 }
 

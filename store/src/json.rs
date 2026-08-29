@@ -53,6 +53,19 @@ fn ty_json(ty: &Ty) -> String {
                 .collect();
             format!("{{\"ty\":\"Record\",\"fields\":[{}]}}", items.join(","))
         }
+        Ty::Variant(ctors) => {
+            let items: Vec<String> = ctors
+                .iter()
+                .map(|(id, ty)| {
+                    format!(
+                        "{{\"ctor\":{},\"ty\":{}}}",
+                        escape(&id.to_string()),
+                        ty_json(ty)
+                    )
+                })
+                .collect();
+            format!("{{\"ty\":\"Variant\",\"ctors\":[{}]}}", items.join(","))
+        }
     }
 }
 
@@ -149,6 +162,29 @@ fn exp_json(exp: &Exp) -> String {
             exp_json(subject),
             escape(&id.to_string())
         ),
+        Exp::Inj(ctor, payload) => format!(
+            "{{\"exp\":\"Inj\",\"ctor\":{},\"payload\":{}}}",
+            escape(&ctor.to_string()),
+            exp_json(payload)
+        ),
+        Exp::Match(scrutinee, arms) => {
+            let items: Vec<String> = arms
+                .iter()
+                .map(|(ctor, binder, body)| {
+                    format!(
+                        "{{\"ctor\":{},\"binder\":{},\"body\":{}}}",
+                        escape(&ctor.to_string()),
+                        escape(&binder.to_string()),
+                        exp_json(body)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"exp\":\"Match\",\"scrutinee\":{},\"arms\":[{}]}}",
+                exp_json(scrutinee),
+                items.join(",")
+            )
+        }
         Exp::EmptyHole(h) => format!(
             "{{\"exp\":\"EmptyHole\",\"hole\":{}}}",
             escape(&h.to_string())
@@ -245,6 +281,18 @@ fn action_json(action: &Action) -> String {
         ),
         Action::SetFieldId(id) => format!(
             "{{\"action\":\"SetFieldId\",\"field\":{}}}",
+            escape(&id.to_string())
+        ),
+        Action::ConstructInj => "{\"action\":\"ConstructInj\"}".to_string(),
+        Action::ConstructMatch => "{\"action\":\"ConstructMatch\"}".to_string(),
+        Action::AddArm => "{\"action\":\"AddArm\"}".to_string(),
+        Action::RemoveArm => "{\"action\":\"RemoveArm\"}".to_string(),
+        Action::SetConstructor(id) => format!(
+            "{{\"action\":\"SetConstructor\",\"ctor\":{}}}",
+            escape(&id.to_string())
+        ),
+        Action::SetArmBinderId(id) => format!(
+            "{{\"action\":\"SetArmBinderId\",\"id\":{}}}",
             escape(&id.to_string())
         ),
     }

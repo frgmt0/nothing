@@ -18,6 +18,10 @@ pub const CONS_STR: &str = "::";
 pub const FIELD_STR: &str = ".";
 pub const NIL_STR: &str = "nil";
 pub const FOLD_STR: &str = "fold";
+pub const INJ_STR: &str = "`";
+pub const MATCH_STR: &str = "match";
+pub const ARM_STR: &str = "->";
+pub const ARM_SEP_STR: &str = "|";
 
 pub fn op_prec(op: Op) -> Prec {
     match op {
@@ -112,6 +116,17 @@ fn fmt_ty(ty: &Ty, min_prec: u8, names: &NameTable, out: &mut String) {
                 fmt_ty(field_ty, 0, names, out);
             }
             out.push('}');
+        }
+        Ty::Variant(ctors) => {
+            out.push('[');
+            for (i, (id, payload)) in ctors.iter().enumerate() {
+                if i > 0 {
+                    write!(out, " {ARM_SEP_STR} ").unwrap();
+                }
+                write!(out, "{}: ", render_id(*id, names)).unwrap();
+                fmt_ty(payload, 0, names, out);
+            }
+            out.push(']');
         }
     }
 }
@@ -238,6 +253,33 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
             out.push_str(FIELD_STR);
             out.push_str(&render_id(*id, names));
         }
+        Exp::Inj(ctor, payload) => {
+            write!(out, "{INJ_STR}{} ", render_id(*ctor, names)).unwrap();
+            fmt_prec(payload, PREC_ATOM, names, out);
+        }
+        Exp::Match(scrutinee, arms) => {
+            write!(out, "{MATCH_STR} ").unwrap();
+            fmt_prec(scrutinee, PREC_ATOM, names, out);
+            out.push_str(" {");
+            for (i, (ctor, binder, body)) in arms.iter().enumerate() {
+                if i > 0 {
+                    write!(out, " {ARM_SEP_STR}").unwrap();
+                }
+                write!(
+                    out,
+                    " {} {} {ARM_STR} ",
+                    render_id(*ctor, names),
+                    render_id(*binder, names)
+                )
+                .unwrap();
+                fmt_prec(body, PREC_CMP, names, out);
+            }
+            if arms.is_empty() {
+                out.push('}');
+            } else {
+                out.push_str(" }");
+            }
+        }
     }
     if needs_parens {
         out.push(')');
@@ -255,9 +297,10 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::Nil
         | Exp::Record(_)
         | Exp::Field(_, _)
+        | Exp::Match(..)
         | Exp::Pair(_, _) => PREC_ATOM,
         Exp::Cons(_, _) => PREC_CONS,
-        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) => PREC_APP,
+        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) | Exp::Inj(..) => PREC_APP,
         Exp::BinOp(op, _, _) => op_prec(*op),
         Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) => PREC_BINDER,
     }
@@ -666,6 +709,103 @@ mod tests {
                 &names
             ),
             "x0.x + 1"
+        );
+    }
+
+    fn variant_names() -> NameTable {
+        let mut names = field_names();
+        names.set(x(20), "Red");
+        names.set(x(21), "Green");
+        names.set(x(22), "p");
+        names.set(x(23), "q");
+        names
+    }
+
+    #[test]
+    fn an_injection_is_a_backtick_a_name_and_one_payload() {
+        let names = variant_names();
+        assert_eq!(
+            render(&Exp::inj(x(20), Exp::unit()), &names),
+            "`Red {}",
+            "a nullary constructor spells its empty payload out"
+        );
+        assert_eq!(render(&Exp::inj(x(20), Exp::num(1)), &names), "`Red 1");
+        assert_eq!(
+            render(
+                &Exp::inj(x(20), Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2))),
+                &names
+            ),
+            "`Red (1 + 2)",
+            "an injection takes an atom, like an application"
+        );
+        assert_eq!(
+            render(
+                &Exp::bin_op(Op::Eq, Exp::inj(x(20), Exp::unit()), Exp::num(1)),
+                &names
+            ),
+            "`Red {} == 1"
+        );
+    }
+
+    #[test]
+    fn a_match_renders_its_arms_between_braces_and_needs_no_parentheses() {
+        let names = variant_names();
+        let scrutinee = Exp::inj(x(20), Exp::unit());
+        assert_eq!(
+            render(&Exp::match_(scrutinee.clone(), []), &names),
+            "match (`Red {}) {}",
+            "a match with nothing to answer for is still a match"
+        );
+        assert_eq!(
+            render(&Exp::match_(Exp::num(1), []), &names),
+            "match 1 {}",
+            "an atomic scrutinee wears nothing"
+        );
+        assert_eq!(
+            render(
+                &Exp::match_(
+                    scrutinee.clone(),
+                    [(x(20), x(22), Exp::num(1)), (x(21), x(23), Exp::var(x(23))),]
+                ),
+                &names
+            ),
+            "match (`Red {}) { Red p -> 1 | Green q -> q }",
+            "the scrutinee sits at atom precedence so the brace after it is never ambiguous"
+        );
+        assert_eq!(
+            render(
+                &Exp::bin_op(
+                    Op::Add,
+                    Exp::match_(scrutinee.clone(), [(x(20), x(22), Exp::num(1))]),
+                    Exp::num(2)
+                ),
+                &names
+            ),
+            "match (`Red {}) { Red p -> 1 } + 2",
+            "a match is delimited, so it is an atom and never wears parentheses"
+        );
+        assert_eq!(
+            render(
+                &Exp::match_(
+                    Exp::if_(Exp::bool_(true), scrutinee.clone(), scrutinee),
+                    [(x(20), x(22), Exp::lam(x(23), Ty::Num, Exp::var(x(23))))]
+                ),
+                &names
+            ),
+            "match (if true then `Red {} else `Red {}) { Red p -> (λq:Num. q) }",
+            "the scrutinee and the arm bodies both parenthesise the binder forms"
+        );
+    }
+
+    #[test]
+    fn a_variant_type_reads_its_constructor_names_from_the_table() {
+        let names = variant_names();
+        let colour = crate::ty::variant([(x(20), crate::ty::unit()), (x(21), Ty::Num)]);
+        assert_eq!(render_ty(&colour, &names), "[Red: {} | Green: Num]");
+        assert_eq!(render_ty(&crate::ty::variant([]), &names), "[]");
+        assert_eq!(
+            render_ty(&Ty::List(Box::new(colour)), &names),
+            "List [Red: {} | Green: Num]"
         );
     }
 

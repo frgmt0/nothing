@@ -5,9 +5,14 @@ use nothing_core::doc::{
     Def, Doc, MAIN_ID, MAIN_NAME, projects, quarantine_projections, references, vacate,
 };
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
-use nothing_core::names::{NameTable, fresh_binder_name, fresh_definition_name, fresh_field_name};
-use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod, matched_record};
-use nothing_core::typing::{ana, is_comparable, operand_expectation, step_ty, syn};
+use nothing_core::names::{
+    NameTable, fresh_binder_name, fresh_constructor_name, fresh_definition_name, fresh_field_name,
+};
+use nothing_core::ty::{
+    Ty, matched_arrow, matched_list, matched_prod, matched_record, matched_variant,
+    variant_constructors,
+};
+use nothing_core::typing::{ana, arm_payload_ty, is_comparable, operand_expectation, step_ty, syn};
 
 use crate::zipper::{Frame, Zipper, unzip};
 
@@ -37,6 +42,8 @@ pub enum Action {
     ConstructFold,
     ConstructRecord,
     ConstructField(Id),
+    ConstructInj,
+    ConstructMatch,
     ConstructNonEmptyHole,
 
     AddField,
@@ -45,6 +52,11 @@ pub enum Action {
     MoveFieldNext,
     SetField(Id),
     SetFieldId(Id),
+
+    AddArm,
+    RemoveArm,
+    SetConstructor(Id),
+    SetArmBinderId(Id),
 
     SetAnn(Ty),
 
@@ -138,6 +150,18 @@ impl Fresh {
                 for (id, e) in fields {
                     self.bump_id(*id);
                     self.observe(e);
+                }
+            }
+            Exp::Inj(ctor, payload) => {
+                self.bump_id(*ctor);
+                self.observe(payload);
+            }
+            Exp::Match(scrutinee, arms) => {
+                self.observe(scrutinee);
+                for (ctor, binder, body) in arms {
+                    self.bump_id(*ctor);
+                    self.bump_id(*binder);
+                    self.observe(body);
                 }
             }
             Exp::EmptyHole(h) => self.bump_hole(*h),
@@ -317,6 +341,24 @@ pub fn ctx_and_expected_ty_at_in(scope: &DefScope, zipper: &Zipper) -> (Ctx, Ty)
             }
             Frame::FieldSubject(_) => expected = Ty::Hole,
 
+            Frame::InjPayload(ctor) => {
+                expected = matched_variant(&expected, *ctor).unwrap_or(Ty::Hole);
+            }
+            Frame::MatchScrutinee(_) => expected = Ty::Hole,
+            Frame::MatchArm(scrutinee, others, _, ctor, binder) => {
+                let scrutinee_ty = syn(&ctx, scrutinee).unwrap_or(Ty::Hole);
+                ctx = ctx.extend(*binder, arm_payload_ty(&scrutinee_ty, *ctor));
+                if expected == Ty::Hole {
+                    expected = others
+                        .iter()
+                        .find_map(|(other_ctor, other_binder, body)| {
+                            let payload = arm_payload_ty(&scrutinee_ty, *other_ctor);
+                            syn(&ctx.extend(*other_binder, payload), body)
+                        })
+                        .unwrap_or(Ty::Hole);
+                }
+            }
+
             Frame::NonEmptyHoleBody(_) => expected = Ty::Hole,
         }
     }
@@ -448,6 +490,22 @@ pub fn apply_with_in(
             move |subject, _| Exp::field(subject, field),
         ),
 
+        Action::ConstructInj => construct_inj(scope, zipper, fresh, names),
+        Action::ConstructMatch => construct_match(scope, zipper, fresh, names),
+
+        Action::AddArm => {
+            let ctor = fresh.id();
+            let binder = fresh.id();
+            let hole = fresh.hole();
+            let built = add_arm(scope, zipper, ctor, binder, hole);
+            name_new_constructor(ctor, &built, names);
+            name_new_binder(binder, &built, names);
+            built
+        }
+        Action::RemoveArm => remove_arm(scope, zipper),
+        Action::SetConstructor(ctor) => set_constructor(scope, zipper, ctor),
+        Action::SetArmBinderId(binder) => set_arm_binder_id(scope, zipper, binder),
+
         Action::AddField => {
             let id = fresh.id();
             let hole = fresh.hole();
@@ -497,6 +555,220 @@ fn name_new_field(id: Id, built: &Option<Zipper>, names: &mut NameTable) {
     if built.is_some() {
         let name = fresh_field_name(names);
         names.set(id, name);
+    }
+}
+
+fn name_new_constructor(id: Id, built: &Option<Zipper>, names: &mut NameTable) {
+    if built.is_some() {
+        let name = fresh_constructor_name(names);
+        names.set(id, name);
+    }
+}
+
+fn construct_inj(
+    scope: &DefScope,
+    zipper: Zipper,
+    fresh: &mut Fresh,
+    names: &mut NameTable,
+) -> Option<Zipper> {
+    let (_, expected) = ctx_and_expected_ty_at_in(scope, &zipper);
+    if let Ty::Variant(wanted) = &expected
+        && let Some((ctor, payload_ty)) = wanted.first().cloned()
+    {
+        return construct_wrapping_if(
+            scope,
+            zipper,
+            |ctx, focus| ana(ctx, focus, &payload_ty),
+            fresh,
+            move |payload, _| Exp::inj(ctor, payload),
+        );
+    }
+
+    let ctor = fresh.id();
+    let built = construct_wrapping(scope, zipper, Ty::Hole, fresh, move |payload, _| {
+        Exp::inj(ctor, payload)
+    });
+    name_new_constructor(ctor, &built, names);
+    built
+}
+
+fn construct_match(
+    scope: &DefScope,
+    zipper: Zipper,
+    fresh: &mut Fresh,
+    names: &mut NameTable,
+) -> Option<Zipper> {
+    let ctx = ctx_at_in(scope, &zipper);
+    let scrutinee_ty = syn(&ctx, &zipper.focus).unwrap_or(Ty::Hole);
+    let ctors = variant_constructors(&scrutinee_ty).unwrap_or_default();
+    let binders: Vec<Id> = ctors.iter().map(|_| fresh.id()).collect();
+    let arms: Vec<(Id, Id)> = ctors.iter().copied().zip(binders.iter().copied()).collect();
+
+    let built = construct_wrapping_if(
+        scope,
+        zipper,
+        |ctx, focus| variant_constructors(&syn(ctx, focus).unwrap_or(Ty::Hole)).is_some(),
+        fresh,
+        move |scrutinee, fresh| {
+            let arms: Vec<(Id, Id, Exp)> = arms
+                .into_iter()
+                .map(|(ctor, binder)| (ctor, binder, Exp::empty_hole(fresh.hole())))
+                .collect();
+            Exp::match_(scrutinee, arms)
+        },
+    );
+    for binder in binders {
+        name_new_binder(binder, &built, names);
+    }
+    built
+}
+
+fn arm_frame(zipper: &Zipper) -> Option<usize> {
+    zipper.arm_index()
+}
+
+pub fn arm_constructor_set(zipper: &Zipper) -> Option<Vec<Id>> {
+    if let Exp::Match(_, arms) = &zipper.focus {
+        return Some(arms.iter().map(|(ctor, _, _)| *ctor).collect());
+    }
+    match zipper.path.last()? {
+        Frame::MatchArm(_, others, index, ctor, _) => {
+            let mut ids: Vec<Id> = others.iter().map(|(c, _, _)| *c).collect();
+            ids.insert(*index, *ctor);
+            Some(ids)
+        }
+        _ => None,
+    }
+}
+
+fn add_arm(scope: &DefScope, zipper: Zipper, ctor: Id, binder: Id, hole: HoleId) -> Option<Zipper> {
+    let zipper = if matches!(zipper.focus, Exp::Match(..)) {
+        zipper
+    } else if arm_frame(&zipper).is_some() {
+        zipper.move_parent()?
+    } else {
+        return None;
+    };
+    let Exp::Match(scrutinee, arms) = &zipper.focus else {
+        return None;
+    };
+    let scrutinee = scrutinee.clone();
+    let mut arms = arms.clone();
+    let index = arms.len();
+    arms.push((ctor, binder, Exp::empty_hole(hole)));
+    let placed = zipper.replace_focus(Exp::Match(scrutinee, arms));
+    keep_if_well_typed(scope, placed)?.move_child(index + 1)
+}
+
+fn remove_arm(scope: &DefScope, zipper: Zipper) -> Option<Zipper> {
+    let index = arm_frame(&zipper)?;
+    let parent = zipper.move_parent()?;
+    let Exp::Match(scrutinee, arms) = &parent.focus else {
+        return None;
+    };
+    let scrutinee = scrutinee.clone();
+    let mut arms = arms.clone();
+    arms.remove(index);
+    let placed = parent.replace_focus(Exp::Match(scrutinee, arms));
+    keep_if_well_typed(scope, placed)
+}
+
+fn set_constructor(scope: &DefScope, zipper: Zipper, ctor: Id) -> Option<Zipper> {
+    if let Exp::Inj(_, payload) = &zipper.focus {
+        let updated = Exp::Inj(ctor, payload.clone());
+        return keep_if_well_typed(scope, zipper.replace_focus(updated));
+    }
+    set_arm_constructor(scope, zipper, ctor)
+}
+
+fn set_arm_constructor(scope: &DefScope, zipper: Zipper, ctor: Id) -> Option<Zipper> {
+    let index = arm_frame(&zipper)?;
+    let parent = zipper.move_parent()?;
+    let Exp::Match(scrutinee, arms) = &parent.focus else {
+        return None;
+    };
+    let scrutinee = scrutinee.clone();
+    let mut arms = arms.clone();
+    arms[index].0 = ctor;
+    let placed = parent.replace_focus(Exp::Match(scrutinee, arms));
+    keep_if_well_typed(scope, placed)?.move_child(index + 1)
+}
+
+fn set_arm_binder_id(scope: &DefScope, zipper: Zipper, binder: Id) -> Option<Zipper> {
+    let index = arm_frame(&zipper)?;
+    let parent = zipper.move_parent()?;
+    let Exp::Match(scrutinee, arms) = &parent.focus else {
+        return None;
+    };
+    let scrutinee = scrutinee.clone();
+    let mut arms = arms.clone();
+    arms[index].1 = binder;
+    let placed = parent.replace_focus(Exp::Match(scrutinee, arms));
+    keep_if_well_typed(scope, placed)?.move_child(index + 1)
+}
+
+fn add_arm_to_every_match(
+    exp: &Exp,
+    target: &[Id],
+    ctor: Id,
+    fresh: &mut Fresh,
+    minted: &mut Vec<Id>,
+) -> Exp {
+    let rebuilt = map_children(exp, &mut |child| {
+        add_arm_to_every_match(child, target, ctor, fresh, minted)
+    });
+    match rebuilt {
+        Exp::Match(scrutinee, mut arms) if same_constructor_set(&arms, target) => {
+            let binder = fresh.id();
+            minted.push(binder);
+            arms.push((ctor, binder, Exp::empty_hole(fresh.hole())));
+            Exp::Match(scrutinee, arms)
+        }
+        other => other,
+    }
+}
+
+fn remove_arm_from_every_match(exp: &Exp, target: &[Id], ctor: Id) -> Exp {
+    let rebuilt = map_children(exp, &mut |child| {
+        remove_arm_from_every_match(child, target, ctor)
+    });
+    match rebuilt {
+        Exp::Match(scrutinee, mut arms) if same_constructor_set(&arms, target) => {
+            arms.retain(|(c, _, _)| *c != ctor);
+            Exp::Match(scrutinee, arms)
+        }
+        other => other,
+    }
+}
+
+fn same_constructor_set(arms: &[(Id, Id, Exp)], target: &[Id]) -> bool {
+    arms.len() == target.len() && arms.iter().all(|(ctor, _, _)| target.contains(ctor))
+}
+
+fn map_children(exp: &Exp, f: &mut dyn FnMut(&Exp) -> Exp) -> Exp {
+    match exp {
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            exp.clone()
+        }
+        Exp::Lam(id, ty, body) => Exp::lam(*id, ty.clone(), f(body)),
+        Exp::Let(id, bound, body) => Exp::let_(*id, f(bound), f(body)),
+        Exp::Ap(fun, arg) => Exp::ap(f(fun), f(arg)),
+        Exp::BinOp(op, l, r) => Exp::bin_op(*op, f(l), f(r)),
+        Exp::Pair(l, r) => Exp::pair(f(l), f(r)),
+        Exp::Cons(l, r) => Exp::cons(f(l), f(r)),
+        Exp::If(c, t, e) => Exp::if_(f(c), f(t), f(e)),
+        Exp::Fold(l, i, s) => Exp::fold(f(l), f(i), f(s)),
+        Exp::Proj(side, e) => Exp::proj(*side, f(e)),
+        Exp::Field(e, id) => Exp::field(f(e), *id),
+        Exp::Record(fields) => Exp::record(fields.iter().map(|(id, e)| (*id, f(e)))),
+        Exp::Inj(ctor, payload) => Exp::inj(*ctor, f(payload)),
+        Exp::Match(scrutinee, arms) => Exp::match_(
+            f(scrutinee),
+            arms.iter()
+                .map(|(ctor, binder, body)| (*ctor, *binder, f(body)))
+                .collect::<Vec<_>>(),
+        ),
+        Exp::NonEmptyHole(h, e) => Exp::non_empty_hole(*h, f(e)),
     }
 }
 
@@ -640,9 +912,16 @@ fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
         Exp::Record(fields) => fields
             .iter()
             .position(|(_, e)| matches!(e, Exp::EmptyHole(_))),
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::NonEmptyHole(_, b) => {
-            first(&[b])
+        Exp::Match(scrutinee, arms) => {
+            let mut children: Vec<&Exp> = vec![scrutinee];
+            children.extend(arms.iter().map(|(_, _, body)| body));
+            first(&children)
         }
+        Exp::Lam(_, _, b)
+        | Exp::Proj(_, b)
+        | Exp::Field(b, _)
+        | Exp::Inj(_, b)
+        | Exp::NonEmptyHole(_, b) => first(&[b]),
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
@@ -907,6 +1186,10 @@ impl EditState {
         self.doc().field_ids()
     }
 
+    pub fn constructor_ids(&self) -> Vec<Id> {
+        self.doc().constructor_ids()
+    }
+
     pub fn names(&self) -> &NameTable {
         &self.names
     }
@@ -1028,9 +1311,84 @@ impl EditState {
         }
     }
 
+    fn add_arm_everywhere(&self) -> Option<EditState> {
+        let target = arm_constructor_set(&self.zipper)?;
+        let scope = self.scope();
+        let mut fresh = self.fresh.clone();
+        let ctor = fresh.id();
+        let binder = fresh.id();
+        let hole = fresh.hole();
+        let zipper = add_arm(&scope, self.zipper.clone(), ctor, binder, hole)?;
+
+        let mut minted = vec![binder];
+        let mut rewrite =
+            |body: &Exp| add_arm_to_every_match(body, &target, ctor, &mut fresh, &mut minted);
+        let here = rewrite(&zipper.to_exp());
+        let before: Vec<Def> = self
+            .before
+            .iter()
+            .map(|def| Def::new(def.id, def.ann.clone(), rewrite(&def.body)))
+            .collect();
+        let after: Vec<Def> = self
+            .after
+            .iter()
+            .map(|def| Def::new(def.id, def.ann.clone(), rewrite(&def.body)))
+            .collect();
+
+        let mut names = self.names.clone();
+        names.set(ctor, fresh_constructor_name(&names));
+        for id in minted {
+            names.set(id, fresh_binder_name(&names));
+        }
+
+        let mut next = self.clone();
+        next.zipper = retrace(here, &zipper)?;
+        next.before = before;
+        next.after = after;
+        next.fresh = fresh;
+        next.names = names;
+        if next.is_well_typed() {
+            Some(next)
+        } else {
+            None
+        }
+    }
+
+    fn remove_arm_everywhere(&self) -> Option<EditState> {
+        let ctor = self.zipper.arm_constructor_id()?;
+        let target = arm_constructor_set(&self.zipper)?;
+        let scope = self.scope();
+        let zipper = remove_arm(&scope, self.zipper.clone())?;
+
+        let rewrite = |body: &Exp| remove_arm_from_every_match(body, &target, ctor);
+        let here = rewrite(&zipper.to_exp());
+        let before: Vec<Def> = self
+            .before
+            .iter()
+            .map(|def| Def::new(def.id, def.ann.clone(), rewrite(&def.body)))
+            .collect();
+        let after: Vec<Def> = self
+            .after
+            .iter()
+            .map(|def| Def::new(def.id, def.ann.clone(), rewrite(&def.body)))
+            .collect();
+
+        let mut next = self.clone();
+        next.zipper = retrace(here, &zipper)?;
+        next.before = before;
+        next.after = after;
+        if next.is_well_typed() {
+            Some(next)
+        } else {
+            None
+        }
+    }
+
     pub fn apply(&self, action: Action) -> Option<EditState> {
         match action {
             Action::RemoveField => self.remove_field_everywhere(),
+            Action::AddArm => self.add_arm_everywhere(),
+            Action::RemoveArm => self.remove_arm_everywhere(),
             Action::CreateDefinition => self.create_definition(),
             Action::DeleteDefinition => self.delete_definition(),
             Action::SetDefAnn(ann) => self.set_def_ann(ann),
@@ -1066,6 +1424,14 @@ impl EditState {
             None => false,
         }
     }
+}
+
+fn retrace(exp: Exp, like: &Zipper) -> Option<Zipper> {
+    let mut rebuilt = unzip(exp);
+    for step in like.path.iter().map(Frame::child_index) {
+        rebuilt = rebuilt.move_child(step)?;
+    }
+    Some(rebuilt)
 }
 
 pub fn all_document_positions(state: &EditState) -> Vec<EditState> {
@@ -1805,6 +2171,10 @@ mod tests {
             | Exp::Cons(a, b) => contains_a_hole(a) || contains_a_hole(b),
             Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
                 contains_a_hole(c) || contains_a_hole(t) || contains_a_hole(e)
+            }
+            Exp::Inj(_, payload) => contains_a_hole(payload),
+            Exp::Match(scrutinee, arms) => {
+                contains_a_hole(scrutinee) || arms.iter().any(|(_, _, body)| contains_a_hole(body))
             }
         }
     }

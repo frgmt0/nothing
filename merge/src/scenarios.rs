@@ -66,6 +66,10 @@ const X: u128 = 13;
 const WIDTH: u128 = 20;
 const HEIGHT: u128 = 21;
 const DEPTH: u128 = 22;
+const OPEN: u128 = 30;
+const SHUT: u128 = 31;
+const P: u128 = 32;
+const Q: u128 = 33;
 
 fn names() -> NameTable {
     let mut names = NameTable::new();
@@ -79,6 +83,10 @@ fn names() -> NameTable {
     names.set(id(WIDTH), "width");
     names.set(id(HEIGHT), "height");
     names.set(id(DEPTH), "depth");
+    names.set(id(OPEN), "Open");
+    names.set(id(SHUT), "Shut");
+    names.set(id(P), "p");
+    names.set(id(Q), "q");
     names
 }
 
@@ -201,6 +209,33 @@ fn record_program(order: [u128; 3]) -> Version {
         ),
         names(),
     )
+}
+
+fn match_program(open_body: Exp, shut_body: Exp) -> Version {
+    let scrutinee = Exp::if_(
+        Exp::bool_(true),
+        Exp::inj(id(OPEN), Exp::num(1)),
+        Exp::inj(id(SHUT), Exp::num(2)),
+    );
+    Version::new(
+        program(
+            [F, G, H],
+            stock(),
+            Exp::match_(
+                scrutinee,
+                [(id(OPEN), id(P), open_body), (id(SHUT), id(Q), shut_body)],
+            ),
+        ),
+        names(),
+    )
+}
+
+fn open_arm(step: i64) -> Exp {
+    Exp::bin_op(Op::Add, Exp::var(id(P)), Exp::num(step))
+}
+
+fn shut_arm(step: i64) -> Exp {
+    Exp::bin_op(Op::Mul, Exp::var(id(Q)), Exp::num(step))
 }
 
 fn pair_program(fst: Exp, snd: Exp) -> Version {
@@ -433,6 +468,32 @@ pub fn all() -> Vec<Scenario> {
             base: record_program([WIDTH, HEIGHT, DEPTH]),
             ours: renamed(&record_program([WIDTH, HEIGHT, DEPTH]), WIDTH, "span"),
             theirs: renamed(&record_program([DEPTH, WIDTH, HEIGHT]), DEPTH, "thickness"),
+            base_style: CANONICAL,
+            ours_style: CANONICAL,
+            theirs_style: CANONICAL,
+        },
+        Scenario {
+            name: "two branches edit two different arms of the same match",
+            category: Category::Moving,
+            note: "the two arms of one match are disjoint subtrees with the same parent: one \
+                   branch rewrites the `Open` arm and the other rewrites the `Shut` arm, which \
+                   `git merge-file` sees as two edits inside one printed line",
+            base: match_program(open_arm(1), shut_arm(2)),
+            ours: match_program(open_arm(7), shut_arm(2)),
+            theirs: match_program(open_arm(1), shut_arm(9)),
+            base_style: CANONICAL,
+            ours_style: CANONICAL,
+            theirs_style: CANONICAL,
+        },
+        Scenario {
+            name: "one branch renames a constructor while the other edits an arm",
+            category: Category::Renaming,
+            note: "a constructor is an identity, so renaming `Open` is a name-table write with \
+                   no structural footprint at all, and the arm edit is a region the rename \
+                   cannot overlap",
+            base: match_program(open_arm(1), shut_arm(2)),
+            ours: renamed(&match_program(open_arm(1), shut_arm(2)), OPEN, "Running"),
+            theirs: match_program(open_arm(1), shut_arm(9)),
             base_style: CANONICAL,
             ours_style: CANONICAL,
             theirs_style: CANONICAL,

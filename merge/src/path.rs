@@ -23,6 +23,8 @@ pub fn arity(exp: &Exp) -> usize {
         Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
         Exp::If(..) | Exp::Fold(..) => 3,
         Exp::Record(fields) => fields.len(),
+        Exp::Inj(..) => 1,
+        Exp::Match(_, arms) => arms.len() + 1,
     }
 }
 
@@ -49,6 +51,9 @@ pub fn child(exp: &Exp, n: usize) -> Option<&Exp> {
         (Exp::Fold(_, _, s), 2) => Some(s),
         (Exp::Field(subject, _), 0) => Some(subject),
         (Exp::Record(fields), n) => fields.get(n).map(|(_, value)| value),
+        (Exp::Inj(_, payload), 0) => Some(payload),
+        (Exp::Match(scrutinee, _), 0) => Some(scrutinee),
+        (Exp::Match(_, arms), n) => arms.get(n - 1).map(|(_, _, body)| body),
         _ => None,
     }
 }
@@ -79,6 +84,13 @@ pub fn with_child(exp: &Exp, n: usize, new: Exp) -> Option<Exp> {
             let mut fields = fields.clone();
             fields[n].1 = new;
             Exp::Record(fields)
+        }
+        (Exp::Inj(ctor, _), 0) => Exp::Inj(*ctor, Box::new(new)),
+        (Exp::Match(_, arms), 0) => Exp::Match(Box::new(new), arms.clone()),
+        (Exp::Match(scrutinee, arms), n) if n <= arms.len() => {
+            let mut arms = arms.clone();
+            arms[n - 1].2 = new;
+            Exp::Match(scrutinee.clone(), arms)
         }
         _ => return None,
     };
@@ -134,6 +146,9 @@ pub fn label(exp: &Exp, path: &[usize]) -> String {
             (Exp::If(..), _) => "an if else-branch",
             (Exp::Record(..), _) => "the value of a record field",
             (Exp::Field(..), _) => "the subject of a projection",
+            (Exp::Inj(..), _) => "the payload of an injection",
+            (Exp::Match(..), 0) => "the subject of a match",
+            (Exp::Match(..), _) => "the body of a match arm",
             _ => "an unreachable position",
         };
         words.push(word);

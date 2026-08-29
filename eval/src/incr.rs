@@ -28,6 +28,8 @@ pub enum Value {
     Fold(Box<Value>, Box<Value>, Box<Value>),
     Record(Vec<(Id, Value)>),
     Field(Box<Value>, Id),
+    Inj(Id, Box<Value>),
+    Match(Box<Value>, Vec<(Id, Id, Arc<Exp>)>),
     EmptyHole(HoleId, IncrEnv),
     NonEmptyHole(HoleId, IncrEnv, Box<Value>),
 }
@@ -37,6 +39,7 @@ fn is_fully_reduced(v: &Value) -> bool {
         Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) | Value::Nil => true,
         Value::Pair(a, b) | Value::Cons(a, b) => is_fully_reduced(a) && is_fully_reduced(b),
         Value::Record(fields) => fields.iter().all(|(_, value)| is_fully_reduced(value)),
+        Value::Inj(_, payload) => is_fully_reduced(payload),
         _ => false,
     }
 }
@@ -81,6 +84,13 @@ pub fn value_to_dyn(v: &Value) -> Dyn {
                 .collect(),
         ),
         Value::Field(subject, id) => Dyn::Field(Box::new(value_to_dyn(subject)), *id),
+        Value::Inj(ctor, payload) => Dyn::Inj(*ctor, Box::new(value_to_dyn(payload))),
+        Value::Match(scrutinee, arms) => Dyn::Match(
+            Box::new(value_to_dyn(scrutinee)),
+            arms.iter()
+                .map(|(ctor, binder, body)| (*ctor, *binder, elaborate(body)))
+                .collect(),
+        ),
         Value::EmptyHole(h, env) => Dyn::EmptyHole(*h, env_to_dyn_env(env)),
         Value::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, env_to_dyn_env(env), Box::new(value_to_dyn(inner)))
@@ -113,7 +123,10 @@ fn collect_blocked(v: &Value, out: &mut Vec<Blocked>) {
             collect_blocked(init, out);
             collect_blocked(step, out);
         }
-        Value::Proj(_, inner) | Value::Field(inner, _) => collect_blocked(inner, out),
+        Value::Proj(_, inner) | Value::Field(inner, _) | Value::Inj(_, inner) => {
+            collect_blocked(inner, out)
+        }
+        Value::Match(scrutinee, _) => collect_blocked(scrutinee, out),
         Value::Record(fields) => {
             for (_, value) in fields {
                 collect_blocked(value, out);
@@ -186,10 +199,20 @@ fn free_vars(exp: &Exp) -> HashSet<Id> {
                 go(t, bound, out);
                 go(e, bound, out);
             }
-            Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => go(e, bound, out),
+            Exp::Proj(_, e) | Exp::Field(e, _) | Exp::Inj(_, e) | Exp::NonEmptyHole(_, e) => {
+                go(e, bound, out)
+            }
             Exp::Record(fields) => {
                 for (_, value) in fields {
                     go(value, bound, out);
+                }
+            }
+            Exp::Match(scrutinee, arms) => {
+                go(scrutinee, bound, out);
+                for (_, binder, body) in arms {
+                    bound.push(*binder);
+                    go(body, bound, out);
+                    bound.pop();
                 }
             }
             Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {}
@@ -552,6 +575,24 @@ impl IncrEngine {
                 };
                 found.unwrap_or_else(|| Value::Field(Box::new(vs), *id))
             }
+            Exp::Inj(ctor, payload) => {
+                let (vp, _) = self.eval_node(payload, env);
+                Value::Inj(*ctor, Box::new(vp))
+            }
+            Exp::Match(scrutinee, arms) => {
+                let (vs, ds) = self.eval_node(scrutinee, env);
+                match &vs {
+                    Value::Inj(ctor, payload) => match arms.iter().find(|(id, _, _)| id == ctor) {
+                        Some((_, binder, body)) => {
+                            let inner = env.update(*binder, ((**payload).clone(), ds));
+                            let body = body.clone();
+                            self.eval_node(&body, &inner).0
+                        }
+                        None => Value::Match(Box::new(vs), residual_arms(arms)),
+                    },
+                    _ => Value::Match(Box::new(vs), residual_arms(arms)),
+                }
+            }
             Exp::EmptyHole(h) => Value::EmptyHole(*h, env.clone()),
             Exp::NonEmptyHole(h, inner) => {
                 let (vi, _) = self.eval_node(inner, env);
@@ -658,7 +699,7 @@ fn walk_with_table(
             scope.pop();
             next_hash(table, idx)
         }
-        Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => {
+        Exp::Proj(_, e) | Exp::Field(e, _) | Exp::Inj(_, e) | Exp::NonEmptyHole(_, e) => {
             walk_with_table(e, table, idx, scope, dependents);
             next_hash(table, idx)
         }
@@ -668,7 +709,25 @@ fn walk_with_table(
             }
             next_hash(table, idx)
         }
+        Exp::Match(scrutinee, arms) => {
+            walk_with_table(scrutinee, table, idx, scope, dependents);
+            for (_, binder, body) in arms {
+                let mut inner: Vec<(Id, Digest)> = scope
+                    .iter()
+                    .filter(|(bid, _)| bid != binder)
+                    .cloned()
+                    .collect();
+                walk_with_table(body, table, idx, &mut inner, dependents);
+            }
+            next_hash(table, idx)
+        }
     }
+}
+
+fn residual_arms(arms: &[(Id, Id, Exp)]) -> Vec<(Id, Id, Arc<Exp>)> {
+    arms.iter()
+        .map(|(ctor, binder, body)| (*ctor, *binder, Arc::new(body.clone())))
+        .collect()
 }
 
 pub fn dirty_set(old_exp: &Exp, changed_hash: Digest) -> HashSet<Digest> {

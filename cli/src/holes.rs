@@ -42,7 +42,13 @@ fn walk(exp: &Exp, counts: &mut HoleCounts) {
             walk(l, counts);
             walk(r, counts);
         }
-        Exp::Proj(_, inner) | Exp::Field(inner, _) => walk(inner, counts),
+        Exp::Proj(_, inner) | Exp::Field(inner, _) | Exp::Inj(_, inner) => walk(inner, counts),
+        Exp::Match(scrutinee, arms) => {
+            walk(scrutinee, counts);
+            for (_, _, body) in arms {
+                walk(body, counts);
+            }
+        }
         Exp::Record(fields) => {
             for (_, value) in fields {
                 walk(value, counts);

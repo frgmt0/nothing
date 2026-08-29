@@ -16,6 +16,8 @@ pub enum Step {
     Field(String),
     PickField(String),
     RenameField(String),
+    PickConstructor(String),
+    RenameConstructor(String),
 }
 
 impl Step {
@@ -55,8 +57,55 @@ impl Step {
                     "`rename-field` needs the cursor on a record field's value".to_string(),
                 )),
             },
+            Step::PickConstructor(name) => match lookup_constructor(state, name) {
+                Some(id) => Ok(Action::SetConstructor(id)),
+                None => Err(ParseError(format!(
+                    "no constructor named `{name}` in this document"
+                ))),
+            },
+            Step::RenameConstructor(name) => match constructor_at(state) {
+                Some(id) => Ok(Action::Rename(id, name.clone())),
+                None => Err(ParseError(
+                    "`rename-constructor` needs the cursor on an injection or in a match arm"
+                        .to_string(),
+                )),
+            },
         }
     }
+}
+
+pub fn constructors_in_view(state: &EditState) -> Vec<Id> {
+    let mut out: Vec<Id> = Vec::new();
+    if let Some(expected) = expected_constructors(state) {
+        out.extend(expected);
+    }
+    for id in state.constructor_ids() {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+fn expected_constructors(state: &EditState) -> Option<Vec<Id>> {
+    let expected = crate::act::expected_ty_at_in(&state.scope(), &state.zipper);
+    match nothing_core::ty::variant_constructors(&expected) {
+        Some(ids) if !ids.is_empty() => Some(ids),
+        _ => None,
+    }
+}
+
+fn lookup_constructor(state: &EditState, name: &str) -> Option<Id> {
+    constructors_in_view(state)
+        .into_iter()
+        .find(|id| state.names.get(*id) == Some(name))
+}
+
+fn constructor_at(state: &EditState) -> Option<Id> {
+    state
+        .zipper
+        .injected_constructor_id()
+        .or_else(|| state.zipper.arm_constructor_id())
 }
 
 pub fn fields_in_view(state: &EditState) -> Vec<Id> {
@@ -167,6 +216,13 @@ editing:
   construct-fold          e becomes fold e ⦇⦈ ⦇⦈
   construct-record        e becomes {f0 = e}, a record of one named field
   construct-field NAME    e becomes e.NAME, projecting an existing field
+  construct-inj           e becomes `C0 e, an injection into a fresh case
+  construct-match         e becomes match e {…}, one hole arm per constructor
+  add-arm                 one more constructor, in every match on this variant
+  remove-arm              drop this arm, in every match on this variant
+  set-constructor NAME    re-aim this injection, or this arm, at another case
+  rename-constructor NAME give this constructor the display name NAME
+  set-arm-binder-id UUID  re-identify this arm's payload binder
   add-field               one more field on this record, holding a hole
   remove-field            drop this field; every e.NAME becomes ⦇e⦈
   move-field-prev         move this field one place earlier
@@ -254,6 +310,13 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
         "construct-fold" => no_arg(Action::ConstructFold),
         "construct-record" => no_arg(Action::ConstructRecord),
         "construct-field" => Ok(Step::Field(parse_name(head, rest)?)),
+        "construct-inj" => no_arg(Action::ConstructInj),
+        "construct-match" => no_arg(Action::ConstructMatch),
+        "add-arm" => no_arg(Action::AddArm),
+        "remove-arm" => no_arg(Action::RemoveArm),
+        "set-constructor" => Ok(Step::PickConstructor(parse_name(head, rest)?)),
+        "rename-constructor" => Ok(Step::RenameConstructor(parse_name(head, rest)?)),
+        "set-arm-binder-id" => act(Action::SetArmBinderId(parse_id(head, rest)?)),
         "add-field" => no_arg(Action::AddField),
         "remove-field" => no_arg(Action::RemoveField),
         "move-field-prev" => no_arg(Action::MoveFieldPrev),
@@ -291,6 +354,8 @@ pub fn step_name(step: &Step) -> String {
         Step::Field(name) => format!("construct-field {name}"),
         Step::PickField(name) => format!("set-field {name}"),
         Step::RenameField(name) => format!("rename-field {name}"),
+        Step::PickConstructor(name) => format!("set-constructor {name}"),
+        Step::RenameConstructor(name) => format!("rename-constructor {name}"),
     }
 }
 
@@ -317,6 +382,12 @@ pub fn action_name(action: &Action) -> String {
         Action::ConstructFold => "construct-fold".to_string(),
         Action::ConstructRecord => "construct-record".to_string(),
         Action::ConstructField(id) => format!("construct-field {id}"),
+        Action::ConstructInj => "construct-inj".to_string(),
+        Action::ConstructMatch => "construct-match".to_string(),
+        Action::AddArm => "add-arm".to_string(),
+        Action::RemoveArm => "remove-arm".to_string(),
+        Action::SetConstructor(id) => format!("set-constructor {id}"),
+        Action::SetArmBinderId(id) => format!("set-arm-binder-id {id}"),
         Action::AddField => "add-field".to_string(),
         Action::RemoveField => "remove-field".to_string(),
         Action::MoveFieldPrev => "move-field-prev".to_string(),
@@ -617,6 +688,11 @@ mod tests {
             Action::ConstructPair,
             Action::ConstructProj(Side::L),
             Action::ConstructProj(Side::R),
+            Action::ConstructInj,
+            Action::ConstructMatch,
+            Action::AddArm,
+            Action::RemoveArm,
+            Action::SetArmBinderId(Id::from_u128(11)),
             Action::ConstructNonEmptyHole,
             Action::SetAnn(Ty::Num),
             Action::SetAnn(Ty::Bool),
@@ -632,6 +708,8 @@ mod tests {
         .collect();
         steps.push(Step::Var("x0".to_string()));
         steps.push(Step::Rename("total".to_string()));
+        steps.push(Step::PickConstructor("Red".to_string()));
+        steps.push(Step::RenameConstructor("Green".to_string()));
         steps
     }
 

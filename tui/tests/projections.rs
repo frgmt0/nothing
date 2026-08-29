@@ -54,24 +54,24 @@ fn the_override_key_forces_text_back_and_then_cycles() {
 fn an_edit_made_through_the_state_machine_projection_is_visible_in_the_text_projection() {
     let state = state_machine_state();
     assert_eq!(state.active_projection(), ProjectionKind::StateMachine);
-    assert!(state.text().contains("then 1 else"));
+    assert!(state.text().contains("Idle x0 -> `Running {}"));
 
     let on_row0_result = handle_key(key(KeyCode::Right), state);
     assert!(
-        matches!(on_row0_result.focus(), Exp::Num(1)),
+        matches!(on_row0_result.focus(), Exp::Inj(..)),
         "table navigation must move the real cursor onto the row's result node: {:?}",
         on_row0_result.focus()
     );
 
-    let edited = handle_key(key(KeyCode::Char('5')), on_row0_result);
-    assert!(matches!(edited.focus(), Exp::Num(15)));
+    let edited = handle_key(key(KeyCode::Delete), on_row0_result);
+    assert!(matches!(edited.focus(), Exp::EmptyHole(_)));
     assert!(
-        edited.text().contains("then 15 else"),
-        "the digit typed through the table reached the real AST: {}",
+        edited.text().contains("Idle x0 -> ⦇⦈"),
+        "the key pressed through the table reached the real AST: {}",
         edited.text()
     );
     assert!(
-        program_line(&edited).contains("15"),
+        program_line(&edited).contains("Idle x0 -> »⦇⦈«"),
         "the text projection shows the same edit: {}",
         program_line(&edited)
     );
@@ -87,6 +87,7 @@ fn an_edit_made_through_the_text_projection_is_visible_in_the_state_machine_proj
         .apply_actions(&[
             Action::MoveChild(0),
             Action::MoveChild(1),
+            Action::MoveChild(0),
             Action::ConstructNum(99),
         ])
         .expect("row 0's result is a plain node under ordinary tree movement");

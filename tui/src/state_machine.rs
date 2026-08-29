@@ -8,8 +8,15 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::{AppState, Slot, index_path};
 
 #[derive(Clone, Debug)]
+pub enum Cond {
+    Eq(Vec<usize>, i64),
+    Case(Id),
+    Else,
+}
+
+#[derive(Clone, Debug)]
 pub struct Row {
-    pub cond: Option<(Vec<usize>, i64)>,
+    pub cond: Cond,
     pub result: Vec<usize>,
 }
 
@@ -20,10 +27,40 @@ pub struct Shape {
 }
 
 pub fn recognize(program: &Exp) -> Option<Shape> {
-    let Exp::Lam(id, _, _) = program else {
+    let Exp::Lam(id, _, body) = program else {
         return None;
     };
     let var = *id;
+    let shape = match body.as_ref() {
+        Exp::Match(..) => recognize_match(program, var)?,
+        _ => recognize_chain(program, var)?,
+    };
+    if shape.rows.len() < 3 {
+        return None;
+    }
+    Some(shape)
+}
+
+fn recognize_match(program: &Exp, var: Id) -> Option<Shape> {
+    let z = unzip(program.clone()).move_child(0)?;
+    let Exp::Match(scrutinee, arms) = z.focus.clone() else {
+        return None;
+    };
+    match scrutinee.as_ref() {
+        Exp::Var(v) if *v == var => {}
+        _ => return None,
+    }
+    let mut rows = Vec::with_capacity(arms.len());
+    for (index, (ctor, _, _)) in arms.iter().enumerate() {
+        rows.push(Row {
+            cond: Cond::Case(*ctor),
+            result: index_path(&z.clone().move_child(index + 1)?),
+        });
+    }
+    Some(Shape { var, rows })
+}
+
+fn recognize_chain(program: &Exp, var: Id) -> Option<Shape> {
     let mut rows = Vec::new();
     let mut z = unzip(program.clone()).move_child(0)?;
     while let Exp::If(cond, _, _) = z.focus.clone() {
@@ -43,19 +80,15 @@ pub fn recognize(program: &Exp) -> Option<Shape> {
         let cond_path = index_path(&z.clone().move_child(0)?.move_child(1)?);
         let result_path = index_path(&z.clone().move_child(1)?);
         rows.push(Row {
-            cond: Some((cond_path, n)),
+            cond: Cond::Eq(cond_path, n),
             result: result_path,
         });
         z = z.move_child(2)?;
     }
     rows.push(Row {
-        cond: None,
+        cond: Cond::Else,
         result: index_path(&z),
     });
-
-    if rows.len() < 3 {
-        return None;
-    }
     Some(Shape { var, rows })
 }
 
@@ -102,8 +135,9 @@ pub fn marked_text(state: &AppState) -> String {
         .rows
         .iter()
         .map(|row| match &row.cond {
-            Some((_, n)) => format!("{var_name} == {n}"),
-            None => "else".to_string(),
+            Cond::Eq(_, n) => format!("{var_name} == {n}"),
+            Cond::Case(ctor) => names.display(*ctor),
+            Cond::Else => "else".to_string(),
         })
         .collect();
     let result_texts: Vec<String> = shape
@@ -119,7 +153,7 @@ pub fn marked_text(state: &AppState) -> String {
 
     let mut out = format!("state machine on {var_name}\n");
     for (i, row) in shape.rows.iter().enumerate() {
-        let cond_marked = row.cond.as_ref().is_some_and(|(p, _)| *p == focus_path);
+        let cond_marked = matches!(&row.cond, Cond::Eq(path, _) if *path == focus_path);
         let result_marked = row.result == focus_path;
         let cond_field = mark(&pad(&cond_texts[i], cond_width), cond_marked);
         let result_field = mark(&result_texts[i], result_marked);
@@ -136,7 +170,7 @@ enum Col {
 
 fn locate(shape: &Shape, focus_path: &[usize]) -> Option<(usize, Col)> {
     for (i, row) in shape.rows.iter().enumerate() {
-        if let Some((cond_path, _)) = &row.cond
+        if let Cond::Eq(cond_path, _) = &row.cond
             && focus_path.starts_with(cond_path.as_slice())
         {
             return Some((i, Col::Cond));
@@ -151,7 +185,7 @@ fn locate(shape: &Shape, focus_path: &[usize]) -> Option<(usize, Col)> {
 fn target_path(shape: &Shape, row: usize, col: Col) -> Vec<usize> {
     let row = &shape.rows[row];
     match (col, &row.cond) {
-        (Col::Cond, Some((path, _))) => path.clone(),
+        (Col::Cond, Cond::Eq(path, _)) => path.clone(),
         _ => row.result.clone(),
     }
 }
@@ -177,7 +211,7 @@ pub fn handle_key(key: KeyEvent, state: AppState) -> Option<AppState> {
         KeyCode::Right => (row, Col::Result),
         _ => return None,
     };
-    if shape.rows[target_row].cond.is_none() && target_col == Col::Cond {
+    if !matches!(shape.rows[target_row].cond, Cond::Eq(..)) && target_col == Col::Cond {
         target_col = Col::Result;
     }
 
@@ -204,9 +238,33 @@ mod tests {
         let state = state_machine_state();
         let shape = recognize(&state.program()).expect("the fixture is state-machine shaped");
         assert_eq!(shape.rows.len(), 3);
-        assert_eq!(shape.rows[0].cond.as_ref().map(|(_, n)| *n), Some(0));
-        assert_eq!(shape.rows[1].cond.as_ref().map(|(_, n)| *n), Some(1));
-        assert!(shape.rows[2].cond.is_none());
+        let cases: Vec<String> = shape
+            .rows
+            .iter()
+            .map(|row| match &row.cond {
+                Cond::Case(ctor) => state.display_name(*ctor),
+                other => panic!("the reference is a match now, not {other:?}"),
+            })
+            .collect();
+        assert_eq!(cases, vec!["Idle", "Running", "Stopped"]);
+    }
+
+    #[test]
+    fn the_chain_of_equality_tests_is_still_a_state_machine() {
+        let program = replay_script(
+            "construct-lam\nmove-parent\nrename s\nset-ann Num\nmove-child 0\n\
+             construct-if\nconstruct-binop eq\nconstruct-var s\nmove-next-sibling\n\
+             construct-num 0\nmove-parent\nmove-next-sibling\nconstruct-num 1\n\
+             move-next-sibling\nconstruct-if\nconstruct-binop eq\nconstruct-var s\n\
+             move-next-sibling\nconstruct-num 1\nmove-parent\nmove-next-sibling\n\
+             construct-num 2\nmove-next-sibling\nconstruct-num 0\n",
+        )
+        .expect("the pre-variant encoding still replays");
+        let shape = recognize(&program.exp()).expect("an if-chain is still a state machine");
+        assert_eq!(shape.rows.len(), 3);
+        assert!(matches!(shape.rows[0].cond, Cond::Eq(_, 0)));
+        assert!(matches!(shape.rows[1].cond, Cond::Eq(_, 1)));
+        assert!(matches!(shape.rows[2].cond, Cond::Else));
     }
 
     #[test]
@@ -234,12 +292,23 @@ mod tests {
     }
 
     #[test]
+    fn a_match_of_fewer_than_three_cases_is_not_a_state_machine() {
+        let program = replay_script(
+            "construct-lam\nmove-parent\nrename s\nmove-child 0\nconstruct-var s\n\
+             construct-match\nadd-arm\nadd-arm\n",
+        )
+        .expect("two arms replay");
+        assert!(recognize(&program.exp()).is_none());
+    }
+
+    #[test]
     fn the_table_shows_every_row() {
         let state = state_machine_state();
         let text = marked_text(&state);
-        assert!(text.contains("x0 == 0"));
-        assert!(text.contains("x0 == 1"));
-        assert!(text.contains("else"));
+        assert!(text.contains("state machine on s"), "{text}");
+        assert!(text.contains("Idle"), "{text}");
+        assert!(text.contains("Running"), "{text}");
+        assert!(text.contains("Stopped"), "{text}");
     }
 
     #[test]

@@ -3,9 +3,11 @@ use nothing_core::ctx::Ctx;
 use nothing_core::exp::{Exp, Id, Op};
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
-use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod, matched_record};
+use nothing_core::ty::{
+    Ty, matched_arrow, matched_list, matched_prod, matched_record, variant_constructors,
+};
 use nothing_core::typing::{
-    ana, is_comparable, is_well_typed_in, join, operand_expectation, step_ty, syn,
+    ana, arm_payload_ty, is_comparable, is_well_typed_in, join, operand_expectation, step_ty, syn,
 };
 
 use crate::path::{Path, extend, label};
@@ -327,6 +329,64 @@ impl State {
                     );
                 }
                 Exp::Field(Box::new(subject), *field)
+            }
+
+            Exp::Inj(ctor, payload) => {
+                let payload = self.go(ctx, payload, &extend(path, 0));
+                Exp::Inj(*ctor, Box::new(payload))
+            }
+
+            Exp::Match(scrutinee, arms) => {
+                let mut scrutinee = self.go(ctx, scrutinee, &extend(path, 0));
+
+                let mut seen: Vec<Id> = Vec::with_capacity(arms.len());
+                let mut ctors = Vec::with_capacity(arms.len());
+                for (index, (ctor, _, _)) in arms.iter().enumerate() {
+                    let ctor = if seen.contains(ctor) {
+                        self.reidentify(*ctor, &extend(path, index + 1))
+                    } else {
+                        *ctor
+                    };
+                    seen.push(ctor);
+                    ctors.push(ctor);
+                }
+
+                let scrutinee_ty = syn(ctx, &scrutinee).unwrap_or(Ty::Hole);
+                let covered = match variant_constructors(&scrutinee_ty) {
+                    Some(required) => required.iter().all(|c| ctors.contains(c)),
+                    None => false,
+                };
+                if !covered {
+                    scrutinee = self.quarantine(
+                        scrutinee,
+                        &extend(path, 0),
+                        "the merge left a match that cannot answer for every case its subject \
+                         can produce",
+                    );
+                }
+                let scrutinee_ty = syn(ctx, &scrutinee).unwrap_or(Ty::Hole);
+
+                let mut result = Ty::Hole;
+                let mut repaired = Vec::with_capacity(arms.len());
+                for (index, ((_, binder, body), ctor)) in arms.iter().zip(ctors).enumerate() {
+                    let arm_path = extend(path, index + 1);
+                    let inner = ctx.extend(*binder, arm_payload_ty(&scrutinee_ty, ctor));
+                    let mut body = self.go(&inner, body, &arm_path);
+                    let body_ty = syn(&inner, &body).unwrap_or(Ty::Hole);
+                    match join(&result, &body_ty) {
+                        Some(joined) => result = joined,
+                        None => {
+                            body = self.quarantine(
+                                body,
+                                &arm_path,
+                                "the merge left an arm that answers with a different type from \
+                                 the arms before it",
+                            );
+                        }
+                    }
+                    repaired.push((ctor, *binder, body));
+                }
+                Exp::Match(Box::new(scrutinee), repaired)
             }
 
             Exp::NonEmptyHole(h, inner) => {

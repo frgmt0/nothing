@@ -62,6 +62,23 @@ pub fn ty_json(ty: &Ty) -> Json {
             ("snd", ty_json(b)),
         ]),
         Ty::List(elem) => Json::obj(vec![("ty", Json::str("List")), ("elem", ty_json(elem))]),
+        Ty::Variant(ctors) => Json::obj(vec![
+            ("ty", Json::str("Variant")),
+            (
+                "ctors",
+                Json::Arr(
+                    ctors
+                        .iter()
+                        .map(|(id, ty)| {
+                            Json::obj(vec![
+                                ("ctor", Json::str(id.to_string())),
+                                ("ty", ty_json(ty)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
         Ty::Record(fields) => Json::obj(vec![
             ("ty", Json::str("Record")),
             (
@@ -220,6 +237,32 @@ pub fn exp_json(exp: &Exp, names: &NameTable) -> Json {
             ("field", Json::str(id.to_string())),
             ("name", named(*id)),
         ]),
+        Exp::Inj(ctor, payload) => Json::obj(vec![
+            ("exp", Json::str("Inj")),
+            ("ctor", Json::str(ctor.to_string())),
+            ("name", named(*ctor)),
+            ("payload", exp_json(payload, names)),
+        ]),
+        Exp::Match(scrutinee, arms) => Json::obj(vec![
+            ("exp", Json::str("Match")),
+            ("scrutinee", exp_json(scrutinee, names)),
+            (
+                "arms",
+                Json::Arr(
+                    arms.iter()
+                        .map(|(ctor, binder, body)| {
+                            Json::obj(vec![
+                                ("ctor", Json::str(ctor.to_string())),
+                                ("name", named(*ctor)),
+                                ("binder", Json::str(binder.to_string())),
+                                ("binderName", named(*binder)),
+                                ("body", exp_json(body, names)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
         Exp::EmptyHole(h) => Json::obj(vec![
             ("exp", Json::str("EmptyHole")),
             ("hole", Json::str(h.to_string())),
@@ -250,6 +293,8 @@ pub fn exp_kind(exp: &Exp) -> &'static str {
         Exp::Fold(..) => "Fold",
         Exp::Record(..) => "Record",
         Exp::Field(..) => "Field",
+        Exp::Inj(..) => "Inj",
+        Exp::Match(..) => "Match",
         Exp::EmptyHole(_) => "EmptyHole",
         Exp::NonEmptyHole(..) => "NonEmptyHole",
     }
@@ -339,6 +384,18 @@ pub fn action_json(action: &Action) -> Json {
         Action::SetFieldId(id) => Json::obj(vec![
             ("action", Json::str("SetFieldId")),
             ("field", Json::str(id.to_string())),
+        ]),
+        Action::ConstructInj => Json::obj(vec![("action", Json::str("ConstructInj"))]),
+        Action::ConstructMatch => Json::obj(vec![("action", Json::str("ConstructMatch"))]),
+        Action::AddArm => Json::obj(vec![("action", Json::str("AddArm"))]),
+        Action::RemoveArm => Json::obj(vec![("action", Json::str("RemoveArm"))]),
+        Action::SetConstructor(id) => Json::obj(vec![
+            ("action", Json::str("SetConstructor")),
+            ("ctor", Json::str(id.to_string())),
+        ]),
+        Action::SetArmBinderId(id) => Json::obj(vec![
+            ("action", Json::str("SetArmBinderId")),
+            ("id", Json::str(id.to_string())),
         ]),
     }
 }
@@ -476,10 +533,18 @@ pub fn holes(exp: &Exp) -> (usize, usize) {
                 go(inner, empty, non_empty);
             }
             Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
-            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => go(b, empty, non_empty),
+            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::Inj(_, b) => {
+                go(b, empty, non_empty)
+            }
             Exp::Record(fields) => {
                 for (_, value) in fields {
                     go(value, empty, non_empty);
+                }
+            }
+            Exp::Match(scrutinee, arms) => {
+                go(scrutinee, empty, non_empty);
+                for (_, _, body) in arms {
+                    go(body, empty, non_empty);
                 }
             }
             Exp::Ap(a, b)
@@ -512,10 +577,16 @@ pub fn hole_ids(exp: &Exp) -> Vec<HoleId> {
                 go(inner, out);
             }
             Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
-            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => go(b, out),
+            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::Inj(_, b) => go(b, out),
             Exp::Record(fields) => {
                 for (_, value) in fields {
                     go(value, out);
+                }
+            }
+            Exp::Match(scrutinee, arms) => {
+                go(scrutinee, out);
+                for (_, _, body) in arms {
+                    go(body, out);
                 }
             }
             Exp::Ap(a, b)

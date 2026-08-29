@@ -139,6 +139,13 @@ pub fn fresh_field_name(names: &NameTable) -> String {
         .expect("the candidate stream is unbounded")
 }
 
+pub fn fresh_constructor_name(names: &NameTable) -> String {
+    (0u64..)
+        .map(|n| format!("C{n}"))
+        .find(|candidate| !names.holds_name(candidate))
+        .expect("the candidate stream is unbounded")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +270,16 @@ mod tests {
             "x0",
             "a field name never eats a binder name"
         );
+    }
+
+    #[test]
+    fn a_fresh_constructor_name_is_capitalised_and_has_its_own_stream() {
+        let (a, _, _) = ids();
+        let mut names = NameTable::new();
+        assert_eq!(fresh_constructor_name(&names), "C0");
+        names.set(a, "C0");
+        assert_eq!(fresh_constructor_name(&names), "C1");
+        assert_eq!(fresh_field_name(&names), "f0");
+        assert_eq!(fresh_binder_name(&names), "x0");
     }
 }

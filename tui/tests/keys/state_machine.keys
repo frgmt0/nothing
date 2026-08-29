@@ -1,39 +1,61 @@
-# 4. Three-case state machine — bench/references.md §4, Phase-1 surface:
+# 4. Three-case state machine — bench/references.md §4, written with a
+#    variant and a match (2026-08-29; it was a chain of equality tests on
+#    numeric codes until this phase, because Phase 1 had no sum types):
 #
-#   λx0:Num. if x0 == 0 then 1 else if x0 == 1 then 2 else 0
+#   λs:?. match s { Idle _ -> `Running {} | Running _ -> `Stopped {}
+#                 | Stopped _ -> `Idle {} }
 #
-# Note the comparisons are typed *operator first* (`=` at the empty hole,
-# then its operands). Typing `x0` first would also work — the editor never
-# refuses — but in a branch whose sibling is already a `Num` it would make
-# the branch transiently `Bool`, which the calculus quarantines: `⦇x0 == 1⦈`,
-# to be unwrapped later with Enter. Operator-first is the cheaper route here,
-# and it is the same number of keystrokes.
+# `C-n` in a match is AddArm, which is the only way a constructor comes
+# into being, and it lands in the constructor slot so the case can be
+# named on the spot. The three names are the only content here: everything
+# else is one keystroke per node.
 
 \
-x
-0
-:
-n
+s
 .
+s
+|          # match s {} — the scrutinee is `?`, so it opens with no arms
 
-# if x0 == 0 then 1 else ⦇⦈
-=          # ⦇⦈ == ⦇⦈, cursor on the left operand
-x
-0
-tab        # → the right operand
-0
-?          # climbs out of the `==` and wraps it as the scrutinee
-1
-tab        # → the else branch
+# three cases, named where they are minted
+C-n
+I
+d
+l
+e
+C-n
+R
+u
+n
+n
+i
+n
+g
+C-n
+S
+t
+o
+p
+p
+e
+d
 
-# else if x0 == 1 then 2 else 0
-?          # a nested conditional, cursor on its scrutinee
-=
-x
-0
+# Idle -> `Running {}
+tab        # → the first arm's body, the first hole in the document
+`          # `C0 ⦇⦈, constructor slot opens on the pick flavour
+R          # one letter: `Running` is the only case that starts with it
+{          # a key the slot does not understand: it leaves for the payload
+C-d        # and drops the field, leaving the `{}` a nullary case carries
+
+# Running -> `Stopped {}
 tab
-1
-tab        # → the then branch
-2
-tab        # → the else branch
-0
+`
+S
+{
+C-d
+
+# Stopped -> `Idle {}
+tab
+`
+I
+{
+C-d

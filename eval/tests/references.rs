@@ -51,6 +51,13 @@ fn drop_calls_to(exp: &Exp, target: Id, next: &mut u128) -> Exp {
         }
         Exp::Lam(id, ty, body) => Exp::lam(*id, ty.clone(), drop_calls_to(body, target, next)),
         Exp::Proj(side, body) => Exp::proj(*side, drop_calls_to(body, target, next)),
+        Exp::Inj(ctor, payload) => Exp::inj(*ctor, drop_calls_to(payload, target, next)),
+        Exp::Match(scrutinee, arms) => Exp::match_(
+            drop_calls_to(scrutinee, target, next),
+            arms.iter()
+                .map(|(ctor, binder, body)| (*ctor, *binder, drop_calls_to(body, target, next)))
+                .collect::<Vec<_>>(),
+        ),
         Exp::NonEmptyHole(h, body) => Exp::non_empty_hole(*h, drop_calls_to(body, target, next)),
         Exp::Ap(a, b) => Exp::ap(
             drop_calls_to(a, target, next),
@@ -272,11 +279,43 @@ fn reference_four_state_machine_transitions() {
     let machine = main_of(&doc, &names).body;
     assert!(eval(&machine).is_value());
 
-    for (state, next) in [(0, 1), (1, 2), (2, 0), (7, 0)] {
-        let applied = Exp::ap(machine.clone(), Exp::num(state));
+    let state_named = |name: &str| {
+        doc.constructor_ids()
+            .into_iter()
+            .find(|id| names.get(*id) == Some(name))
+            .unwrap_or_else(|| panic!("no constructor named `{name}` in {}", doc.render(&names)))
+    };
+
+    for (state, next) in [
+        ("Idle", "Running"),
+        ("Running", "Stopped"),
+        ("Stopped", "Idle"),
+    ] {
+        let applied = Exp::ap(
+            machine.clone(),
+            Exp::inj(state_named(state), Exp::record([])),
+        );
         assert!(is_well_typed(&applied));
-        assert_eq!(eval(&applied).num(), Some(next), "transition({state})");
+        let outcome = eval(&applied);
+        assert!(outcome.is_value(), "transition({state}) did not finish");
+        assert_eq!(
+            render(&outcome.to_exp(), &names),
+            format!("`{next} {{}}"),
+            "transition({state})"
+        );
     }
+
+    let seven = Exp::ap(machine, Exp::num(7));
+    assert!(
+        is_well_typed(&seven),
+        "the parameter is still annotated `?`, so a number still typechecks"
+    );
+    let outcome = eval(&seven);
+    assert!(
+        !outcome.is_value(),
+        "but 7 answers no case, so the machine gets stuck instead of quietly returning a state"
+    );
+    assert!(outcome.is_stuck());
 }
 
 #[test]

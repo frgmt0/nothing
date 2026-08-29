@@ -170,6 +170,8 @@ pub enum Exp {
     Fold(Box<Exp>, Box<Exp>, Box<Exp>),
     Record(Vec<(Id, Exp)>),
     Field(Box<Exp>, Id),
+    Inj(Id, Box<Exp>),
+    Match(Box<Exp>, Vec<(Id, Id, Exp)>),
 
     /// A gap where an expression has not been written yet. It synthesises
     /// type `Hole` so the program stays well-typed mid-edit: an empty hole
@@ -259,6 +261,21 @@ impl Exp {
         Exp::Field(subject.into(), id)
     }
 
+    pub fn inj(ctor: Id, payload: impl Into<Box<Exp>>) -> Exp {
+        Exp::Inj(ctor, payload.into())
+    }
+
+    pub fn match_(
+        scrutinee: impl Into<Box<Exp>>,
+        arms: impl IntoIterator<Item = (Id, Id, Exp)>,
+    ) -> Exp {
+        Exp::Match(scrutinee.into(), arms.into_iter().collect())
+    }
+
+    pub fn unit() -> Exp {
+        Exp::Record(Vec::new())
+    }
+
     pub fn list(items: impl IntoIterator<Item = Exp>) -> Exp {
         let items: Vec<Exp> = items.into_iter().collect();
         items
@@ -304,11 +321,13 @@ mod tests {
             Exp::fold(Exp::nil(), Exp::num(0), Exp::var(x)),
             Exp::record([(x, Exp::num(1))]),
             Exp::field(Exp::record([(x, Exp::num(1))]), x),
+            Exp::inj(x, Exp::unit()),
+            Exp::match_(Exp::inj(x, Exp::unit()), [(x, x, Exp::num(1))]),
             Exp::empty_hole(h0),
             Exp::non_empty_hole(h1, Exp::bool_(true)),
         ];
 
-        assert_eq!(exps.len(), 18);
+        assert_eq!(exps.len(), 20);
     }
 
     #[test]

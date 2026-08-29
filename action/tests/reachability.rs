@@ -104,6 +104,40 @@ fn build(target: &Exp, actions: &mut Vec<Action>) {
             actions.push(Action::Finish);
         }
 
+        Exp::Inj(ctor, payload) => {
+            actions.push(Action::ConstructNonEmptyHole);
+            actions.push(Action::ConstructInj);
+            actions.push(Action::MoveParent);
+            actions.push(Action::SetConstructor(*ctor));
+            actions.push(Action::MoveChild(0));
+            build(payload, actions);
+            actions.push(Action::MoveParent);
+            actions.push(Action::MoveParent);
+            actions.push(Action::Finish);
+        }
+
+        Exp::Match(scrutinee, arms) => {
+            actions.push(Action::ConstructNonEmptyHole);
+            actions.push(Action::ConstructMatch);
+            for _ in arms {
+                actions.push(Action::MoveParent);
+                actions.push(Action::AddArm);
+            }
+            actions.push(Action::MoveParent);
+            for (i, (ctor, binder, body)) in arms.iter().enumerate() {
+                actions.push(Action::MoveChild(i + 1));
+                actions.push(Action::SetConstructor(*ctor));
+                actions.push(Action::SetArmBinderId(*binder));
+                build(body, actions);
+                actions.push(Action::MoveParent);
+            }
+            actions.push(Action::MoveChild(0));
+            build(scrutinee, actions);
+            actions.push(Action::MoveParent);
+            actions.push(Action::MoveParent);
+            actions.push(Action::Finish);
+        }
+
         Exp::NonEmptyHole(_, inner) => {
             actions.push(Action::ConstructNonEmptyHole);
             build_children(&[inner], actions);
@@ -176,6 +210,15 @@ fn canonical_hole_ids(exp: &Exp) -> Exp {
                 }
                 Exp::Record(out)
             }
+            Exp::Inj(ctor, payload) => Exp::inj(*ctor, go(payload, next)),
+            Exp::Match(scrutinee, arms) => {
+                let scrutinee = go(scrutinee, next);
+                let mut out = Vec::with_capacity(arms.len());
+                for (ctor, binder, body) in arms {
+                    out.push((*ctor, *binder, go(body, next)));
+                }
+                Exp::match_(scrutinee, out)
+            }
         }
     }
     go(exp, &mut 0)
@@ -198,6 +241,10 @@ fn is_hole_free(exp: &Exp) -> bool {
         | Exp::Cons(a, b) => is_hole_free(a) && is_hole_free(b),
         Exp::If(c, t, e) | Exp::Fold(c, t, e) => {
             is_hole_free(c) && is_hole_free(t) && is_hole_free(e)
+        }
+        Exp::Inj(_, payload) => is_hole_free(payload),
+        Exp::Match(scrutinee, arms) => {
+            is_hole_free(scrutinee) && arms.iter().all(|(_, _, body)| is_hole_free(body))
         }
     }
 }
@@ -443,6 +490,23 @@ fn the_targets_cover_the_hard_cases() {
                 note("Field", seen);
                 survey(subject, seen);
             }
+            Exp::Inj(_, payload) => {
+                note("Inj", seen);
+                survey(payload, seen);
+            }
+            Exp::Match(scrutinee, arms) => {
+                note("Match", seen);
+                if arms.is_empty() {
+                    note("EmptyMatch", seen);
+                }
+                if arms.len() > 1 {
+                    note("WideMatch", seen);
+                }
+                survey(scrutinee, seen);
+                for (_, _, body) in arms {
+                    survey(body, seen);
+                }
+            }
         }
     }
 
@@ -472,6 +536,9 @@ fn the_targets_cover_the_hard_cases() {
         "EmptyRecord",
         "WideRecord",
         "Field",
+        "Inj",
+        "Match",
+        "WideMatch",
     ] {
         assert!(
             seen.contains(&form),

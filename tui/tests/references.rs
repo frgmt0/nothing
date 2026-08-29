@@ -127,6 +127,22 @@ fn go(exp: &Exp, next: &mut u128, seen: &mut Vec<Id>) -> Exp {
             let subject = go(subject, next, seen);
             Exp::field(subject, canonical(*id, seen))
         }
+        Exp::Inj(ctor, payload) => {
+            let ctor = canonical(*ctor, seen);
+            Exp::inj(ctor, go(payload, next, seen))
+        }
+        Exp::Match(scrutinee, arms) => {
+            let scrutinee = go(scrutinee, next, seen);
+            let arms: Vec<(Id, Id, Exp)> = arms
+                .iter()
+                .map(|(ctor, binder, body)| {
+                    let ctor = canonical(*ctor, seen);
+                    let binder = canonical(*binder, seen);
+                    (ctor, binder, go(body, next, seen))
+                })
+                .collect();
+            Exp::match_(scrutinee, arms)
+        }
         Exp::EmptyHole(_) => Exp::empty_hole(fresh()),
         Exp::NonEmptyHole(_, inner) => {
             let id = fresh();

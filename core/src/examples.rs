@@ -146,6 +146,11 @@ mod tests {
                 }
                 Exp::Proj(_, e) | Exp::Field(e, _) => contains_empty_hole(e),
                 Exp::Record(fields) => fields.iter().any(|(_, e)| contains_empty_hole(e)),
+                Exp::Inj(_, payload) => contains_empty_hole(payload),
+                Exp::Match(scrutinee, arms) => {
+                    contains_empty_hole(scrutinee)
+                        || arms.iter().any(|(_, _, body)| contains_empty_hole(body))
+                }
             }
         }
 
@@ -187,6 +192,13 @@ mod tests {
                 }
                 Exp::Proj(_, e) | Exp::Field(e, _) => contains_non_empty_hole(e),
                 Exp::Record(fields) => fields.iter().any(|(_, e)| contains_non_empty_hole(e)),
+                Exp::Inj(_, payload) => contains_non_empty_hole(payload),
+                Exp::Match(scrutinee, arms) => {
+                    contains_non_empty_hole(scrutinee)
+                        || arms
+                            .iter()
+                            .any(|(_, _, body)| contains_non_empty_hole(body))
+                }
             }
         }
 

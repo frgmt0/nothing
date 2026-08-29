@@ -12,8 +12,11 @@ fn holes(exp: &Exp) -> usize {
         Exp::EmptyHole(_) => 1,
         Exp::NonEmptyHole(_, inner) => 1 + holes(inner),
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => 0,
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => holes(b),
+        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::Inj(_, b) => holes(b),
         Exp::Record(fields) => fields.iter().map(|(_, value)| holes(value)).sum(),
+        Exp::Match(scrutinee, arms) => {
+            holes(scrutinee) + arms.iter().map(|(_, _, body)| holes(body)).sum::<usize>()
+        }
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
@@ -48,6 +51,15 @@ fn free_vars(
         Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Pair(a, b) | Dyn::Cons(a, b) => {
             free_vars(a, bound, out);
             free_vars(b, bound, out);
+        }
+        Dyn::Inj(_, payload) => free_vars(payload, bound, out),
+        Dyn::Match(scrutinee, arms) => {
+            free_vars(scrutinee, bound, out);
+            for (_, binder, body) in arms {
+                bound.push(*binder);
+                free_vars(body, bound, out);
+                bound.pop();
+            }
         }
         Dyn::If(c, t, e) | Dyn::Fold(c, t, e) => {
             free_vars(c, bound, out);

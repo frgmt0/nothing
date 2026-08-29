@@ -6,8 +6,8 @@ use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, Id, Side};
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    CONS_STR, FIELD_STR, FOLD_STR, NIL_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS,
-    Prec, op_prec, op_str, quote_str, render_id,
+    ARM_SEP_STR, ARM_STR, CONS_STR, FIELD_STR, FOLD_STR, INJ_STR, MATCH_STR, NIL_STR, PREC_APP,
+    PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec, op_prec, op_str, quote_str, render_id,
 };
 use nothing_merge::path::{Path, arity, at, child, extend};
 
@@ -117,6 +117,14 @@ fn shallow_key(exp: &Exp) -> String {
                 .join(",")
         ),
         Exp::Field(_, id) => format!("Field:{id}"),
+        Exp::Inj(ctor, _) => format!("Inj:{ctor}"),
+        Exp::Match(_, arms) => format!(
+            "Match:{}",
+            arms.iter()
+                .map(|(ctor, binder, _)| format!("{ctor}/{binder}"))
+                .collect::<Vec<String>>()
+                .join(",")
+        ),
         Exp::EmptyHole(h) => format!("EmptyHole:{h}"),
         Exp::NonEmptyHole(h, _) => format!("NonEmptyHole:{h}"),
     }
@@ -355,9 +363,10 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::Nil
         | Exp::Record(_)
         | Exp::Field(_, _)
+        | Exp::Match(_, _)
         | Exp::Pair(_, _) => PREC_ATOM,
         Exp::Cons(_, _) => PREC_CONS,
-        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) => PREC_APP,
+        Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) | Exp::Inj(_, _) => PREC_APP,
         Exp::BinOp(op, _, _) => op_prec(*op),
         Exp::If(_, _, _) | Exp::Let(_, _, _) | Exp::Lam(_, _, _) => PREC_BINDER,
     }
@@ -495,6 +504,32 @@ impl Marker<'_> {
             Exp::Field(_, id) => {
                 self.kid(exp, path, 0, PREC_ATOM, class, out);
                 out.push_str(&format!("{FIELD_STR}{}", render_id(*id, self.names)));
+            }
+            Exp::Inj(ctor, _) => {
+                out.push_str(&format!("{INJ_STR}{} ", render_id(*ctor, self.names)));
+                self.kid(exp, path, 0, PREC_ATOM, class, out);
+            }
+            Exp::Match(_, arms) => {
+                out.push_str(MATCH_STR);
+                out.push(' ');
+                self.kid(exp, path, 0, PREC_ATOM, class, out);
+                out.push_str(" {");
+                for (n, (ctor, binder, _)) in arms.iter().enumerate() {
+                    if n > 0 {
+                        out.push_str(&format!(" {ARM_SEP_STR}"));
+                    }
+                    out.push_str(&format!(
+                        " {} {} {ARM_STR} ",
+                        render_id(*ctor, self.names),
+                        render_id(*binder, self.names)
+                    ));
+                    self.kid(exp, path, n + 1, PREC_CMP, class, out);
+                }
+                if arms.is_empty() {
+                    out.push('}');
+                } else {
+                    out.push_str(" }");
+                }
             }
         }
     }

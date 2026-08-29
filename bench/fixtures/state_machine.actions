@@ -1,40 +1,65 @@
-# 4. Three-case state machine (bench/references.md §4), as the nearest
-#    Phase-1 program.
+# 4. Three-case state machine (bench/references.md §4), written as the
+#    reference program actually says it, with a variant and a match:
 #
-#   λs:Num. if s == 0 then 1 else if s == 1 then 2 else 0
+#   λs:?. match s { Idle _ -> `Running {} | Running _ -> `Stopped {}
+#                 | Stopped _ -> `Idle {} }
 #
-# Phase 1 has no sum types and no `match`. The three states are encoded as
-# the numeric codes Idle = 0, Running = 1, Stopped = 2, and the match
-# becomes a chain of equality tests. What is lost is exhaustiveness: the
-# nested `else` is a catch-all, so the compiler can no longer tell you a
-# case is missing.
+# Until 2026-08-29 this fixture faked the reference with a chain of
+# equality tests on the numeric codes 0/1/2, because Phase 1 had no sum
+# types. The Neovim denominator (151) was always computed for the match
+# version, so the numerator was measuring a different program. It is not
+# anymore.
+#
+# The parameter is annotated `?` and not `[Idle: {} | ...]` because a
+# variant type is inferred and displayed, never spelled (DECISIONS.md,
+# 2026-08-29): there is no variant syntax in `set-ann`, and a match on a
+# `?` scrutinee is exhaustive because the requirement is empty. The three
+# cases come into being as arms — `add-arm` is the only way to mint a
+# constructor — and the injections in the bodies aim at those same three
+# identities.
 
-# λs:Num. ⦇⦈
+# λs:?. ⦇⦈
 construct-lam
 move-parent
-rename x0
-set-ann Num
+rename s
 move-child 0
 
-# if s == 0 then 1 else ⦇⦈    -- Idle -> Running
-construct-if
-construct-binop eq
-construct-var x0
-move-next-sibling
-construct-num 0
-move-parent
-move-next-sibling
-construct-num 1
-move-next-sibling
+# match s {}, then one arm per state
+construct-var s
+construct-match
+add-arm
+rename-constructor Idle
+add-arm
+rename-constructor Running
+add-arm
+rename-constructor Stopped
 
-# if s == 1 then 2 else 0     -- Running -> Stopped, Stopped -> Idle
-construct-if
-construct-binop eq
-construct-var x0
-move-next-sibling
-construct-num 1
+# Idle -> `Running {}
+move-parent
+move-child 1
+construct-inj
+move-parent
+set-constructor Running
+move-child 0
+construct-record
+remove-field
+
+# Running -> `Stopped {}
 move-parent
 move-next-sibling
-construct-num 2
+construct-inj
+move-parent
+set-constructor Stopped
+move-child 0
+construct-record
+remove-field
+
+# Stopped -> `Idle {}
+move-parent
 move-next-sibling
-construct-num 0
+construct-inj
+move-parent
+set-constructor Idle
+move-child 0
+construct-record
+remove-field

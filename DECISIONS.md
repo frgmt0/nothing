@@ -1066,3 +1066,476 @@ byte-identical before and after; and the merge benchmark's new scenario has
 one branch renaming a field while the other renames a second field *and*
 reorders all three, merging clean and well-typed while `git merge-file`
 conflicts on the same three versions' rendered text.
+
+---
+
+### 2026-08-29 — A variant is a set of constructors, and a match is its shape
+
+Variants are the fourth and last Phase B2 feature. The checkbox asks for "sum
+types with id-identified constructors, and a match expression. Constructing a
+match on a variant type auto-generates one arm per constructor, each a hole —
+exhaustiveness by construction, not by warning." Records decided everything
+about identity already (2026-08-29, above); this entry decides the things a
+*sum* asks that a product does not.
+
+`Ty::Variant(Vec<(Id, Ty)>)`, `Exp::Inj(Id, Box<Exp>)` and
+`Exp::Match(Box<Exp>, Vec<(Id, Id, Box<Exp>)>)` — an arm is a constructor id,
+a payload binder id, and a body. Constructors are ordered for the same reason
+fields are: the projection has to print them in *some* order, and the order
+they were written in is the only one that is not a lie.
+
+**Every constructor carries exactly one payload, and a nullary one carries
+`{}`.** Four spellings were on the table: `(Id)` with no payload at all,
+`(Id, Option<Ty>)`, `(Id, Ty)` with `Ty::Hole` meaning "no payload", and
+`(Id, Ty)` with the empty record meaning it. The first two put a second shape
+into every match, every rebuild, every hash and every migration, to save
+writing two characters. The third is wrong twice over: `?` already means "not
+known yet", so a nullary constructor would be indistinguishable from one whose
+payload the user has not decided, and `matched_variant` would have to fail open
+on a case that is closed. The fourth costs nothing, because records arrived one
+feature ago and `{}` *is* the unit type this language already has — an empty
+record is a type of its own, consistent with nothing but itself, with exactly
+one value. So `` `None {} `` is spelled out, and the projection does **not**
+elide the `{}`: eliding a payload position would give two distinct cursor
+positions the same rendering, which
+`cursor_moves_produce_visibly_distinct_output_at_every_position` forbids and
+which would make the payload of a nullary constructor unreachable by `→`. The
+beginner voice does say "carrying nothing" rather than "carrying an empty
+record", but that is prose about a node, not a cursor-addressable projection,
+and it is the only place the `{}` goes unsaid.
+
+**`join` is union**, and that is the one place variants are genuinely dual to
+records rather than merely analogous. Records must agree because a record has to
+supply every field either branch supplies; a variant has to *accept* every
+constructor either branch produces. So `if b then `Red {} else `Green {}`
+synthesises `[Red: {}, Green: {}]`, joining payloads where the two overlap and
+appending where they do not, keeping the left operand's order for the same
+reason `join` on records does.
+
+Union-join is not a nicety — without it the language has no multi-constructor
+variants at all. `syn(Inj(c, e))` is the singleton `[c: τ]`, because an
+injection knows only its own case; and no annotation can spell a variant (see
+below), so if joining were exact, every variant in the language would have
+exactly one constructor and the feature would be a one-case record with worse
+ergonomics.
+
+**Consistency is by overlap, not by constructor set, and a property test is why.**
+The first draft made it character for character the record rule — same
+constructor set, consistent payloads — for the symmetry the record entry argued
+for. `delete_preserves_well_typedness_everywhere` refused it inside a minute
+(seed 4886890018093993446, kept in `action/proptest-regressions/act.txt`). The
+counterexample is short: `λf:[Red: ?, Green: ?] → ?. …` applied to
+`if b then `Red {} else `Green {}` is well typed, and deleting the `else`
+branch replaces it with a hole, whose join with `[Red: {}]` is `[Red: {}]` — a
+*narrower* variant, and under the exact rule no longer consistent with the
+annotation. The whole program stops typechecking because a subterm was deleted.
+
+That is a violation of an invariant this language depends on everywhere and had
+never had to name before: **`syn` is monotone under deletion** — replacing any
+subterm with a hole may only make types less informative, never inconsistent.
+Records never tripped it because a record's join demands equal field sets, so a
+record type cannot narrow. A variant's join is union, so it can, and the
+consistency rule has to be one that narrowing preserves. It is: **two variants
+are consistent unless they disagree about a constructor they both have.** `[Red]`
+is consistent with `[Red, Green]`; `[Red: Num]` is not consistent with
+`[Red: Str]`. Symmetric, reflexive, still not transitive — the same three
+properties `?` already has, and the tests that check them still pass unchanged.
+
+The analytic rule needed the same treatment and for the same reason. The draft
+`ana(Inj(c, e), τ)` succeeded only when `matched_variant(τ, c)` was `Some`;
+seed 11933971229440477142 showed an `Inj(Red, …)` analysed against a narrowed
+`[Green]` failing where it had succeeded before the deletion. So a constructor
+the expectation has never heard of now *widens* rather than fails:
+`ana(Inj(c, e), τ)` checks the payload against `matched_variant(τ, c)` when
+there is one and against `syn` otherwise. `ana(Inj(…), Num)` still fails, so a
+non-variant expectation still quarantines, which is the behaviour that key
+matters. This is an *analytic* rule, not width subtyping — it is what lets one
+arm of an `if` produce `Red` where the whole `if` is known to be
+`[Red, Green, Blue]`.
+
+Both changes were forced by a proptest and neither was in the design an hour
+earlier, which is the second time in this phase (see the record-field
+`Reidentified` repair) that a property discovered a rule instead of confirming
+one. Worth saying plainly: the argument for exact consistency was *correct about
+records* and wrong here, and no amount of reasoning by analogy was going to
+catch that. Ten thousand cases did.
+
+**`matched_variant` fails open on `?`, and so does the constructor set.**
+`matched_variant(?, c) = ?`, and `variant_constructors(?)` is the *empty*
+requirement rather than no answer at all. So `λc:?. match c { … }` is a
+function over variants that typechecks with any arms at all, exactly as
+`λp:?. p.x` is a function over records — the gradual rule every `matched_*`
+judgment in this language already follows.
+
+**A variant type is inferred and displayed, never spelled.** The record entry's
+argument transfers unchanged and gets sharper: a variant type is a list of
+constructor *identities*, `SetAnn` carries a `Ty`, and `action_name`/
+`parse_step` round-trip is a tested property that a `Ty` full of uuids cannot
+satisfy. There is no `` ` `` in the annotation slot and no variant syntax in
+`script::parse_ty`. One consequence is worth stating out loud because it makes
+the rest of the design tractable: **a concrete variant type never crosses a
+definition boundary**, because the only thing a caller knows about a definition
+is its annotation, and an annotation cannot name one. Exhaustiveness is
+therefore a property of a single definition's body, which is where the checker
+enforces it and where the editor can maintain it.
+
+**Missing arms are unrepresentable; extra arms are legal.**
+`syn(Match(e, arms))` requires the arm ids to be distinct and to *cover*
+`variant_constructors(syn(e))`. Covering, not equalling: an arm whose
+constructor is not in the scrutinee's type is dead, gets payload type `?`, and
+is checked like any other. That asymmetry is the whole editing story. A dead arm
+is how a constructor comes into being — you add the arm first and inject into it
+afterwards — and it is what makes the sequence "add a case, then write the case"
+possible at all without a moment where the program is not a program. Since every
+action preserves well-typedness and `syn` refuses a match with a missing arm, no
+sequence of actions can produce one. `action/tests/exhaustive.rs` asserts this
+directly over 10 000 random action walks rather than trusting the argument.
+
+**`AddArm` is the only way to add a constructor, and it sweeps the document.**
+It mints a constructor id and a payload binder, appends `(c, x, ⦇⦈)` to the
+focused match, **and appends the same arm to every other match in the document
+whose arm set is the same set** — one action, one log entry, one `C-z`. This is
+`RemoveField`'s document sweep (2026-08-29) and B1's `DeleteDefinition`
+(2026-08-28) a third time. Two matches over the same variant are kept in step by
+construction, which is the only way "exhaustiveness by construction" can survive
+a second use site. Matches are identified by arm set rather than by scrutinee
+type because a scrutinee of type `?` has no type to compare, and two matches on
+the same `?`-typed parameter of two different functions are exactly the pair the
+sweep exists for.
+
+**`RemoveArm` is the same sweep in reverse, and it is refused rather than
+repaired.** It removes the arm from every match with that arm set and keeps the
+result only if the whole document still typechecks — which it does not if any
+scrutinee still injects the constructor. So the refusal is not a special case in
+the action; it is `keep_if_well_typed` reporting that the invariant would break.
+This is the one place variants decline where records repaired: `RemoveField`
+could quarantine every projection and keep going, because a projection has a
+subject worth keeping, but there is no coherent quarantine for "this match can
+no longer answer" — the arm bodies that remain are fine, and the one that would
+have run is the one you just deleted. Refusing is the honest answer, and the
+user's route is the ordinary one: delete the injections first, then the arm.
+
+**`SetConstructor` re-aims an arm as well as an injection, and reachability is
+why.** The action was written for injections, where the keyboard drives it from
+the constructor slot's pick flavour. `reachability.rs` then produced a match
+with two *dead* arms over a `?` scrutinee — a legal state, and the state the
+`RemoveArm` vacuity check needs to exist — and could not build it: `AddArm`
+mints its own identity, so the two constructor ids in the target appeared
+nowhere else in the program and nothing could point the arms at them. Records
+had answered this exact question already: `AddField` mints, `SetFieldId`
+re-identifies, and the reachability recipe uses both. So `SetConstructor` reads
+the cursor the same way the constructor slot does — the focused injection, or
+the arm the cursor is in — and the match recipe becomes the record recipe with
+different nouns. It is guarded by `keep_if_well_typed` like everything else, so
+re-aiming an arm onto a case a sibling arm already answers, or off a case the
+scrutinee still injects, is refused rather than repaired. It has no key, for the
+reason `SetArmBinderId` has none: the keyboard has never set an identity it did
+not mint.
+
+**Ordinary `Delete` on an arm body holes the body and keeps the arm.** No
+special case, and this is why `RemoveArm` needs to exist at all: the two
+operations a text-shaped editor conflates — "empty this case" and "this case is
+gone" — are different edits here, and only one of them can change the shape of
+the match.
+
+**`ConstructMatch` reads the scrutinee, and a `?` scrutinee gives a zero-arm
+match.** On a focus whose type is `[c₁: τ₁, …, cₙ: τₙ]` it writes
+`match e { c₁ x₁ -> ⦇⦈ | … | cₙ xₙ -> ⦇⦈ }` with fresh binders and the cursor in
+the first arm's body — the checkbox, literally. On a focus whose type is `?` it
+writes `match e {}`, which is exhaustive (the requirement is empty), synthesises
+`?`, and grows by `C-n`. A zero-arm match is not an error state and does not need
+to be: it is the shape of "I am about to case-split on something I do not know
+yet", which is precisely what an editor for an unfinished program should be able
+to hold. On a focus that is neither — a `Num`, say — the scrutinee is
+quarantined, as every other construction key does.
+
+**Constructor ids hash raw; arm binders canonicalise.** The record entry's rule,
+applied to a node with both kinds of id in it. A constructor id is
+document-global — it is the same identity in an injection here and an arm there —
+so it hashes as it is, exactly like a field id and a free variable. An arm's
+payload binder binds only that arm's body, so it is pushed on the de-Bruijn stack
+around the body and canonicalises like a lambda's, which is what makes
+`match e { c x -> x }` and `match e { c y -> y }` the same node. Display names
+reach neither: renaming a constructor is one `Rename`, zero node hashes change,
+and it cannot conflict with any structural edit in a merge.
+
+**Two branches adding a constructor to the same variant is a conflict, and it
+should be.** `AddArm` mints a fresh id, so two branches doing it produce two
+different constructors and two arm lists that differ in set, not in order. A
+changed arm set is a changed type, so the match diffs as a whole-node `Replace`
+— the same coarseness the record entry recorded for a changed field set, for the
+same reason, and here it is not merely acceptable but right: the two branches
+disagree about what values the type has, which is the definition of a conflict.
+What *does* merge, and is the scenario the benchmark gained, is two branches
+editing **different arms** of the same match: those are disjoint subtree paths,
+so they commute exactly as two edits to different fields of a record do.
+
+**No arm reordering.** Records got `C-←`/`C-→` and `Operation::ReorderFields`
+because a record's field order is observable — it is what the projection prints
+and what `git` would conflict on. A match's arm order is not: arms are looked up
+by constructor id, the evaluator never scans in order, and two orderings of the
+same arms are the same program. Adding a reorder action would mean inventing an
+observable difference in order to have something to merge, which is the opposite
+of the exercise. Recorded as a deliberate omission, not an oversight.
+
+**Keys.** `KEYS.md` settled item 20 has the argument. In short: `` ` `` injects
+and `|` matches, taking the last two characters off the reserve list; `m` is
+rejected because no letter is ever a verb here; `C-n`/`C-d` generalise a third
+time to arms; there is one constructor slot with the field slot's two flavours;
+and there is no binding for an arm's payload binder identity, because the
+keyboard has never set an identity it did not mint.
+
+---
+
+### 2026-08-29 — What the last Phase B2 feature cost, and what B2 cost altogether
+
+Variants are the fourth and last feature of Phase B2, so this entry is two
+things: the bill for one feature, and the verdict on the bet the phase was
+run to test.
+
+**Files touched: 57 modified, 20 added** (`store/src/v5.rs`, the seventeen
+`store/fixtures/v5/` artifacts, `action/tests/exhaustive.rs`, and the
+`action/proptest-regressions/act.txt` that is itself part of this entry). By
+layer:
+
+| layer | files | what changed |
+|---|---:|---|
+| type grammar | 1 | `Ty::Variant`, **overlap** consistency, `matched_variant`, `variant_constructors`, a union `join`, `variant`/`unit`, `Display` |
+| expression grammar | 1 | `Exp::Inj`, `Exp::Match`, `Exp::inj`/`match_`/`unit` |
+| typing | 1 | `syn`/`ana` for both forms, `arm_payload_ty`, `arms_cover`, the widening analytic rule — and four arms lifted into helpers to fit the stack |
+| document | 3 | `Doc::constructor_ids`, constructor names, examples |
+| rendering | 1 | `` `C e `` at `PREC_APP`, `match e { c x -> b \| … }` with the scrutinee at `PREC_ATOM`; **no new precedence constant** |
+| zipper | 1 | three frames, one of them variable-arity (`MatchArm` carries the scrutinee, the other arms, and the index) |
+| actions | 3 | six actions, the expected-type rules, the generator, the script vocabulary |
+| cursor rendering | 1 | three `assemble` arms and the two precedence rows the plain renderer has |
+| serialisation | 7 (+1 new) | v5→v6, node tags 18–19, `Ty` tag 8, action tags 38–43, `store/src/v5.rs`, 17 v5 fixtures, the migration suite |
+| evaluation | 5 | `Dyn`/`Value` cases, `step_inj`/`step_match`, the incremental engine, two test files |
+| diff/merge | 5 | `diff_match`, the path and repair walkers, two scenarios |
+| hole context / provenance / encode / text baseline | 4 | injections offered at a variant-typed hole, the arm binder in scope, two JSON tags, `[C: τ \| D: σ]` and `` `C e `` in the measure parser |
+| TUI | 10 | `` ` ``, `\|`, the two constructor-slot flavours, `C-n`/`C-d` in a match, completion, the beginner voice, **the state-machine projection**, the matrix, the reference fixtures |
+| CLI | 2 | an exhaustiveness arm, and a test |
+| property suites | 4 | the reachability recipe and its two new regression seeds, the sensibility generator's dead-arm flavour, the cross-document rename test |
+| benchmark | 5 | reference 4 rebuilt as a real variant and match, both of its fixtures, `MERGE.md`, `RESULTS.md`, `references.md` |
+| docs | 3 | `KEYS.md` item 20, `FORMAT.md` v6, this file |
+
+Those seventeen rows account for the fifty-seven modified files exactly:
+fourteen of them are layers of `CONTRIBUTING.md`'s full-thread checklist, and
+the last three are what the checklist produces rather than what it lists — the
+property suites, the benchmark, and the documents.
+
+**Tests: 49 added**, 33 honestly adapted, 0 deleted. The count was 818
+before and is 867 after. The action alphabet went from 38 variants to 44, the
+`Exp` grammar from 18 to 20, and sensibility still passes at 10 000 cases over
+the enlarged grammar and at every cursor position of a generated *document*.
+
+**Adapted, each for a real reason**, and the thirty-three group into five
+reasons, not thirty-three:
+
+- **Nine** are `tui/tests/matrix.rs` — its eight columns plus the alphabet
+  test. The matrix is a table of every printable character against eight
+  cursor situations, so a feature that takes two characters off the reserve
+  list adapts all nine by construction. This is the matrix doing its job, not
+  going stale.
+- **Six** follow benchmark reference 4, which is a match now rather than a
+  chain of `if`s: `beginner::snapshot_state_machine_fixture`, the two
+  `state_machine` projection tests, the two cross-projection tests in
+  `tui/tests/projections.rs`, and
+  `eval/tests/references.rs::reference_four_state_machine_transitions`, which
+  used to assert `transition(0) == 1` and now asserts
+  `` `Idle {} `` ↦ `` `Running {} ``. The recognition test gained a sibling,
+  `the_chain_of_equality_tests_is_still_a_state_machine`, so the shape it used
+  to recognise is still asserted — a program written before variants existed
+  does not stop being a state machine.
+- **Three** are the migration suite, where `every_v5_program()` now filters
+  variant-carrying programs out of the v5 corpus for the reason the v4 corpus
+  filters record-carrying ones, and two v4/v5 assertions moved with it.
+- **Four** are the counts that are asserted rather than assumed: the
+  reachability form survey (18 → 20 `Exp` variants), the action-variant table
+  (38 → 44), and the two sensibility generators that enumerate them.
+- **The remaining eleven** are single assertions widened by a grammar that got
+  bigger: the vacuity check's flavoured generator, the fresh-name streams, the
+  hole census in `core/src/examples.rs`, the projection-precedence test, and so
+  on.
+
+The key-hint line is *not* on this list, and that is worth one sentence:
+`` ` `` and `|` genuinely did not fit in eighty columns, and the fix was to
+shorten the line (`C-n/d add/drop` → `C-n/d ±row`) so that
+`definitions.rs::the_definition_pane_is_on_screen_next_to_the_program`
+still passes unchanged. See item 7 below.
+
+**What was free.** Undo, redo, the action log's replay, the incremental
+cache's invalidation, the node table's framing (a second variable-arity node
+needed no format shape change, for the third time), auto-quarantine, the agent
+protocol's transport, and the precedence table — a `match` is delimited and an
+injection binds like an application, so not one constant moved. The CLI again
+needed one match arm and a test.
+
+**What fought back, in order of how much:**
+
+1. **The consistency relation was wrong, and a property test said so in a
+   minute.** The full argument is in the design entry above. The short version
+   is that the exact rule records use makes `syn` *non-monotone under deletion*
+   once `join` is a union, and a variant's `join` has to be a union or the
+   language has no multi-constructor variants at all. Two seeds
+   (4886890018093993446 and 11933971229440477142, both kept) forced two rules
+   that were not in the design an hour before: consistency by overlap, and a
+   widening `ana(Inj)`. This is the second consecutive feature where a property
+   rejected a *design* rather than an implementation, and the first where the
+   rejected design was one this file had already argued for in print.
+2. **Reachability could not build a dead arm, and `SetConstructor` grew a
+   second reading.** Also in the design entry. The shape of the problem is the
+   one records met: `AddArm` mints an identity, so a target program's arm
+   constructors appear nowhere the recipe can point at. Records had already
+   answered it with `SetFieldId`; the fix was to let `SetConstructor` read the
+   arm the cursor is in as well as the injection it is on, and the match recipe
+   became the record recipe with different nouns.
+3. **The vacuity check, for the third distinct reason in four features.**
+   `RemoveArm` never applied once anywhere in the vacuity check's search
+   space — three hundred generated documents, every cursor position of each,
+   one of every action at each. Nothing was broken: the
+   generator only produced matches whose scrutinee's type covered every arm, so
+   removing any arm always broke coverage and the action always, correctly,
+   refused. The search space had no *dead* arm in it. The generator gained a
+   one-in-three flavour that builds a `?`-scrutinee match with two dead arms —
+   a state the design explicitly blesses — and the check passes. Strings needed
+   nothing here, lists needed a form, records needed the document's real ids,
+   and variants needed a program *shape*. The general lesson is now three
+   deep: **a vacuity check is only as honest as the generator behind it, and
+   every new refusal rule is a new way for the generator to be too polite.**
+4. **The scrutinee's precedence was decided by two tools that read the
+   projection, not by the design.** `match e { … }` is only unambiguous if `e`
+   cannot itself end in a brace or swallow one: `match f {} { … }` could be an
+   application of `f` to `{}` or a match on `f`. The measure baseline's
+   recursive-descent parser (`measure::text_parse`) resolves it by reading the
+   scrutinee with `atom()`, and `cursor_render`'s
+   `stripping_markers_reproduces_the_plain_projection_on_generated_programs`
+   caught the other half — the cursor renderer printed
+   ``match `_61d3ba90 2 {…}`` where the plain renderer printed
+   ``match (`_61d3ba90 2) {…}`` — because the two had picked different minimum
+   precedences for the same position. Both settle on `PREC_ATOM`: anything
+   bigger than an atom is parenthesised. That is a *language* decision arrived
+   at through a measurement tool and a property test rather than through the
+   design, and `KEYS.md` item 20(b) had written the rule down without noticing
+   it was load-bearing — the item's worked example had to be corrected to
+   `match ⦇1 + 2⦈ {}` to match what the editor actually does.
+5. **The stack budget, a third time, and in a function that had never been
+   over it.** The lists entry blamed `step_in`'s arms; the records entry added
+   that enum growth spends the budget twice. Both were true again — ten of
+   `step_in`'s arms are now helper functions (`step_ap`, `step_bin_op`,
+   `step_if`, `step_let`, `step_pair`, `step_proj`, `step_cons`, `step_hole`,
+   `step_inj`, `step_match`) — but lifting them was not enough, and the
+   remaining overflow was in `nothing_core::typing::syn`, which had never been
+   the culprit before. A throwaway probe test was needed to find out which
+   recursion was actually deep; four more arms (`syn_cons`, `syn_fold`,
+   `syn_record`, `syn_match`) came out of `syn`. The rule to carry forward:
+   **every deeply recursive `match` in this workspace is on the same debug
+   stack budget, not just the evaluator's**, and the way to find out which one
+   is over it is to measure, not to guess.
+6. **The constructor pick slot could not pick, and only the mandated test
+   found it.** `` ` `` left the cursor on the payload hole, `SetConstructor`
+   wanted it on the injection, and `injected_constructor_id` read the focus —
+   so every keystroke in the pick slot took the "does not fit here" branch and
+   the whole flavour was inert. Nothing else noticed: the matrix rows were
+   written from observation and the observation was of a broken slot. It was
+   found by writing
+   `complete::tests::the_constructors_of_the_expected_variant_outrank_the_rest_of_the_document`,
+   which `KEYS.md` item 20 had named before the code existed. This is the
+   clearest argument this project has produced for writing `KEYS.md` first:
+   the document named a test, the test named a bug, and the bug was in the
+   half of the feature a keystroke matrix cannot see.
+7. **The 80×12 key-hint line, and this time it did break.** The records entry
+   said "the warning stands for the feature after this one", and it was right:
+   `` ` `` and `` | `` did not fit, and `C-n/d add/drop` had to become
+   `C-n/d ±row` to make room. Three rows at width 80 again. The line is now
+   genuinely out of slack, and the next feature will have to drop a hint, not
+   shorten one.
+8. **The reference-4 write-up claimed more than the fixture delivers, and its
+   own test caught it.** The first draft of `bench/references.md` §4 said
+   `transition` "can no longer be handed a 7". Rewriting
+   `eval/tests/references.rs::reference_four_state_machine_transitions` to
+   assert exactly that failed: the parameter is annotated `?`, because a
+   variant type cannot be spelled in an annotation, and `?` accepts a number.
+   What actually changed is the *behaviour* — `transition 7` used to fall
+   through the catch-all `else` and answer `Idle`, and now gets stuck, which
+   is the honest thing for a function with no case for its argument to do.
+   Both `references.md` and `RESULTS.md` were corrected to say the
+   number/state distinction is still owed to the nominal-type debt. Small, but
+   it is the fourth time in this phase that writing the test changed the
+   claim rather than confirming it.
+
+---
+
+### 2026-08-29 — The Phase B2 retrospective: was the bet right?
+
+`spec-build.md` bets that features get cheap once the thread is wired end to
+end, and B2 is four features run under the same rule — *no feature is done
+until every layer of the thread is done* — precisely so the bet could be
+measured rather than asserted. The four bills, side by side:
+
+| feature | files modified | files added | tests added | tests adapted | test count after | new `Exp` variants | new actions |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| strings (2026-08-29) | 50 | 5 | 38 | 6 | 748 | 1 | 1 |
+| lists | 56 | 17 | 27 | 10 | 775 | 3 | 3 |
+| records | 62 | 19 | 43 | 9 | 818 | 2 | 8 |
+| variants | 57 | 20 | 49 | 33 | 867 | 2 | 6 |
+
+**The bet was wrong as stated and right in the way that matters.**
+
+Wrong as stated: the number of files a feature touches did not fall. It rose
+for three features running and only came back down when the fourth needed one
+fewer serialisation file than the third. That is not noise, and the reason is
+structural: the full-thread rule means the cost of a feature is proportional to
+the *number of layers*, and the number of layers only grows. Strings did not
+have a merge scenario to write because the merge benchmark was smaller;
+variants had two, plus a state-machine projection, plus a text baseline that
+did not exist in Phase 1. **A thread that is wired end to end is not a thread
+that is cheap to add to; it is a thread that is impossible to add to
+halfway**, which is a different and better property.
+
+The *adaptation* column rose sharply at the end — 6, 10, 9, then 33 — and it
+is the one number in the table that would be easy to read as rot. It is not.
+Fifteen of the thirty-three are two things: the nine tests of the keystroke
+matrix, which gains a row per new key and is therefore adapted by
+construction, and the six that follow benchmark reference 4, which this
+feature rewrote from an `if`-chain into a real match. Neither group went
+stale; both were doing their job. The real signal in that column is that the
+number of places asserting a *count* — of `Exp` variants, of actions, of
+fixtures — grows with the grammar, which is the same structural fact one
+paragraph up, seen from the test suite's side.
+
+Right in the way that matters, on three counts.
+
+- **Nothing was skipped, and nothing rotted.** Four features, sixteen layers
+  each, zero deferred work, zero `TODO`, and every earlier feature's tests
+  still passing unadapted except where a claim genuinely changed. The
+  serialisation layer is the sharpest evidence: format versions 3, 4, 5 and 6
+  each shipped with a migrating reader and committed byte fixtures generated
+  by the *unmodified* previous encoder, so six versions still open and are
+  tested against real old bytes rather than a hypothesis. That does not happen
+  to a codebase where features are allowed to land at 80%.
+- **The expensive part moved from the middle to the edges.** In strings the
+  core cost the most; by variants the core cost almost nothing —
+  `Ty::Variant` and `Exp::Inj`/`Exp::Match` are three enum variants, and the
+  typing rules are twenty lines — while the *benchmark, the projections and
+  the property suites* cost the most. That is the shape of a thread that
+  works: the language grammar is a small thing at the centre and the
+  measurement apparatus around it is where the work goes, which is exactly
+  backwards from a codebase where the type checker is where you are afraid to
+  touch.
+- **The property suites found four design errors that review did not.** The
+  record-field `Reidentified` repair, `ConstructRecord` reading its expected
+  type, consistency-by-overlap, and the widening `ana(Inj)`. Every one was a
+  *design* fault, caught in under a minute, by a test that existed before the
+  feature did. The cost of the full-thread rule is that the suites have to be
+  extended every time; the return is that they get sharper every time, and by
+  the fourth feature they were rejecting arguments this file had already made
+  in print.
+
+The honest summary for B7 to cite: **the full-thread rule did not make
+features cheaper, it made them finishable** — and the per-feature cost was
+flat-to-rising in files, flat-to-rising in tests, and sharply falling in *the part of
+the system you have to be careful in*. If B7 wants a number, the number is
+that four features in one phase touched between 50 and 62 files each and added
+between 27 and 49 tests each, with no trend downward and no feature left
+half-built.
+

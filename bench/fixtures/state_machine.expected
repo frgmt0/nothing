@@ -1,1 +1,1 @@
-main : ? = λx0:Num. if x0 == 0 then 1 else if x0 == 1 then 2 else 0
+main : ? = λs:?. match s { Idle x0 -> `Running {} | Running x1 -> `Stopped {} | Stopped x2 -> `Idle {} }

@@ -252,6 +252,114 @@ fn renaming_a_field_renames_its_construction_site_and_every_projection_across_th
     );
 }
 
+fn session_with_one_constructor_injected_here_and_matched_there() -> (EditSession, Id) {
+    let mut session = EditSession::new();
+    let mut clock = 0u64;
+    let author = AuthorId::new(1);
+    let mut apply = |session: &mut EditSession, action: Action| {
+        clock += 1;
+        assert!(
+            session.apply(action.clone(), clock, author),
+            "{action:?} did not apply"
+        );
+    };
+
+    apply(&mut session, Action::ConstructIf);
+    apply(&mut session, Action::ConstructBool(true));
+    apply(&mut session, Action::MoveParent);
+    apply(&mut session, Action::MoveChild(1));
+    apply(&mut session, Action::ConstructInj);
+
+    let ctor = *session
+        .state()
+        .constructor_ids()
+        .first()
+        .expect("constructing an injection mints exactly one constructor");
+
+    apply(&mut session, Action::ConstructNum(1));
+    apply(&mut session, Action::MoveParent);
+    apply(&mut session, Action::MoveParent);
+    apply(&mut session, Action::MoveChild(2));
+    apply(&mut session, Action::ConstructInj);
+    apply(&mut session, Action::MoveParent);
+    apply(&mut session, Action::SetConstructor(ctor));
+    apply(&mut session, Action::MoveChild(0));
+    apply(&mut session, Action::ConstructNum(2));
+
+    apply(&mut session, Action::CreateDefinition);
+    apply(&mut session, Action::ConstructInj);
+    apply(&mut session, Action::MoveParent);
+    apply(&mut session, Action::SetConstructor(ctor));
+    apply(&mut session, Action::MoveChild(0));
+    apply(&mut session, Action::ConstructNum(5));
+    apply(&mut session, Action::MoveParent);
+    apply(&mut session, Action::ConstructMatch);
+
+    (session, ctor)
+}
+
+const CONSTRUCTOR_USES: usize = 4;
+
+#[test]
+fn renaming_a_constructor_renames_every_injection_and_every_arm_across_the_document() {
+    let (mut session, ctor) = session_with_one_constructor_injected_here_and_matched_there();
+
+    let before = session.state().render_document();
+    assert_eq!(
+        occurrences(&before, "C0"),
+        CONSTRUCTOR_USES,
+        "the fixture must inject the case in one definition and match on it in another: {before}"
+    );
+    assert_eq!(
+        session.state().doc().len(),
+        2,
+        "the uses must really be in two definitions: {before}"
+    );
+    assert!(
+        session.state().is_well_typed(),
+        "the fixture must typecheck: {before}"
+    );
+    assert!(
+        before.contains("match"),
+        "the fixture must contain a real match: {before}"
+    );
+
+    let doc_before = session.state().doc();
+    let entries_before = session.log().len();
+
+    assert!(
+        session.apply(
+            Action::Rename(ctor, "Some".to_string()),
+            9_000,
+            AuthorId::new(2)
+        ),
+        "renaming a constructor is a name-table write: it cannot fail"
+    );
+
+    let after = session.state().render_document();
+    assert_eq!(
+        occurrences(&after, "Some"),
+        CONSTRUCTOR_USES,
+        "one rename must reach every injection and every arm: {after}"
+    );
+    assert_eq!(occurrences(&after, "C0"), 0, "{after}");
+    assert_eq!(
+        after,
+        before.replace("C0", "Some"),
+        "nothing but the name changed"
+    );
+    assert_eq!(
+        session.log().len(),
+        entries_before + 1,
+        "four renamed occurrences in two definitions, one action-log entry"
+    );
+    assert_eq!(
+        session.state().doc(),
+        doc_before,
+        "a constructor is an identity: renaming it does not touch the document"
+    );
+}
+
 fn shadowing_program() -> (Exp, NameTable, Id, Id) {
     let outer = Id::from_u128(0x0001);
     let inner = Id::from_u128(0x0002);

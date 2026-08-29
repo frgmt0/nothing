@@ -117,6 +117,31 @@ pub fn best_field(state: &AppState, prefix: &str) -> Option<(Id, String)> {
     field_candidates(state, prefix).into_iter().next()
 }
 
+pub fn constructor_candidates(state: &AppState, prefix: &str) -> Vec<(Id, String)> {
+    let expected = expected_constructors(state);
+    let mut ids = expected.clone();
+    for id in nothing_action::script::constructors_in_view(&state.edit) {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let mut out: Vec<(Id, String)> = ids
+        .into_iter()
+        .map(|id| (id, state.display_name(id)))
+        .filter(|(_, name)| name.starts_with(prefix))
+        .collect();
+    out.sort_by_key(|(id, _)| u8::from(!expected.contains(id)));
+    out
+}
+
+fn expected_constructors(state: &AppState) -> Vec<Id> {
+    nothing_core::ty::variant_constructors(&state.expected_ty()).unwrap_or_default()
+}
+
+pub fn best_constructor(state: &AppState, prefix: &str) -> Option<(Id, String)> {
+    constructor_candidates(state, prefix).into_iter().next()
+}
+
 type RankKey = (u8, u8, usize, usize, String);
 
 fn rank_key(candidate: &Candidate, expected: &Ty, prefix: &str, scope: usize) -> RankKey {
@@ -329,6 +354,64 @@ mod tests {
             offered,
             vec!["y", "x"],
             "and in the pick slot it is the projection's own subject that is ranked first"
+        );
+    }
+
+    #[test]
+    fn the_constructors_of_the_expected_variant_outrank_the_rest_of_the_document() {
+        let red = Id::from_u128(0x11);
+        let blue = Id::from_u128(0x22);
+        let here = AppState::empty()
+            .apply_actions(&[
+                Action::SetDefAnn(nothing_core::ty::variant(vec![
+                    (red, Ty::Num),
+                    (blue, Ty::Bool),
+                ])),
+                Action::Rename(red, "Red".into()),
+                Action::Rename(blue, "Blue".into()),
+            ])
+            .expect("a variant type is not spellable, so the annotation is set as an action");
+        let home = here.definition_id();
+
+        let elsewhere = here
+            .apply_actions(&[Action::CreateDefinition])
+            .expect("a second definition");
+        let elsewhere = handle_key(key(KeyCode::Char('`')), elsewhere);
+        let stranger = *elsewhere
+            .edit
+            .constructor_ids()
+            .first()
+            .expect("the second definition minted a constructor of its own");
+        let elsewhere = elsewhere
+            .apply_actions(&[Action::Rename(stranger, "Zebra".into())])
+            .expect("name it");
+
+        let back = elsewhere
+            .apply_actions(&[Action::MoveToDef(home)])
+            .expect("back to the definition that wants a variant");
+        let injected = handle_key(key(KeyCode::Char('`')), back);
+        assert_eq!(injected.slot, Slot::ConstructorPick);
+
+        let offered: Vec<String> = constructor_candidates(&injected, "")
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(
+            offered,
+            vec!["Red", "Blue", "Zebra"],
+            "the cases the expectation names come first, in the order the variant lists them, \
+             and the rest of the document's constructors follow"
+        );
+        assert_eq!(
+            best_constructor(&injected, "").map(|(_, n)| n),
+            Some("Red".to_string()),
+            "which is why the backtick had already adopted Red"
+        );
+        assert_eq!(
+            best_constructor(&injected, "Z").map(|(_, n)| n),
+            Some("Zebra".to_string()),
+            "ranking never filters: a case that does not fit is still reachable by prefix, and \
+             the calculus quarantines it rather than refusing it"
         );
     }
 

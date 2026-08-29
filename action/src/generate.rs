@@ -59,6 +59,7 @@ enum Form {
     Ap,
     Proj,
     Field,
+    Match,
     BinOp,
     Fold,
     NonEmptyHole,
@@ -91,7 +92,7 @@ impl Gen {
     }
 
     pub fn ty(&mut self, depth: u32) -> Ty {
-        let n = if depth == 0 { 4 } else { 8 };
+        let n = if depth == 0 { 4 } else { 9 };
         match self.rng.below(n) {
             0 => Ty::Num,
             1 => Ty::Bool,
@@ -100,6 +101,7 @@ impl Gen {
             4 => Ty::Arrow(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
             5 => Ty::List(Box::new(self.ty(depth - 1))),
             6 => self.record_ty(depth - 1),
+            7 => self.variant_ty(depth - 1),
             _ => Ty::Prod(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
         }
     }
@@ -113,6 +115,17 @@ impl Gen {
             fields.push((id, ty));
         }
         Ty::Record(fields)
+    }
+
+    fn variant_ty(&mut self, depth: u32) -> Ty {
+        let count = 1 + self.rng.below(3);
+        let mut ctors = Vec::with_capacity(count);
+        for _ in 0..count {
+            let id = self.fresh_id();
+            let ty = self.ty(depth);
+            ctors.push((id, ty));
+        }
+        Ty::Variant(ctors)
     }
 
     pub fn document(&mut self, count: usize, depth: u32) -> (Doc, NameTable) {
@@ -167,6 +180,7 @@ impl Gen {
             cands.push(Form::Ap);
             cands.push(Form::Proj);
             cands.push(Form::Field);
+            cands.push(Form::Match);
             cands.push(Form::Fold);
             if *ty == Ty::Num || *ty == Ty::Bool || *ty == Ty::Str {
                 cands.push(Form::BinOp);
@@ -212,6 +226,18 @@ impl Gen {
                     }
                     Exp::record(written)
                 }
+                Ty::Variant(ctors) => match ctors.split_last() {
+                    None => Exp::empty_hole(self.fresh_hole()),
+                    Some(((last, last_ty), rest)) => {
+                        let payload = self.exp_syn(ctx, last_ty, d);
+                        let mut built = Exp::inj(*last, payload);
+                        for (id, payload_ty) in rest.iter().rev() {
+                            let payload = self.exp_syn(ctx, payload_ty, d);
+                            built = Exp::if_(Exp::bool_(true), Exp::inj(*id, payload), built);
+                        }
+                        built
+                    }
+                },
             },
 
             Form::Var => Exp::var(*self.rng.pick(&vars)),
@@ -262,6 +288,37 @@ impl Gen {
                 }
                 let subject = self.exp_syn(ctx, &Ty::Record(fields), d);
                 Exp::field(subject, field)
+            }
+
+            Form::Match => {
+                if self.rng.below(3) == 0 {
+                    let scrutinee = self.exp_syn(ctx, &Ty::Hole, d);
+                    let mut arms = Vec::with_capacity(2);
+                    for _ in 0..2 {
+                        let ctor = self.fresh_id();
+                        let binder = self.fresh_id();
+                        let mut inner = ctx.to_vec();
+                        inner.push((binder, Ty::Hole));
+                        arms.push((ctor, binder, self.exp_syn(&inner, ty, d)));
+                    }
+                    return Exp::match_(scrutinee, arms);
+                }
+                let count = 1 + self.rng.below(2);
+                let mut ctors = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let id = self.fresh_id();
+                    let payload = self.ty(1);
+                    ctors.push((id, payload));
+                }
+                let scrutinee = self.exp_syn(ctx, &Ty::Variant(ctors.clone()), d);
+                let mut arms = Vec::with_capacity(count);
+                for (ctor, payload) in &ctors {
+                    let binder = self.fresh_id();
+                    let mut inner = ctx.to_vec();
+                    inner.push((binder, payload.clone()));
+                    arms.push((*ctor, binder, self.exp_syn(&inner, ty, d)));
+                }
+                Exp::match_(scrutinee, arms)
             }
 
             Form::BinOp => {
@@ -342,6 +399,10 @@ pub fn size(exp: &Exp) -> usize {
         Exp::Pair(l, r) | Exp::Cons(l, r) => 1 + size(l) + size(r),
         Exp::Proj(_, e) | Exp::Field(e, _) => 1 + size(e),
         Exp::Record(fields) => 1 + fields.iter().map(|(_, e)| size(e)).sum::<usize>(),
+        Exp::Inj(_, payload) => 1 + size(payload),
+        Exp::Match(scrutinee, arms) => {
+            1 + size(scrutinee) + arms.iter().map(|(_, _, e)| size(e)).sum::<usize>()
+        }
         Exp::NonEmptyHole(_, e) => 1 + size(e),
     }
 }
@@ -426,6 +487,13 @@ mod tests {
                 Exp::Record(fields) => {
                     for (_, e) in fields {
                         count(e, empty, non_empty);
+                    }
+                }
+                Exp::Inj(_, payload) => count(payload, empty, non_empty),
+                Exp::Match(scrutinee, arms) => {
+                    count(scrutinee, empty, non_empty);
+                    for (_, _, body) in arms {
+                        count(body, empty, non_empty);
                     }
                 }
             }

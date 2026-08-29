@@ -305,16 +305,71 @@ and it says less about itself than the reference does.
 
 Still marked `*` (approximate) in the tables, for that reason.
 
-### 4. State machine — numeric codes and a chain of `if`
+### 4. State machine — numeric codes and a chain of `if` (superseded)
 
-No sum types, no `match`. `Idle`/`Running`/`Stopped` are encoded as the
-codes `0`/`1`/`2` and the match becomes nested equality tests, with the
+No sum types, no `match`. `Idle`/`Running`/`Stopped` were encoded as the
+codes `0`/`1`/`2` and the match became nested equality tests, with the
 final `else` acting as the `Stopped` case.
 
-*What is lost:* exhaustiveness. The reference's `match` can be checked for a
+*What was lost:* exhaustiveness. The reference's `match` can be checked for a
 missing case; a chain of `if`s with a catch-all `else` cannot. Also the
-distinction between a state and any other number — `transition(7)` is
-well-typed here and was not in the reference.
+distinction between a state and any other number — `transition(7)` was
+well-typed there and was not in the reference.
+
+### 4. State machine — a real variant and a real match (2026-08-29)
+
+Variants arrived with the fourth and last feature of Phase B2, and the
+paragraph above is the debt they pay off. The fixture is now
+
+```
+main : ? = λs:?. match s { Idle x0 -> `Running {}
+                         | Running x1 -> `Stopped {}
+                         | Stopped x2 -> `Idle {} }
+```
+
+Three cases that are *identities*, not the codes 0/1/2, and a `match` whose
+arms the editor writes rather than the user: it cannot be missing a case,
+because a match with a missing arm is not a program this editor can hold
+(`DECISIONS.md`, 2026-08-29). The other half of what the reference asks for
+is only half paid: `transition 7` still typechecks, because the parameter is
+annotated `?` and `?` accepts anything, but it now *gets stuck* rather than
+falling through the `else` and quietly answering `Idle` — asserted by
+`eval/tests/references.rs::reference_four_state_machine_transitions`. Closing
+that gap needs a nominal type, which is the debt below.
+
+The denominator is untouched — 151 was computed once on 2026-08-26 from the
+reference text, and the reference text is what it always was. It is worth
+saying plainly what that means: **151 was always the count for the `match`
+version**, so from 2026-08-26 to now the numerator was measuring a different
+program from the denominator. It is not anymore. The numerator went **up**,
+24 keystrokes to 41 and 0.16× to 0.27×:
+
+| part of the program | old | new | Δ |
+|---|---:|---:|---:|
+| the lambda and its parameter | 6 | 3 | −3 |
+| naming the scrutinee | 4 | 1 | −3 |
+| the case analysis | 4 | 4 | 0 |
+| the state codes vs the case *names* | 2 | 18 | +16 |
+| the three results | 3 | 12 | +9 |
+| navigation | 5 | 3 | −2 |
+
+The case analysis itself costs exactly what it cost before — `|` and three
+`C-n`s against two `if`s and two `==`s — and three of the six rows point
+down for reasons that are not the feature: the parameter annotation is gone
+because a variant type is never spelled, the scrutinee is named once instead
+of twice, and two `tab`s went with the branches they walked. The +16 is the
+whole story: `Idle`, `Running` and `Stopped` are eighteen characters that
+the numeric encoding simply did not write down anywhere, which is exactly
+what "the codes 0/1/2" was costing the program in meaning.
+
+*What is still lost:* the **nominal type**, the same debt reference 3 still
+carries. `type State = Idle | Running | Stopped` has no counterpart: the
+variant type is structural and synthesised, so the parameter is annotated
+`?` and not `[Idle: {} | Running: {} | Stopped: {}]`. A nullary constructor
+carries `{}` rather than nothing at all, which is two characters the
+reference does not write.
+
+Still marked `*` (approximate) in the tables, for those two reasons.
 
 ### 5. Nested conditional — direct, modulo one operator
 

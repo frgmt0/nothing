@@ -34,7 +34,16 @@ fn binders(exp: &Exp, out: &mut Vec<Id>) {
             binders(t, out);
             binders(e, out);
         }
-        Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => binders(e, out),
+        Exp::Proj(_, e) | Exp::Field(e, _) | Exp::Inj(_, e) | Exp::NonEmptyHole(_, e) => {
+            binders(e, out)
+        }
+        Exp::Match(scrutinee, arms) => {
+            binders(scrutinee, out);
+            for (_, binder, body) in arms {
+                out.push(*binder);
+                binders(body, out);
+            }
+        }
         Exp::Record(fields) => {
             for (_, value) in fields {
                 binders(value, out);

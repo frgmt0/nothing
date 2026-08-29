@@ -11,6 +11,7 @@ pub enum Ty {
     Prod(Box<Ty>, Box<Ty>),
     List(Box<Ty>),
     Record(Vec<(Id, Ty)>),
+    Variant(Vec<(Id, Ty)>),
     Hole,
 }
 
@@ -77,6 +78,17 @@ fn fmt_prec(ty: &Ty, min_prec: u8, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             }
             write!(f, "}}")
         }
+        Ty::Variant(ctors) => {
+            write!(f, "[")?;
+            for (i, (id, ty)) in ctors.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " | ")?;
+                }
+                write!(f, "#{}: ", id.short())?;
+                fmt_prec(ty, 0, f)?;
+            }
+            write!(f, "]")
+        }
     }
 }
 
@@ -95,6 +107,11 @@ pub fn is_consistent(a: &Ty, b: &Ty) -> bool {
                         .is_some_and(|(_, right)| is_consistent(left, right))
                 })
         }
+        (Ty::Variant(a), Ty::Variant(b)) => a.iter().all(|(id, left)| {
+            b.iter()
+                .find(|(other, _)| other == id)
+                .is_none_or(|(_, right)| is_consistent(left, right))
+        }),
         _ => false,
     }
 }
@@ -145,8 +162,35 @@ pub fn matched_record_fields(ty: &Ty, fields: &[Id]) -> Option<Vec<Ty>> {
     }
 }
 
+pub fn matched_variant(ty: &Ty, ctor: Id) -> Option<Ty> {
+    match ty {
+        Ty::Hole => Some(Ty::Hole),
+        Ty::Variant(ctors) => ctors
+            .iter()
+            .find(|(id, _)| *id == ctor)
+            .map(|(_, ty)| ty.clone()),
+        _ => None,
+    }
+}
+
+pub fn variant_constructors(ty: &Ty) -> Option<Vec<Id>> {
+    match ty {
+        Ty::Hole => Some(Vec::new()),
+        Ty::Variant(ctors) => Some(ctors.iter().map(|(id, _)| *id).collect()),
+        _ => None,
+    }
+}
+
 pub fn record(fields: impl IntoIterator<Item = (Id, Ty)>) -> Ty {
     Ty::Record(fields.into_iter().collect())
+}
+
+pub fn variant(ctors: impl IntoIterator<Item = (Id, Ty)>) -> Ty {
+    Ty::Variant(ctors.into_iter().collect())
+}
+
+pub fn unit() -> Ty {
+    Ty::Record(Vec::new())
 }
 
 pub fn list(elem: Ty) -> Ty {
@@ -466,6 +510,88 @@ mod tests {
         assert_eq!(
             record([(f(1), arrow(Ty::Num, Ty::Num))]).to_string(),
             format!("{{#{}: Num -> Num}}", f(1).short())
+        );
+    }
+
+    #[test]
+    fn a_variant_type_is_consistent_constructor_wise_and_ignores_their_order() {
+        let a = variant([(f(1), Ty::Num), (f(2), unit())]);
+        let reordered = variant([(f(2), unit()), (f(1), Ty::Num)]);
+        assert!(is_consistent(&a, &reordered));
+        assert!(is_consistent(&reordered, &a));
+
+        let with_hole = variant([(f(1), Ty::Hole), (f(2), unit())]);
+        assert!(is_consistent(&a, &with_hole));
+
+        let wrong_payload = variant([(f(1), Ty::Str), (f(2), unit())]);
+        assert!(!is_consistent(&a, &wrong_payload));
+    }
+
+    #[test]
+    fn two_variants_are_consistent_unless_they_disagree_about_a_shared_constructor() {
+        let wide = variant([(f(1), Ty::Num), (f(2), Ty::Bool)]);
+        let narrow = variant([(f(1), Ty::Num)]);
+        assert!(
+            is_consistent(&wide, &narrow),
+            "a value of one case is a value the two-case type also has"
+        );
+        assert!(is_consistent(&narrow, &wide));
+
+        let disagreeing = variant([(f(1), Ty::Str)]);
+        assert!(!is_consistent(&wide, &disagreeing));
+        assert!(!is_consistent(&disagreeing, &wide));
+
+        assert!(
+            is_consistent(&narrow, &variant([(f(9), Ty::Num)])),
+            "two variants with nothing in common contradict nothing"
+        );
+        assert!(is_consistent(&variant([]), &wide));
+
+        assert!(is_consistent(&wide, &Ty::Hole));
+        assert!(is_consistent(&Ty::Hole, &wide));
+        assert!(
+            !is_consistent(&narrow, &record([(f(1), Ty::Num)])),
+            "a sum of one case is not a product of one field"
+        );
+        assert!(!is_consistent(&wide, &Ty::Num));
+    }
+
+    #[test]
+    fn matched_variant_looks_a_constructor_up_and_fails_open_on_the_unknown_type() {
+        let option = variant([(f(1), Ty::Num), (f(2), unit())]);
+        assert_eq!(matched_variant(&option, f(1)), Some(Ty::Num));
+        assert_eq!(matched_variant(&option, f(2)), Some(unit()));
+        assert_eq!(matched_variant(&option, f(9)), None);
+
+        assert_eq!(matched_variant(&Ty::Hole, f(9)), Some(Ty::Hole));
+        assert_eq!(matched_variant(&Ty::Num, f(1)), None);
+        assert_eq!(matched_variant(&record([(f(1), Ty::Num)]), f(1)), None);
+    }
+
+    #[test]
+    fn the_unknown_type_requires_no_constructors_at_all() {
+        assert_eq!(variant_constructors(&Ty::Hole), Some(Vec::new()));
+        assert_eq!(
+            variant_constructors(&variant([(f(1), Ty::Num), (f(2), Ty::Bool)])),
+            Some(vec![f(1), f(2)])
+        );
+        assert_eq!(variant_constructors(&variant([])), Some(Vec::new()));
+        assert_eq!(variant_constructors(&Ty::Num), None);
+        assert_eq!(variant_constructors(&record([])), None);
+    }
+
+    #[test]
+    fn a_nullary_constructor_carries_the_empty_record_the_language_already_had() {
+        assert_eq!(unit(), record([]));
+        assert_eq!(unit().to_string(), "{}");
+        assert_eq!(
+            variant([(f(1), unit())]).to_string(),
+            format!("[#{}: {{}}]", f(1).short())
+        );
+        assert_eq!(variant([]).to_string(), "[]");
+        assert_eq!(
+            variant([(f(1), Ty::Num), (f(2), Ty::Str)]).to_string(),
+            format!("[#{}: Num | #{}: Str]", f(1).short(), f(2).short())
         );
     }
 

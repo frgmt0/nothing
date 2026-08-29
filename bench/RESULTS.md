@@ -718,3 +718,164 @@ Three of the six ratios have now risen across Phase B2 — `list_map` when
 lists arrived, `record` when records did, and `factorial` back in the
 definition era — every one of them because a fixture stopped approximating.
 That is still the only kind of regression this file welcomes.
+
+---
+
+## 2026-08-29 — Phase B2, variants (`` `C e ``, `match e { … }`)
+
+Reproduce with:
+
+```
+cargo run -p nothing-bench -- keytable
+cargo run -p nothing-bench -- table
+cargo test -p nothing-tui --test references -- --nocapture
+```
+
+The re-run required by Phase B2's variant checkbox, and the fourth and last
+of the phase. One fixture changed: **reference 4, `state_machine`, is a real
+variant and a real match now**. Every other fixture and every other keystroke
+is byte-identical to the records entry above.
+
+### Reference 4 was upgraded, and it is the one that most needed it
+
+Since Phase 0 the `state_machine` fixture has been
+
+```
+λx0:Num. if x0 == 0 then 1 else if x0 == 1 then 2 else 0
+```
+
+— `Idle`/`Running`/`Stopped` as the codes 0/1/2, and the reference's `match`
+as a chain of equality tests with a catch-all `else`. `bench/references.md`
+§4 said what that cost: *exhaustiveness … also the distinction between a
+state and any other number — `transition(7)` is well-typed here and was not
+in the reference.* Variants exist now, so it is
+
+```
+main : ? = λs:?. match s { Idle x0 -> `Running {}
+                         | Running x1 -> `Stopped {}
+                         | Stopped x2 -> `Idle {} }
+```
+
+Half of that cost is paid and half is not. Exhaustiveness is paid in full —
+a match with a missing arm is not a state this editor can hold. The
+number/state distinction is not: the parameter is still annotated `?`,
+because a variant type cannot be spelled in an annotation, so
+`transition 7` still typechecks. What changed is what it does — it gets
+stuck instead of falling through an `else` and answering `Idle`
+(`eval/tests/references.rs::reference_four_state_machine_transitions`).
+
+There is a sharper thing to say about this row than about references 2 and 3,
+and it should be said first. **The 151 in the denominator was always the
+count for the `match` version** — it was hand-counted on 2026-08-26 from the
+reference text, which reads `match s with | Idle -> Running | …`. From Phase 0
+until today the numerator was measuring a *different program* from the one the
+denominator measured, and the ratio was flattering by exactly that difference.
+Fixing it is not a regression in the editor; it is the removal of a
+measurement error that had been sitting in row 4 for the whole project.
+
+The denominator did not move. The numerator moved up:
+
+| reference 4 | keystrokes | actions (keyboard) | actions (script) | ratio |
+|---|---:|---:|---:|---:|
+| old fixture (an `if`-chain on numeric codes, Phase 0 → 2026-08-29) | 24 | 33 | 24 | 0.16× |
+| new fixture (a real variant and match, this entry) | 41 | 53 | 36 | 0.27× |
+
+Seventeen more keystrokes, and the parts:
+
+| part of the program | old | new | Δ |
+|---|---:|---:|---:|
+| the lambda and its parameter (`\x0:n.` vs `\s.`) | 6 | 3 | −3 |
+| naming the scrutinee (`x0` in each test vs `s` once) | 4 | 1 | −3 |
+| the case analysis (two `?` and two `=` vs `\|` and three `C-n`) | 4 | 4 | 0 |
+| the state codes (`0`, `1`) vs the case *names* | 2 | 18 | +16 |
+| the three results (`1`, `2`, `0` vs three injections) | 3 | 12 | +9 |
+| navigation (`tab`) | 5 | 3 | −2 |
+
+Three of the six point down and none of them is the feature paying for
+itself: the case analysis costs exactly what it cost before (four keystrokes
+either way — `\|` and three `C-n`s against two `?`s and two `=`s), the
+parameter annotation is gone because a variant type is never spelled and `?`
+is the default (`DECISIONS.md`, 2026-08-29), the scrutinee is named once
+instead of twice because a `match` looks at one expression where a chain of
+tests re-reads it, and two `tab`s went away with the branches they walked.
+
+The +16 is the entry. `Idle`, `Running` and `Stopped` are eighteen characters
+that the numeric encoding did not write down *anywhere* — that was the whole
+of what "encode the states as 0, 1 and 2" was saving, and it was saving it by
+not saying what the program meant. The +6 on the results is the same
+transaction in miniature: `1` became `` `Running {} ``, four keystrokes
+(`` ` ``, `R`, `{`, `C-d`) instead of one, and one of those four is a single
+letter because the constructor completion ranks the expected variant's cases
+first (`KEYS.md` item 20(d)).
+
+### Keystrokes
+
+| # | Program | Neovim keystrokes | `nothing` keystrokes | `nothing` actions | Ratio | vs. 2026-08-29 (records) | Guard |
+|---|---------|------------------:|----------------------:|-------------------:|------:|:------------------------:|:-----:|
+| 1 | factorial * | 84 | 28 | 33 | 0.33x | unchanged | OK |
+| 2 | list_map * | 114 | 44 | 53 | 0.39x | unchanged | OK |
+| 3 | record * | 65 | 50 | 43 | 0.77x | unchanged | OK |
+| 4 | state_machine * | 151 | 41 | 53 | 0.27x | 0.16x → 0.27x | OK |
+| 5 | nested_conditional | 146 | 31 | 42 | 0.21x | unchanged | OK |
+| 6 | greeting * | 127 | 52 | 56 | 0.41x | unchanged | OK |
+
+`state_machine` keeps its `*`, for two reasons now instead of one. The
+reference declares a *nominal* type (`type State = Idle | Running | Stopped`)
+and `nothing` has no such declaration, so the parameter is `?`; and a nullary
+constructor carries `{}` rather than nothing at all, which is two characters
+the reference does not write.
+
+### Action counts, for comparison with the earlier tables
+
+```
+cargo run -p nothing-bench -- table
+```
+
+| # | Program | Neovim | actions | Ratio | 2026-08-29 (records) actions |
+|---|---------|-------:|--------:|------:|-----------------------------:|
+| 1 | factorial * | 84 | 23 | 0.27x | 23 |
+| 2 | list_map * | 114 | 37 | 0.32x | 37 |
+| 3 | record * | 65 | 27 | 0.42x | 27 |
+| 4 | state_machine * | 151 | 36 | 0.24x | 24 |
+| 5 | nested_conditional | 146 | 35 | 0.24x | 35 |
+| 6 | greeting * | 127 | 27 | 0.21x | 27 |
+
+Twelve more script actions. Three of them are `add-arm`, three are
+`set-constructor`, six are the `construct-record`/`remove-field` pairs that
+write the three `{}` payloads — and the script pays a cursor-movement tax the
+keyboard does not, because `set-constructor` at the action level wants the
+cursor on the injection while `` ` `` at the keyboard leaves it there
+already. The keyboard fixture is 41 keystrokes to the script's 36 actions and
+53 logged actions; the gap between 36 and 53 is the same gap every fixture
+has had since the definition era, and it is navigation.
+
+### Guard status: PASS
+
+Worst case is still `record` at **0.77×**, a quarter of the 3× guard; best is
+now `nested_conditional` at 0.21x, `state_machine` having given up the title
+it held on a technicality. Both tripwires
+(`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
+and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
+cover six programs and pass.
+
+Four of the six ratios have now risen across Phase B2 — `factorial` in the
+definition era, `list_map` when lists arrived, `record` when records did, and
+`state_machine` today — every one of them because a fixture stopped
+approximating. Row 4 is the last one that was approximating in a way a
+feature could fix, which is the closing note this phase gets: the benchmark
+now measures the programs it says it measures.
+
+### The merge benchmark, same day
+
+```
+cargo run -p nothing-merge --bin merge-bench
+```
+
+21 scenarios (19 before this feature). `git merge-file` clean 2, clean and
+correct 2; structural clean 18, well-typed 21/21. The two new ones are
+**two branches edit two different arms of the same match** (moving; git
+conflicts, structural clean — the arms are disjoint subtrees with the same
+parent) and **one branch renames a constructor while the other edits an arm**
+(renaming; git conflicts, structural clean — a constructor is an identity, so
+the rename has no structural footprint at all). Full table in
+`bench/MERGE.md`, regenerated by the harness on the same day.

@@ -249,6 +249,88 @@ fn run_and_check_handle_a_record_program() {
 }
 
 #[test]
+fn run_and_check_handle_a_program_with_a_match() {
+    use nothing_core::exp::{HoleId, Id, Op};
+    use nothing_core::names::NameTable;
+    use nothing_core::ty::{self, Ty};
+
+    let some = Id::from_u128(0x21);
+    let none = Id::from_u128(0x22);
+    let n = Id::from_u128(0x23);
+    let unused = Id::from_u128(0x24);
+    let opt = Id::from_u128(0x25);
+    let mut names = NameTable::new();
+    names.set(some, "Some");
+    names.set(none, "None");
+    names.set(n, "n");
+    names.set(unused, "_");
+    names.set(opt, "opt");
+
+    let option = ty::variant(vec![(some, Ty::Num), (none, ty::unit())]);
+    let or_zero = Exp::lam(
+        opt,
+        option,
+        Exp::match_(
+            Exp::var(opt),
+            vec![
+                (some, n, Exp::bin_op(Op::Add, Exp::var(n), Exp::num(1))),
+                (none, unused, Exp::num(0)),
+            ],
+        ),
+    );
+
+    let path = scratch_dir().join("run-match.nothing");
+    let doc = Document::new(
+        Exp::ap(or_zero.clone(), Exp::inj(some, Exp::num(41))),
+        names.clone(),
+        ActionLog::new(),
+    );
+    std::fs::write(&path, encode_document(&doc)).unwrap();
+
+    let (code, stdout, _) = run(&["check", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert!(stdout.contains("well-typed: true"), "stdout: {stdout}");
+    assert!(stdout.contains("empty holes: 0"), "stdout: {stdout}");
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert_eq!(
+        stdout.trim(),
+        "42",
+        "the match reduced by the constructor the scrutinee injected"
+    );
+
+    let path = scratch_dir().join("run-match-other-arm.nothing");
+    let doc = Document::new(
+        Exp::ap(or_zero, Exp::inj(none, Exp::unit())),
+        names.clone(),
+        ActionLog::new(),
+    );
+    std::fs::write(&path, encode_document(&doc)).unwrap();
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert_eq!(
+        stdout.trim(),
+        "0",
+        "and the other constructor takes the other arm"
+    );
+
+    let blocked = Exp::match_(
+        Exp::empty_hole(HoleId::from_u128(5)),
+        vec![(some, n, Exp::var(n)), (none, unused, Exp::num(0))],
+    );
+    let path = scratch_dir().join("run-match-hole.nothing");
+    let doc = Document::new(blocked, names, ActionLog::new());
+    std::fs::write(&path, encode_document(&doc)).unwrap();
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 2, "stdout: {stdout}");
+    assert!(stdout.contains("blocked on hole"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Some n -> n"),
+        "the arms are still on screen: {stdout}"
+    );
+}
+
+#[test]
 fn run_reports_an_indeterminate_result_and_its_hole() {
     let path = write_fixture("run-indeterminate.nothing", examples::add_with_empty_hole());
     let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);

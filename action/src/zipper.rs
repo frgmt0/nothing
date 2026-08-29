@@ -1,7 +1,7 @@
 use nothing_core::ctx::Ctx;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::ty::Ty;
-use nothing_core::typing::syn;
+use nothing_core::typing::{arm_payload_ty, syn};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Frame {
@@ -25,6 +25,9 @@ pub enum Frame {
     FoldStep(Exp, Exp),
     RecordField(Vec<(Id, Exp)>, usize, Id),
     FieldSubject(Id),
+    InjPayload(Id),
+    MatchScrutinee(Vec<(Id, Id, Exp)>),
+    MatchArm(Exp, Vec<(Id, Id, Exp)>, usize, Id, Id),
     NonEmptyHoleBody(HoleId),
 }
 
@@ -61,6 +64,13 @@ impl Frame {
                 Exp::Record(fields)
             }
             Frame::FieldSubject(id) => Exp::Field(Box::new(focus), id),
+            Frame::InjPayload(ctor) => Exp::Inj(ctor, Box::new(focus)),
+            Frame::MatchScrutinee(arms) => Exp::Match(Box::new(focus), arms),
+            Frame::MatchArm(scrutinee, others, index, ctor, binder) => {
+                let mut arms = others;
+                arms.insert(index, (ctor, binder, focus));
+                Exp::Match(Box::new(scrutinee), arms)
+            }
             Frame::NonEmptyHoleBody(h) => Exp::NonEmptyHole(h, Box::new(focus)),
         }
     }
@@ -68,6 +78,9 @@ impl Frame {
     pub fn child_index(&self) -> usize {
         if let Frame::RecordField(_, index, _) = self {
             return *index;
+        }
+        if let Frame::MatchArm(_, _, index, _, _) = self {
+            return *index + 1;
         }
         match self {
             Frame::LamBody(..)
@@ -81,6 +94,9 @@ impl Frame {
             | Frame::FoldList(..)
             | Frame::FieldSubject(..)
             | Frame::RecordField(..)
+            | Frame::InjPayload(..)
+            | Frame::MatchScrutinee(..)
+            | Frame::MatchArm(..)
             | Frame::NonEmptyHoleBody(..) => 0,
             Frame::ApArg(..)
             | Frame::BinOpRight(..)
@@ -97,11 +113,20 @@ impl Frame {
         if let Frame::RecordField(others, _, _) = self {
             return others.len() + 1;
         }
+        if let Frame::MatchScrutinee(arms) = self {
+            return arms.len() + 1;
+        }
+        if let Frame::MatchArm(_, others, _, _, _) = self {
+            return others.len() + 2;
+        }
         match self {
             Frame::LamBody(..)
             | Frame::ProjBody(..)
             | Frame::FieldSubject(..)
             | Frame::RecordField(..)
+            | Frame::InjPayload(..)
+            | Frame::MatchScrutinee(..)
+            | Frame::MatchArm(..)
             | Frame::NonEmptyHoleBody(..) => 1,
             Frame::ApFun(..)
             | Frame::ApArg(..)
@@ -127,7 +152,8 @@ pub fn arity(exp: &Exp) -> usize {
     match exp {
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 0,
         Exp::Record(fields) => fields.len(),
-        Exp::Lam(..) | Exp::Proj(..) | Exp::Field(..) | Exp::NonEmptyHole(..) => 1,
+        Exp::Match(_, arms) => arms.len() + 1,
+        Exp::Lam(..) | Exp::Proj(..) | Exp::Field(..) | Exp::Inj(..) | Exp::NonEmptyHole(..) => 1,
         Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
         Exp::If(..) | Exp::Fold(..) => 3,
     }
@@ -242,6 +268,15 @@ impl Zipper {
                 let (id, child) = fields.remove(n);
                 (Frame::RecordField(fields, n, id), child)
             }
+            Exp::Inj(ctor, payload) => (Frame::InjPayload(ctor), *payload),
+            Exp::Match(scrutinee, mut arms) => {
+                if n == 0 {
+                    (Frame::MatchScrutinee(arms), *scrutinee)
+                } else {
+                    let (ctor, binder, body) = arms.remove(n - 1);
+                    (Frame::MatchArm(*scrutinee, arms, n - 1, ctor, binder), body)
+                }
+            }
             Exp::NonEmptyHole(h, inner) => (Frame::NonEmptyHoleBody(h), *inner),
 
             Exp::Var(_)
@@ -296,6 +331,7 @@ impl Zipper {
             .filter_map(|frame| match frame {
                 Frame::LamBody(id, _) => Some(*id),
                 Frame::LetBody(id, _) => Some(*id),
+                Frame::MatchArm(_, _, _, _, binder) => Some(*binder),
                 _ => None,
             })
             .filter(|id| ctx.lookup(id).is_some())
@@ -305,6 +341,34 @@ impl Zipper {
     pub fn record_field_id(&self) -> Option<Id> {
         match self.path.last()? {
             Frame::RecordField(_, _, id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    pub fn arm_constructor_id(&self) -> Option<Id> {
+        match self.path.last()? {
+            Frame::MatchArm(_, _, _, ctor, _) => Some(*ctor),
+            _ => None,
+        }
+    }
+
+    pub fn arm_binder_id(&self) -> Option<Id> {
+        match self.path.last()? {
+            Frame::MatchArm(_, _, _, _, binder) => Some(*binder),
+            _ => None,
+        }
+    }
+
+    pub fn arm_index(&self) -> Option<usize> {
+        match self.path.last()? {
+            Frame::MatchArm(_, _, index, _, _) => Some(*index),
+            _ => None,
+        }
+    }
+
+    pub fn injected_constructor_id(&self) -> Option<Id> {
+        match &self.focus {
+            Exp::Inj(ctor, _) => Some(*ctor),
             _ => None,
         }
     }
@@ -335,6 +399,10 @@ impl Zipper {
                 Frame::LetBody(id, bound) => {
                     let ty = syn(&ctx, bound).unwrap_or(Ty::Hole);
                     ctx = ctx.extend(*id, ty);
+                }
+                Frame::MatchArm(scrutinee, _, _, ctor, binder) => {
+                    let scrutinee_ty = syn(&ctx, scrutinee).unwrap_or(Ty::Hole);
+                    ctx = ctx.extend(*binder, arm_payload_ty(&scrutinee_ty, *ctor));
                 }
 
                 _ => {}

@@ -43,19 +43,19 @@ A merge can still land somewhere ill-typed even when every accepted operation wa
 
 | | scenarios | clean | clean and correct | conflicts |
 | --- | ---: | ---: | ---: | ---: |
-| `git merge-file` on rendered text | 19 | 2 | 2 | 17 |
-| structural merge on typed operations | 19 | 16 | 16 | 3 |
+| `git merge-file` on rendered text | 21 | 2 | 2 | 19 |
+| structural merge on typed operations | 21 | 18 | 18 | 3 |
 
-Every structural merge result is well-typed: 19/19.
+Every structural merge result is well-typed: 21/21.
 
 ## By scenario class
 
 | class | scenarios | git clean and correct | git clean but wrong | git conflicts | structural clean |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | reordering | 4 | 0 | 0 | 4 | 4 |
-| renaming | 5 | 0 | 0 | 5 | 5 |
+| renaming | 6 | 0 | 0 | 6 | 6 |
 | reformatting | 4 | 0 | 0 | 4 | 4 |
-| moving | 2 | 1 | 0 | 1 | 2 |
+| moving | 3 | 1 | 0 | 2 | 3 |
 | control | 4 | 1 | 0 | 3 | 1 |
 
 ## Every scenario
@@ -80,6 +80,8 @@ Every structural merge result is well-typed: 19/19.
 | renaming | rename the greeted parameter vs reword the greeting itself | 1 / 2 | conflict | clean |
 | reordering | one branch appends to a list, the other inserts into its middle | 1 / 1 | conflict | clean |
 | renaming | two branches rename and reorder the fields of the same record | 1 / 2 | conflict | clean |
+| moving | two branches edit two different arms of the same match | 1 / 1 | conflict | clean |
+| renaming | one branch renames a constructor while the other edits an arm | 1 / 1 | conflict | clean |
 | control | both branches make the identical edit | 1 / 1 | clean | clean |
 
 ## What the line-based merge is given
@@ -140,6 +142,8 @@ conflict (competing renames of one binder) at the name of `square`
 * **rename the greeted parameter vs reword the greeting itself** — one branch renames `x` to `who`; the other rewrites the string literals around it
 * **one branch appends to a list, the other inserts into its middle** — a cons chain is a spine like a let chain, but its cells have no ids: `1 :: 2 :: 3 :: nil` gains a 4 at the end on one side and a 9 after the 1 on the other
 * **two branches rename and reorder the fields of the same record** — one branch renames the field `width`; the other renames `depth` and moves it to the front of the same record. A field is an identity, so a rename is a name-table write with no structural footprint and the reorder is an ordering footprint over the field list — the three edits touch one line of text and three disjoint regions of the tree
+* **two branches edit two different arms of the same match** — the two arms of one match are disjoint subtrees with the same parent: one branch rewrites the `Open` arm and the other rewrites the `Shut` arm, which `git merge-file` sees as two edits inside one printed line
+* **one branch renames a constructor while the other edits an arm** — a constructor is an identity, so renaming `Open` is a name-table write with no structural footprint at all, and the arm edit is a region the rename cannot overlap
 * **both branches make the identical edit** — convergent edits: both merges should be clean
 
 ## Reading the table

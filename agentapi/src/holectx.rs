@@ -130,11 +130,23 @@ fn candidate_actions(state: &EditState) -> Vec<Action> {
         Action::ConstructCons,
         Action::ConstructFold,
         Action::ConstructRecord,
+        Action::ConstructInj,
+        Action::ConstructMatch,
     ]);
     for field in fields_in_view(state) {
         out.push(Action::ConstructField(field));
     }
+    for ctor in nothing_action::script::constructors_in_view(state) {
+        out.push(Action::SetConstructor(ctor));
+    }
     out
+}
+
+fn constructor_resolves_to(state: &EditState, name: &str, id: Id) -> bool {
+    nothing_action::script::constructors_in_view(state)
+        .into_iter()
+        .find(|other| state.names.get(*other) == Some(name))
+        == Some(id)
 }
 
 fn field_resolves_to(state: &EditState, name: &str, id: Id) -> bool {
@@ -158,6 +170,14 @@ fn step_for(state: &EditState, action: &Action) -> Option<String> {
             let name = state.names.get(*id)?.to_string();
             if field_resolves_to(state, &name, *id) {
                 Some(format!("construct-field {name}"))
+            } else {
+                None
+            }
+        }
+        Action::SetConstructor(id) => {
+            let name = state.names.get(*id)?.to_string();
+            if constructor_resolves_to(state, &name, *id) {
+                Some(format!("set-constructor {name}"))
             } else {
                 None
             }

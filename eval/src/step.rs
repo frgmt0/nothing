@@ -105,7 +105,6 @@ pub fn step(d: &Dyn) -> Option<Dyn> {
 }
 
 pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
-    let step = |d: &Dyn| step_in(defs, d);
     match d {
         Dyn::Var(id) => defs.get(id).cloned(),
 
@@ -113,78 +112,19 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
             None
         }
 
-        Dyn::Ap(fun, arg) => {
-            if let Some(fun) = step(fun) {
-                return Some(Dyn::Ap(Box::new(fun), arg.clone()));
-            }
-            if let Some(arg) = step(arg) {
-                return Some(Dyn::Ap(fun.clone(), Box::new(arg)));
-            }
-            match fun.as_ref() {
-                Dyn::Lam(id, _, body) => Some(subst(*id, arg, body)),
-                _ => None,
-            }
-        }
+        Dyn::Ap(fun, arg) => step_ap(defs, fun, arg),
 
-        Dyn::BinOp(op, lhs, rhs) => {
-            if let Some(lhs) = step(lhs) {
-                return Some(Dyn::BinOp(*op, Box::new(lhs), rhs.clone()));
-            }
-            if let Some(rhs) = step(rhs) {
-                return Some(Dyn::BinOp(*op, lhs.clone(), Box::new(rhs)));
-            }
-            match (lhs.as_ref(), rhs.as_ref()) {
-                (Dyn::Num(a), Dyn::Num(b)) => apply_num_op(*op, *a, *b),
-                (Dyn::Str(a), Dyn::Str(b)) => apply_str_op(*op, a, b),
-                (Dyn::Bool(a), Dyn::Bool(b)) => apply_bool_op(*op, *a, *b),
-                _ => None,
-            }
-        }
+        Dyn::BinOp(op, lhs, rhs) => step_bin_op(defs, *op, lhs, rhs),
 
-        Dyn::If(cond, then, else_) => {
-            if let Some(cond) = step(cond) {
-                return Some(Dyn::If(Box::new(cond), then.clone(), else_.clone()));
-            }
-            match cond.as_ref() {
-                Dyn::Bool(true) => Some(then.as_ref().clone()),
-                Dyn::Bool(false) => Some(else_.as_ref().clone()),
-                _ => None,
-            }
-        }
+        Dyn::If(cond, then, else_) => step_if(defs, cond, then, else_),
 
-        Dyn::Let(id, bound, body) => {
-            if let Some(bound) = step(bound) {
-                return Some(Dyn::Let(*id, Box::new(bound), body.clone()));
-            }
-            Some(subst(*id, bound, body))
-        }
+        Dyn::Let(id, bound, body) => step_let(defs, *id, bound, body),
 
-        Dyn::Pair(fst, snd) => {
-            if let Some(fst) = step(fst) {
-                return Some(Dyn::Pair(Box::new(fst), snd.clone()));
-            }
-            step(snd).map(|snd| Dyn::Pair(fst.clone(), Box::new(snd)))
-        }
+        Dyn::Pair(fst, snd) => step_pair(defs, fst, snd),
 
-        Dyn::Proj(side, inner) => {
-            if let Some(inner) = step(inner) {
-                return Some(Dyn::Proj(*side, Box::new(inner)));
-            }
-            match inner.as_ref() {
-                Dyn::Pair(fst, snd) => Some(match side {
-                    Side::L => fst.as_ref().clone(),
-                    Side::R => snd.as_ref().clone(),
-                }),
-                _ => None,
-            }
-        }
+        Dyn::Proj(side, inner) => step_proj(defs, *side, inner),
 
-        Dyn::Cons(head, tail) => {
-            if let Some(head) = step(head) {
-                return Some(Dyn::Cons(Box::new(head), tail.clone()));
-            }
-            step(tail).map(|tail| Dyn::Cons(head.clone(), Box::new(tail)))
-        }
+        Dyn::Cons(head, tail) => step_cons(defs, head, tail),
 
         Dyn::Fold(list, init, folder) => step_fold(defs, list, init, folder),
 
@@ -192,10 +132,93 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
 
         Dyn::Field(subject, id) => step_field(defs, subject, *id),
 
-        Dyn::NonEmptyHole(h, env, inner) => {
-            step(inner).map(|inner| Dyn::NonEmptyHole(*h, env.clone(), Box::new(inner)))
-        }
+        Dyn::Inj(ctor, payload) => step_inj(defs, *ctor, payload),
+
+        Dyn::Match(scrutinee, arms) => step_match(defs, scrutinee, arms),
+
+        Dyn::NonEmptyHole(h, env, inner) => step_hole(defs, *h, env, inner),
     }
+}
+
+fn step_ap(defs: &Defs, fun: &Dyn, arg: &Dyn) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, fun) {
+        return Some(Dyn::Ap(Box::new(stepped), Box::new(arg.clone())));
+    }
+    if let Some(stepped) = step_in(defs, arg) {
+        return Some(Dyn::Ap(Box::new(fun.clone()), Box::new(stepped)));
+    }
+    match fun {
+        Dyn::Lam(id, _, body) => Some(subst(*id, arg, body)),
+        _ => None,
+    }
+}
+
+fn step_bin_op(defs: &Defs, op: Op, lhs: &Dyn, rhs: &Dyn) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, lhs) {
+        return Some(Dyn::BinOp(op, Box::new(stepped), Box::new(rhs.clone())));
+    }
+    if let Some(stepped) = step_in(defs, rhs) {
+        return Some(Dyn::BinOp(op, Box::new(lhs.clone()), Box::new(stepped)));
+    }
+    match (lhs, rhs) {
+        (Dyn::Num(a), Dyn::Num(b)) => apply_num_op(op, *a, *b),
+        (Dyn::Str(a), Dyn::Str(b)) => apply_str_op(op, a, b),
+        (Dyn::Bool(a), Dyn::Bool(b)) => apply_bool_op(op, *a, *b),
+        _ => None,
+    }
+}
+
+fn step_if(defs: &Defs, cond: &Dyn, then: &Dyn, else_: &Dyn) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, cond) {
+        return Some(Dyn::If(
+            Box::new(stepped),
+            Box::new(then.clone()),
+            Box::new(else_.clone()),
+        ));
+    }
+    match cond {
+        Dyn::Bool(true) => Some(then.clone()),
+        Dyn::Bool(false) => Some(else_.clone()),
+        _ => None,
+    }
+}
+
+fn step_let(defs: &Defs, id: Id, bound: &Dyn, body: &Dyn) -> Option<Dyn> {
+    match step_in(defs, bound) {
+        Some(stepped) => Some(Dyn::Let(id, Box::new(stepped), Box::new(body.clone()))),
+        None => Some(subst(id, bound, body)),
+    }
+}
+
+fn step_pair(defs: &Defs, fst: &Dyn, snd: &Dyn) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, fst) {
+        return Some(Dyn::Pair(Box::new(stepped), Box::new(snd.clone())));
+    }
+    step_in(defs, snd).map(|snd| Dyn::Pair(Box::new(fst.clone()), Box::new(snd)))
+}
+
+fn step_proj(defs: &Defs, side: Side, inner: &Dyn) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, inner) {
+        return Some(Dyn::Proj(side, Box::new(stepped)));
+    }
+    match inner {
+        Dyn::Pair(fst, snd) => Some(match side {
+            Side::L => fst.as_ref().clone(),
+            Side::R => snd.as_ref().clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn step_cons(defs: &Defs, head: &Dyn, tail: &Dyn) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, head) {
+        return Some(Dyn::Cons(Box::new(stepped), Box::new(tail.clone())));
+    }
+    step_in(defs, tail).map(|tail| Dyn::Cons(Box::new(head.clone()), Box::new(tail)))
+}
+
+fn step_hole(defs: &Defs, h: HoleId, env: &Env, inner: &Dyn) -> Option<Dyn> {
+    step_in(defs, inner).map(|inner| Dyn::NonEmptyHole(h, env.clone(), Box::new(inner)))
 }
 
 fn step_fold(defs: &Defs, list: &Dyn, init: &Dyn, folder: &Dyn) -> Option<Dyn> {
@@ -244,6 +267,23 @@ fn step_field(defs: &Defs, subject: &Dyn, field: Id) -> Option<Dyn> {
             .iter()
             .find(|(id, _)| *id == field)
             .map(|(_, value)| value.clone()),
+        _ => None,
+    }
+}
+
+fn step_inj(defs: &Defs, ctor: Id, payload: &Dyn) -> Option<Dyn> {
+    step_in(defs, payload).map(|payload| Dyn::Inj(ctor, Box::new(payload)))
+}
+
+fn step_match(defs: &Defs, scrutinee: &Dyn, arms: &[(Id, Id, Dyn)]) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, scrutinee) {
+        return Some(Dyn::Match(Box::new(stepped), arms.to_vec()));
+    }
+    match scrutinee {
+        Dyn::Inj(ctor, payload) => arms
+            .iter()
+            .find(|(id, _, _)| id == ctor)
+            .map(|(_, binder, body)| subst(*binder, payload, body)),
         _ => None,
     }
 }
@@ -375,7 +415,8 @@ fn collect(d: &Dyn, out: &mut Vec<Blocked>) {
             collect(init, out);
             collect(folder, out);
         }
-        Dyn::Proj(_, inner) | Dyn::Field(inner, _) => collect(inner, out),
+        Dyn::Proj(_, inner) | Dyn::Field(inner, _) | Dyn::Inj(_, inner) => collect(inner, out),
+        Dyn::Match(scrutinee, _) => collect(scrutinee, out),
         Dyn::Record(fields) => {
             for (_, value) in fields {
                 collect(value, out);
@@ -412,6 +453,103 @@ mod tests {
         names.set(x(), "x");
         names.set(y(), "y");
         names
+    }
+
+    fn red() -> Id {
+        Id::from_u128(31)
+    }
+
+    fn green() -> Id {
+        Id::from_u128(32)
+    }
+
+    #[test]
+    fn a_match_reduces_by_constructor_and_binds_the_payload() {
+        let e = Exp::match_(
+            Exp::inj(green(), Exp::num(4)),
+            [
+                (
+                    red(),
+                    x(),
+                    Exp::bin_op(Op::Mul, Exp::var(x()), Exp::num(10)),
+                ),
+                (
+                    green(),
+                    y(),
+                    Exp::bin_op(Op::Add, Exp::var(y()), Exp::num(1)),
+                ),
+            ],
+        );
+        assert!(is_well_typed(&e));
+        assert_eq!(
+            eval(&e).num(),
+            Some(5),
+            "the taken arm is the one that runs"
+        );
+    }
+
+    #[test]
+    fn a_hole_in_an_arm_that_is_not_taken_does_not_block() {
+        let e = Exp::match_(
+            Exp::inj(green(), Exp::num(4)),
+            [
+                (red(), x(), Exp::empty_hole(h(7))),
+                (green(), y(), Exp::var(y())),
+            ],
+        );
+        assert!(is_well_typed(&e));
+        let out = eval(&e);
+        assert_eq!(out.num(), Some(4));
+        assert!(
+            out.blocked().is_empty(),
+            "an arm nothing takes is not a reason to stop"
+        );
+    }
+
+    #[test]
+    fn a_match_on_an_indeterminate_scrutinee_is_indeterminate() {
+        let e = Exp::match_(
+            Exp::empty_hole(h(1)),
+            [(red(), x(), Exp::var(x())), (green(), y(), Exp::var(y()))],
+        );
+        assert!(is_well_typed(&e));
+        let out = eval(&e);
+        assert!(out.is_indeterminate(), "{out:?}");
+        assert_eq!(
+            out.blocked().len(),
+            1,
+            "the scrutinee's hole is the one thing standing in the way"
+        );
+        assert_eq!(out.blocked()[0].hole, h(1));
+        assert_eq!(
+            render(out.dyn_result(), &names()),
+            render(&elaborate(&e), &names()),
+            "and the residual is the match itself, arms and all"
+        );
+    }
+
+    #[test]
+    fn an_injection_of_a_value_is_a_value_and_its_payload_reduces_first() {
+        let e = Exp::inj(red(), Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)));
+        let out = eval(&e);
+        assert!(out.is_value(), "{out:?}");
+        assert_eq!(out.to_exp(), Exp::inj(red(), Exp::num(3)));
+
+        let stuck = Exp::inj(red(), Exp::empty_hole(h(3)));
+        assert!(!eval(&stuck).is_value());
+    }
+
+    #[test]
+    fn a_match_with_no_arm_for_the_case_it_gets_is_stuck_rather_than_wrong() {
+        let d = elaborate(&Exp::match_(
+            Exp::inj(green(), Exp::num(1)),
+            [(red(), x(), Exp::var(x()))],
+        ));
+        assert_eq!(
+            step(&d),
+            None,
+            "there is no arm to take and no answer to give"
+        );
     }
 
     #[test]

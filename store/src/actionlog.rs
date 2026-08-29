@@ -94,6 +94,18 @@ fn encode_action_body(buf: &mut Vec<u8>, action: &Action) {
             buf.push(37);
             write_id(buf, *id);
         }
+        Action::ConstructInj => buf.push(38),
+        Action::ConstructMatch => buf.push(39),
+        Action::AddArm => buf.push(40),
+        Action::RemoveArm => buf.push(41),
+        Action::SetConstructor(id) => {
+            buf.push(42);
+            write_id(buf, *id);
+        }
+        Action::SetArmBinderId(id) => {
+            buf.push(43);
+            write_id(buf, *id);
+        }
     }
 }
 
@@ -183,6 +195,18 @@ fn decode_action_body(bytes: &[u8], pos: &mut usize) -> Result<Action, DecodeErr
             let id = read_id(bytes, pos)?;
             Ok(Action::SetFieldId(id))
         }
+        38 => Ok(Action::ConstructInj),
+        39 => Ok(Action::ConstructMatch),
+        40 => Ok(Action::AddArm),
+        41 => Ok(Action::RemoveArm),
+        42 => {
+            let id = read_id(bytes, pos)?;
+            Ok(Action::SetConstructor(id))
+        }
+        43 => {
+            let id = read_id(bytes, pos)?;
+            Ok(Action::SetArmBinderId(id))
+        }
         other => Err(DecodeError::BadTag(other)),
     }
 }
@@ -254,6 +278,32 @@ mod tests {
             Action::MoveFieldNext,
             Action::SetField(field),
             Action::SetFieldId(field),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            log.append(action, i as u64, AuthorId::new(1));
+        }
+
+        let mut buf = Vec::new();
+        encode_log(&mut buf, &log);
+        let mut pos = 0;
+        assert_eq!(decode_log(&buf, &mut pos).unwrap(), log);
+        assert_eq!(pos, buf.len());
+    }
+
+    #[test]
+    fn every_variant_action_round_trips_through_the_log() {
+        let ctor = Id::from_u128(5);
+        let binder = Id::from_u128(6);
+        let mut log = ActionLog::new();
+        for (i, action) in [
+            Action::ConstructInj,
+            Action::ConstructMatch,
+            Action::AddArm,
+            Action::RemoveArm,
+            Action::SetConstructor(ctor),
+            Action::SetArmBinderId(binder),
         ]
         .into_iter()
         .enumerate()

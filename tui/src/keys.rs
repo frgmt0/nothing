@@ -208,21 +208,32 @@ fn printable(c: char, state: AppState) -> AppState {
         Slot::DefAnn => def_ann_key(c, state),
         Slot::FieldName => field_name_key(c, state),
         Slot::FieldPick => field_pick_key(c, state),
+        Slot::ConstructorName => constructor_name_key(c, state),
+        Slot::ConstructorPick => constructor_pick_key(c, state),
         Slot::Node => node_key(c, state),
     }
 }
 
 fn add_row(state: AppState) -> AppState {
-    if !state.in_record() {
-        return new_definition(state);
+    if state.in_record() {
+        return match state.apply_actions(&[Action::AddField]) {
+            Some(next) => match next.field_name_target() {
+                Some(named) => named,
+                None => next,
+            },
+            None => state.with_hint("a field cannot be added here"),
+        };
     }
-    match state.apply_actions(&[Action::AddField]) {
-        Some(next) => match next.field_name_target() {
-            Some(named) => named,
-            None => next,
-        },
-        None => state.with_hint("a field cannot be added here"),
+    if state.in_match() {
+        return match state.apply_actions(&[Action::AddArm]) {
+            Some(next) => match next.constructor_name_target() {
+                Some(named) => named,
+                None => next,
+            },
+            None => state.with_hint("an arm cannot be added here"),
+        };
     }
+    new_definition(state)
 }
 
 fn drop_row(state: AppState) -> AppState {
@@ -231,6 +242,13 @@ fn drop_row(state: AppState) -> AppState {
             to_node(state.apply_actions(&[Action::RemoveField])),
             state,
             "this field cannot be dropped",
+        );
+    }
+    if state.zipper().arm_constructor_id().is_some() {
+        return or_hint(
+            to_node(state.apply_actions(&[Action::RemoveArm])),
+            state,
+            "something still injects this case, so the arm has to stay",
         );
     }
     or_hint(
@@ -408,6 +426,8 @@ fn node_key(c: char, state: AppState) -> AppState {
         ':' if matches!(state.focus(), Exp::Lam(..)) => to_annotation(state),
         ':' => wrap(state, PREC_CONS, Action::ConstructCons, "cons"),
         '{' => record(state),
+        '`' => inject(state),
+        '|' => match_(state),
         '.' => project(state),
         _ => state.with_hint(format!("`{c}` is not bound here")),
     }
@@ -423,6 +443,130 @@ fn record(state: AppState) -> AppState {
         Some(named) => named,
         None => next,
     }
+}
+
+fn inject(state: AppState) -> AppState {
+    let mut actions = state.climb_actions(PREC_ATOM);
+    actions.push(Action::ConstructInj);
+    let Some(next) = state.apply_actions(&actions) else {
+        return state.with_hint("an injection does not fit here");
+    };
+    let mut next = match next.focus() {
+        Exp::Inj(..) => next,
+        _ => next
+            .apply_actions(&[Action::MoveParent])
+            .expect("an injection has a parent when the cursor is in its payload"),
+    };
+    next.slot = Slot::ConstructorPick;
+    next.entry = String::new();
+    next.entry_committed = false;
+    next
+}
+
+fn match_(state: AppState) -> AppState {
+    let mut actions = state.climb_actions(PREC_BINDER);
+    actions.push(Action::ConstructMatch);
+    match state.apply_actions(&actions) {
+        Some(next) => next,
+        None => state.with_hint("a match does not fit here"),
+    }
+}
+
+fn constructor_name_key(c: char, state: AppState) -> AppState {
+    match c {
+        '=' => leave_constructor_slot(state),
+        c if is_name_char(c) => name_constructor(c.to_string(), state, true),
+        _ => exit_constructor_and_reprocess(c, state),
+    }
+}
+
+fn constructor_pick_key(c: char, state: AppState) -> AppState {
+    match c {
+        '=' => leave_constructor_slot(state),
+        c if is_name_char(c) => pick_constructor(c.to_string(), state, true),
+        _ => exit_constructor_and_reprocess(c, state),
+    }
+}
+
+fn leave_constructor_slot(state: AppState) -> AppState {
+    let mut next = state;
+    if next.slot == Slot::ConstructorPick
+        && let Some(into) = next.apply_actions(&[Action::MoveChild(0)])
+    {
+        next = into;
+    }
+    next.slot = Slot::Node;
+    next.clear_entry();
+    next
+}
+
+fn exit_constructor_and_reprocess(c: char, state: AppState) -> AppState {
+    printable(c, leave_constructor_slot(state))
+}
+
+fn name_constructor(text: String, state: AppState, append: bool) -> AppState {
+    let mut buffer = if append {
+        state.entry.clone()
+    } else {
+        String::new()
+    };
+    buffer.push_str(&text);
+
+    let Some(id) = state.constructor_slot_id() else {
+        return state.with_hint("the cursor is not on a constructor");
+    };
+
+    let mut next = state
+        .apply_actions(&[Action::Rename(id, buffer.clone())])
+        .expect("a rename is a name-table write: it cannot fail");
+    next.slot = Slot::ConstructorName;
+    next.entry = buffer;
+    next.entry_committed = true;
+    next
+}
+
+fn pick_constructor(text: String, state: AppState, append: bool) -> AppState {
+    let mut buffer = if append {
+        state.entry.clone()
+    } else {
+        String::new()
+    };
+    buffer.push_str(&text);
+
+    let Some((id, name)) = complete::best_constructor(&state, &buffer) else {
+        return rename_this_constructor(buffer, state);
+    };
+
+    match state.apply_actions(&[Action::SetConstructor(id)]) {
+        Some(mut next) => {
+            next.slot = Slot::ConstructorPick;
+            next.entry = buffer;
+            next.entry_committed = true;
+            next
+        }
+        None => {
+            let mut next = state;
+            next.entry = buffer.clone();
+            next.entry_committed = false;
+            next.with_hint(format!("`{name}` does not fit here"))
+        }
+    }
+}
+
+fn rename_this_constructor(buffer: String, state: AppState) -> AppState {
+    let Some(id) = state.constructor_slot_id() else {
+        let mut next = state;
+        next.entry = buffer.clone();
+        next.entry_committed = false;
+        return next.with_hint(format!("no constructor in view starts with `{buffer}`"));
+    };
+    let mut next = state
+        .apply_actions(&[Action::Rename(id, buffer.clone())])
+        .expect("a rename is a name-table write: it cannot fail");
+    next.slot = Slot::ConstructorPick;
+    next.entry = buffer;
+    next.entry_committed = true;
+    next
 }
 
 fn project(state: AppState) -> AppState {
@@ -785,6 +929,28 @@ fn backspace(state: AppState) -> AppState {
             buffer.pop();
             if !buffer.is_empty() {
                 return pick_field(buffer, state, false);
+            }
+            let mut next = state;
+            next.entry = buffer;
+            next.entry_committed = false;
+            next
+        }
+        Slot::ConstructorName => {
+            let mut buffer = state.entry.clone();
+            buffer.pop();
+            if !buffer.is_empty() {
+                return name_constructor(buffer, state, false);
+            }
+            let mut next = state;
+            next.entry = buffer;
+            next.entry_committed = false;
+            next
+        }
+        Slot::ConstructorPick => {
+            let mut buffer = state.entry.clone();
+            buffer.pop();
+            if !buffer.is_empty() {
+                return pick_constructor(buffer, state, false);
             }
             let mut next = state;
             next.entry = buffer;
@@ -1917,6 +2083,159 @@ mod tests {
             renamed.text(),
             "{count = 1}.count",
             "one name run renames the construction site and the projection together, because \
+             they are the same identity"
+        );
+    }
+
+    const RED: nothing_core::exp::Id = nothing_core::exp::Id::from_u128(0x11);
+    const BLUE: nothing_core::exp::Id = nothing_core::exp::Id::from_u128(0x22);
+
+    fn red_or_blue() -> nothing_core::ty::Ty {
+        nothing_core::ty::variant(vec![
+            (RED, nothing_core::ty::Ty::Num),
+            (BLUE, nothing_core::ty::Ty::Bool),
+        ])
+    }
+
+    fn matching_on_red_or_blue(state: AppState) -> AppState {
+        let lam = state
+            .apply_actions(&[
+                Action::ConstructLam,
+                Action::MoveParent,
+                Action::SetAnn(red_or_blue()),
+                Action::MoveChild(0),
+                Action::Rename(RED, "Red".into()),
+                Action::Rename(BLUE, "Blue".into()),
+            ])
+            .expect("a variant type is not spellable, so the annotation is set as an action");
+        type_chars("x|", lam)
+    }
+
+    #[test]
+    fn a_backtick_injects_and_lands_in_the_constructor_slot() {
+        let fresh = type_chars("`", AppState::empty());
+        assert_eq!(fresh.text(), "`C0 ⦇⦈");
+        assert_eq!(
+            fresh.slot,
+            Slot::ConstructorPick,
+            "an injection leaves the cursor on the case's name, as a brace does on a field's"
+        );
+        assert_eq!(fresh.entry, "");
+
+        assert_eq!(
+            typed("1`"),
+            "`C0 1",
+            "it wraps what was already there, like every other form key"
+        );
+
+        let expected = AppState::empty()
+            .apply_actions(&[Action::SetDefAnn(red_or_blue())])
+            .expect("a fresh definition takes any annotation");
+        let adopted = type_chars("`", expected);
+        assert_eq!(
+            adopted.edit.constructor_ids(),
+            vec![RED],
+            "where a variant is expected the backtick adopts that variant's first constructor \
+             rather than minting an identity the context could only quarantine"
+        );
+        assert!(adopted.edit.is_well_typed());
+    }
+
+    #[test]
+    fn a_bar_writes_a_match_with_one_arm_per_constructor() {
+        assert_eq!(
+            typed("|"),
+            "match ⦇⦈ {}",
+            "an unknown scrutinee answers for nothing, so it needs no arms"
+        );
+        assert_eq!(
+            typed("1+2|"),
+            "match ⦇1 + 2⦈ {}",
+            "`|` wraps the whole sum, and a number is not a variant, so it is quarantined \
+             rather than refused"
+        );
+
+        let state = matching_on_red_or_blue(AppState::empty());
+        assert_eq!(
+            state.text(),
+            "λx0:[Red: Num | Blue: Bool]. match x0 { Red x1 -> ⦇⦈ | Blue x2 -> ⦇⦈ }",
+            "one arm per constructor, written by the action rather than by the user"
+        );
+        assert_eq!(
+            index_path(&state.edit.zipper),
+            vec![0, 1],
+            "and the cursor lands in the first arm's body"
+        );
+        assert_eq!(
+            type_chars("1", state).text(),
+            "λx0:[Red: Num | Blue: Bool]. match x0 { Red x1 -> 1 | Blue x2 -> ⦇⦈ }"
+        );
+    }
+
+    #[test]
+    fn control_n_adds_an_arm_to_every_match_on_the_same_variant() {
+        let first = matching_on_red_or_blue(AppState::empty());
+        let second = first
+            .apply_actions(&[Action::CreateDefinition])
+            .expect("a second definition");
+        let both = matching_on_red_or_blue(second);
+        assert_eq!(
+            both.edit.render_document(),
+            "main : ? = λx0:[Red: Num | Blue: Bool]. match x0 { Red x1 -> ⦇⦈ | Blue x2 -> ⦇⦈ }\n\
+             def : ? = λx3:[Red: Num | Blue: Bool]. match x3 { Red x4 -> ⦇⦈ | Blue x5 -> ⦇⦈ }"
+        );
+
+        let grown = handle_key(ctrl(KeyCode::Char('n')), both.clone());
+        assert_eq!(
+            grown.edit.render_document(),
+            "main : ? = λx0:[Red: Num | Blue: Bool]. \
+             match x0 { Red x1 -> ⦇⦈ | Blue x2 -> ⦇⦈ | C0 x7 -> ⦇⦈ }\n\
+             def : ? = λx3:[Red: Num | Blue: Bool]. \
+             match x3 { Red x4 -> ⦇⦈ | Blue x5 -> ⦇⦈ | C0 x6 -> ⦇⦈ }",
+            "one key adds the case to every match that answers the same question — each with \
+             its own payload binder, because a binder is an identity and not a name"
+        );
+        assert_eq!(grown.slot, Slot::ConstructorName, "and names it");
+        assert_eq!(
+            grown.actions().len(),
+            both.actions().len() + 1,
+            "in one action, so one C-z takes the whole sweep back"
+        );
+
+        let refused = handle_key(ctrl(KeyCode::Char('d')), both.clone());
+        assert_eq!(
+            refused.edit.render_document(),
+            both.edit.render_document(),
+            "and the arm cannot be dropped while a scrutinee still injects it"
+        );
+        assert_eq!(
+            refused.hint.as_deref(),
+            Some("something still injects this case, so the arm has to stay")
+        );
+    }
+
+    #[test]
+    fn renaming_a_constructor_renames_every_use_of_it_at_once() {
+        let first = matching_on_red_or_blue(AppState::empty());
+        let second = first
+            .apply_actions(&[Action::CreateDefinition])
+            .expect("a second definition");
+        let both = matching_on_red_or_blue(second);
+
+        let slot = handle_key(key(KeyCode::Left), both);
+        assert_eq!(
+            slot.slot,
+            Slot::ConstructorName,
+            "a step left out of an arm's body reaches the case's name"
+        );
+        let renamed = type_chars("Crimson", slot);
+        assert_eq!(
+            renamed.edit.render_document(),
+            "main : ? = λx0:[Crimson: Num | Blue: Bool]. \
+             match x0 { Crimson x1 -> ⦇⦈ | Blue x2 -> ⦇⦈ }\n\
+             def : ? = λx3:[Crimson: Num | Blue: Bool]. \
+             match x3 { Crimson x4 -> ⦇⦈ | Blue x5 -> ⦇⦈ }",
+            "one name run renames the case in both matches and in the type itself, because \
              they are the same identity"
         );
     }

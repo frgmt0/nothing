@@ -9,17 +9,39 @@ magic bytes below.
 A "document" is the three things a saved program needs: the **definitions**,
 the name table, and the action log that produced it.
 
-**Format version 5** (this revision) adds records: two node tags (`Record`,
-`Field`), one `Ty` tag (`Record`), and eight action tags, and nothing else
-— the layout of §3.1 is unchanged from version 2. Versions 1, 2, 3 and 4
+**Format version 6** (this revision) adds variants: two node tags (`Inj`,
+`Match`), one `Ty` tag (`Variant`), and six action tags, and nothing else —
+the layout of §3.1 is unchanged from version 2. Versions 1, 2, 3, 4 and 5
 still open — see §11, which is normative: a migrating reader for every
 previous version ships with every format change from here on.
+
+**Format version 5** added records: two node tags (`Record`, `Field`), one
+`Ty` tag (`Record`), and eight action tags.
 
 **Format version 4** added lists: three node tags (`Nil`, `Cons`, `Fold`),
 one `Ty` tag (`List`), and three action tags.
 
 **Format version 3** added string literals: a node tag, a `Ty` tag, an `Op`
 tag and an action tag.
+
+A `Match` is **the first node that carries two kinds of identity at once**,
+and they are hashed differently. Its payload is the arm list: a varint arm
+count, then that many constructor ids, then that many payload-binder ids;
+its children are the scrutinee followed by the arm bodies in the same order.
+A constructor id is document-global — the same identity in an injection here
+and an arm there — so it hashes raw, exactly like a field id (§6). An arm's
+payload binder binds only that arm's body, so it is pushed on the de-Bruijn
+stack around that body and never reaches the hash, exactly like a lambda's
+binder. That is why the *canonical* payload a `Match` hashes is only its
+first half: the count and the constructor ids, with the binder ids appended
+after it on disk and omitted from the hash. `match e { c x -> x }` and
+`match e { c y -> y }` are therefore the same node, and renaming a
+constructor changes no hash at all.
+
+An `Inj` carries its constructor id as a raw 16-byte payload for the same
+reason, and its payload expression as its one child. There is no separate
+"nullary constructor" encoding: a case that carries nothing carries `{}`,
+which is a `Record` with zero fields (`DECISIONS.md`, 2026-08-29).
 
 A record is **the first node of variable arity**, and it needs no change to
 the framing to be one. Every node table entry has always written a varint
@@ -230,21 +252,26 @@ decode").
 | 15 | `Fold(list, init, step)` | empty | `[list, init, step]` |
 | 16 | `Record(fields)` | a varint field count `n`, then `n` × 16 bytes: the field `id`s in order | the `n` field values, in the same order |
 | 17 | `Field(subject, id)` | 16 bytes: `id` | `[subject]` |
+| 18 | `Inj(ctor, payload)` | 16 bytes: `ctor` | `[payload]` |
+| 19 | `Match(scrutinee, arms)` | a varint arm count `n`, then `n` × 16 bytes: the constructor `id`s in order, then `n` × 16 bytes: the arm payload-binder `id`s in the same order | the scrutinee, then the `n` arm bodies in the same order |
 
-This table is exhaustive over the eighteen `Exp` variants as of Phase B2's
-record feature. Tags 0–11 are unchanged from version 2, tag `12` is the
-version-3 addition, tags `13`–`15` are the version-4 additions, and tags
-`16`–`17` are the version-5 additions.
-If a nineteenth variant is added to `core::exp::Exp`, it gets the next tag
-(`18`) and a row here; a reader must treat an unrecognised tag as a hard
+This table is exhaustive over the twenty `Exp` variants as of Phase B2's
+variant feature. Tags 0–11 are unchanged from version 2, tag `12` is the
+version-3 addition, tags `13`–`15` are the version-4 additions, tags
+`16`–`17` are the version-5 additions, and tags `18`–`19` are the
+version-6 additions.
+If a twenty-first variant is added to `core::exp::Exp`, it gets the next tag
+(`20`) and a row here; a reader must treat an unrecognised tag as a hard
 decode error, not skip it silently (the `payload_len`/`children_count`
 framing lets it skip the *bytes*, but it cannot reconstruct an `Exp` it has
 no variant for).
 
-Tag `16` is the only row whose payload length depends on its child count.
-A decoder must read the varint first and check it against the entry's
-`children_count`; a mismatch is a decode error (`MissingChild`), never a
-truncation to the shorter of the two.
+Tags `16` and `19` are the rows whose payload length depends on their child
+count. A decoder must read the varint first and check it against the entry's
+`children_count` — `n` against `children_count` for `Record`, `n + 1` for
+`Match`, whose children are one scrutinee plus one body per arm; a mismatch
+is a decode error (`MissingChild`), never a truncation to the shorter of the
+two.
 
 #### 5.1 `Ty` encoding
 
@@ -261,6 +288,7 @@ determined entirely by the tag byte):
 | 5 | `Str` | none |
 | 6 | `List(a)` | `Ty(a)` |
 | 7 | `Record(fields)` | a varint field count `n`, then `n` × (16 bytes: the field `id`, then `Ty` of that field) |
+| 8 | `Variant(ctors)` | a varint constructor count `n`, then `n` × (16 bytes: the constructor `id`, then `Ty` of that case's payload) |
 
 #### 5.2 `Op` encoding (1 byte)
 
@@ -451,13 +479,28 @@ log_entry:
 | 35 | `MoveFieldNext` | empty |
 | 36 | `SetField(id)` | 16 bytes |
 | 37 | `SetFieldId(id)` | 16 bytes |
+| 38 | `ConstructInj` | empty |
+| 39 | `ConstructMatch` | empty |
+| 40 | `AddArm` | empty |
+| 41 | `RemoveArm` | empty |
+| 42 | `SetConstructor(id)` | 16 bytes |
+| 43 | `SetArmBinderId(id)` | 16 bytes |
 
-This table is exhaustive over the thirty-eight `Action` variants as of
-format version 5. Tags 0–19 are unchanged from version 1, tags 0–25 from
-version 2, tags 0–26 from version 3 and tags 0–29 from version 4, so an
-older log decodes under the current reader without translation. The same
-rule as §5 applies to a future thirty-ninth variant: next tag, new row,
-hard decode error on an unrecognised tag rather than a silent skip.
+This table is exhaustive over the forty-four `Action` variants as of
+format version 6. Tags 0–19 are unchanged from version 1, tags 0–25 from
+version 2, tags 0–26 from version 3, tags 0–29 from version 4 and tags
+0–37 from version 5, so an older log decodes under the current reader
+without translation. The same rule as §5 applies to a future forty-fifth
+variant: next tag, new row, hard decode error on an unrecognised tag
+rather than a silent skip.
+
+`AddArm` and `RemoveArm` carry no payload for the reason `AddField` and
+`RemoveField` carry none: the identities they mint come from the
+document's fresh-id stream, which the log replays deterministically, and
+the identities they remove are the ones the cursor is already on.
+`SetConstructor` and `SetArmBinderId` do carry an id, because they *point
+at* an identity rather than minting one — exactly the split between
+`AddField` and `SetFieldId`.
 
 Renaming a *field* also uses tag 18, `Rename`, for the same reason
 renaming a definition does: a field's display name is a name-table entry
@@ -551,7 +594,17 @@ open. The reader dispatches on `version_major` in the header (§3):
   them, `bench_list_map.v4.nothing` and `list_sum.v4.nothing`, carry list
   nodes, which are the thing version 4 could express and version 3 could
   not.
-- `0x05` → the current layout in §3.1.
+- `0x05` → the same version-2/§3.1 body layout, minus the tags added in
+  version 6. `store::v5::encode_document_v5` exists for the same reason
+  `encode_document_v4` does — the committed v5 fixtures under
+  `store/fixtures/v5/` contain nothing a version-5 build could not have
+  written — asserted, not assumed, by
+  `store/tests/migration.rs::no_version_five_artifact_contains_a_version_six_form`
+  — so the version-6 reader is exercised against real older bytes. Several
+  of them carry record nodes, which are the thing version 5 could express
+  and version 4 could not, asserted by
+  `a_version_five_artifact_still_carries_the_records_that_made_it_version_five`.
+- `0x06` → the current layout in §3.1.
 - anything else → `DecodeError::UnsupportedVersion`.
 
 A version-1 file is a single expression. It becomes a document with
@@ -571,15 +624,17 @@ hashes are stable. And two people who migrate the *same* v1 file
 independently get the same definition id, so the merge engine matches
 their definitions instead of seeing an add-and-delete pair.
 
-Version 2 → 3, version 3 → 4 and version 4 → 5 need no rewriting at all:
-every earlier node, type, operator and action tag means the same thing
-under the current version, and each new version only added tags the older
-one never wrote. The migration is the header bump, and it happens on save.
+Version 2 → 3, version 3 → 4, version 4 → 5 and version 5 → 6 need no
+rewriting at all: every earlier node, type, operator and action tag means
+the same thing under the current version, and each new version only added
+tags the older one never wrote. The migration is the header bump, and it
+happens on save.
 
 Migration is read-only and lossless in the direction that matters: the
 name table and the action log carry across untouched (§8's tags 0–19 are
-version-stable across all five versions, 20–25 across the last four, 26–29
-across the last two, and 30–37 are new in version 5),
+version-stable across all six versions, 20–25 across the last five, 26–29
+across the last three, 30–37 across the last two, and 38–43 are new in
+version 6),
 and the expression is byte-identical after re-encoding as the single
 definition's node table. There is no downgrading writer; saving a migrated
 file writes the current version, and the older bytes on disk are only

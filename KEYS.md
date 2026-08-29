@@ -46,12 +46,15 @@ without them.
 | `Lam` | binder **name** | **annotation** | body |
 | `Let` | binder **name** | bound expression | body |
 | `Record` | field 0's **name** | field 0's value | field 1's **name**, … |
+| `Match` | scrutinee | arm 0's **constructor** | arm 0's **binder**, arm 0's body, … |
 | everything else | child 0 | child 1 | child 2 |
 
-The `Record` row is the only one with no fixed width: a record has as many
-fields as it has, and its editor-level child list is `name₀ value₀ name₁
-value₁ …`. It is still the same table — a name slot beside the thing it
-names — and `←`/`→` walk it in that order.
+The `Record` and `Match` rows are the ones with no fixed width: a record has as
+many fields as it has and a match as many arms as its variant has constructors,
+so their editor-level child lists are `name₀ value₀ name₁ value₁ …` and
+`scrutinee ctor₀ binder₀ body₀ ctor₁ binder₁ body₁ …`. It is still the same
+table — a name slot beside the thing it names — and `←`/`→` walk it in that
+order.
 
 Since Phase B1 a program is a *document* of named top-level definitions, and
 the definition itself is the outermost row of that table: `↑` off the root of
@@ -105,6 +108,8 @@ IN A BINDER-NAME SLOT                        ;      let ⦇⦈ = e in ⦇⦈    
   .   → body                                 !      quarantine  ⦇e⦈   …NonEmptyHole
                                              {      record  {f = e}  ConstructRecord
                                              .      field   e.f     ConstructField
+                                             `      inject  `C0 e   ConstructInj
+                                             |      match   match e {…}  …Match
 
 IN AN ANNOTATION SLOT (re-issues SetAnn)  HOLES & HISTORY
   n Num  b Bool  s Str  ? unknown           Bksp  run: un-type one char ·
@@ -131,10 +136,21 @@ IN A FIELD SLOT  (reached by ← from a field's value, or opened by `.`)
   a-zA-Z0-9_  on a record's field: name it            Rename
               on a projection: pick the field, ranked SetField
   =   → the field's value        anything else  exit → the node, reprocess
+
+VARIANTS  (a match's arms are the third list a cursor can be inside, so C-n /
+  C-d address an arm there, a field in a record, and a definition elsewhere)
+  C-n  one more constructor: a hole arm in every match on it   AddArm
+  C-d  drop this arm (refused while the scrutinee still needs it)  RemoveArm
+
+IN A CONSTRUCTOR SLOT  (reached by ← from an arm's body, or opened by `` ` ``)
+  a-zA-Z0-9_  on a match arm: name the constructor    Rename
+              on an injection: pick it, ranked        SetConstructor
+  =   → the payload / the arm's body
+                                 anything else  exit → the node, reprocess
 ```
 
-44 bindings. Deliberately unbound and held in reserve for Phase 6+:
-`( ) } | ^ % $ # @ ' >` outside the slots, and `` ` ``.
+46 bindings. Deliberately unbound and held in reserve for Phase 6+:
+`( ) } ^ % $ # @ ' >` outside the slots.
 
 `&` rather than a doubled `+`: `++` cannot be two keystrokes, because the
 first `+` would already have committed an addition, and a key whose meaning
@@ -164,6 +180,8 @@ is not a context because it is a pure function of the focused node.
 | **`:`** | wrap: `⦇⦈ :: ⦇⦈` | focused `Lam`: → its annotation slot; else climb, then wrap `e :: ⦇⦈` | climb, then wrap | end run, then as B | no-op | → annotation slot (`Lam` only) | descend, then as inner | append the character |
 | **`{`** | `{f = ⦇⦈}`, cursor in the field slot | wrap: `{f = e}`, cursor in the field slot | wrap: `{f = n}` | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
 | **`.`** | `⦇⦈.f`, field slot opens | wrap: `e.f`, field slot opens (never climbs) | wrap: `⦇n⦈.f` (quarantined) | end run, then as B | → body slot | → body slot | descend, then as inner | append the character |
+| **`` ` ``** | `` `C0 ⦇⦈ ``, constructor slot opens | wrap: `` `C0 e ``, constructor slot opens | wrap: `` `C0 n `` | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`\|`** | `match ⦇⦈ {}`, cursor on the scrutinee | wrap: `match e {…}`, one hole arm per constructor | wrap: `match ⦇n⦈ {}` | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
 | **anything else** | no-op, status-line hint | no-op, hint | no-op, hint | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | printable: append; otherwise close the run, reprocess |
 
 Five rules generalise the table:
@@ -319,6 +337,7 @@ things can decline, each with visible feedback:
 | definition annotation slot (`SetDefAnn`) | the annotation would break this definition's body, or a *caller's* — a definition's type is the only thing its callers know about it | slot stays open, status line says why |
 | `C-d` (`DeleteDefinition`) | there is one definition left | "a document keeps at least one definition" |
 | `.` (`ConstructField`) | the document has no field to name — a field is an identity, not a string, so there is nothing to project | "`.` projects a field; this document has none yet" |
+| `C-d` (`RemoveArm`) | some scrutinee still injects this constructor — a match with a missing arm is not a program this editor can hold | "this match still has to answer for that constructor" |
 
 The binder-name slot used to be a third row, declining a name that would
 capture or orphan a reference (settled item 13, `FRICTION.md` #7). Phase 5
@@ -497,7 +516,11 @@ the same reason it was worst in Phase 3 (deep nesting, four binders).
 | `AddField` | `C-n` with the cursor in a record | `RemoveField` | `C-d` with the cursor in a record |
 | `ConstructField(Id)` | `.` | `SetField(Id)` | typing in the field slot `.` opened |
 | `MoveFieldPrev` | `C-←` | `MoveFieldNext` | `C-→` |
-| `Rename(Id, String)` of a **field** | typing in the field slot `←` reaches | | |
+| `Rename(Id, String)` of a **field** | typing in the field slot `←` reaches | `ConstructInj` | `` ` `` |
+| `ConstructMatch` | `\|` | `SetConstructor(Id)` | typing in the constructor slot `` ` `` opened |
+| `AddArm` | `C-n` with the cursor in a match | `RemoveArm` | `C-d` with the cursor in a match arm |
+| `Rename(Id, String)` of a **constructor** | typing in the constructor slot `←` reaches | `SetArmBinderId(Id)` | no binding: an arm's payload binder is minted by `AddArm` and named by `Rename`, so the keyboard never sets its identity (the protocol has it by name) |
+| `SetConstructor(Id)` re-aiming an **arm** | no binding: the same reason — an arm's case is minted by `AddArm`; the protocol has it, the keyboard does not | | |
 
 Editor-level, backed by the action log: `Tab`/`S-Tab` (next/previous hole,
 either kind), undo as truncate-and-replay **per keystroke** (one `C-z` undoes
@@ -856,6 +879,88 @@ Item 19 is dated **2026-08-29** and belongs to Phase B2's third feature.
    contexts contains a record for `.` to name a field of — which is item
    19(e) showing up in the matrix rather than being argued for).
 
+Item 20 is dated **2026-08-29** and belongs to Phase B2's fourth and last
+feature.
+
+20. **Variants cost the last two reserved punctuation keys, and `C-n`/`C-d`
+   generalise a third time.** A match is the first form whose *shape* the editor
+   maintains rather than the user, so the keys had to be about constructors, not
+   about arms.
+   **(a)** `` ` `` is **inject**, the last character in the reserve list and the
+   tag marker OCaml's polymorphic variants already spell it with. Reading down
+   its row of the matrix, five of its eight cells said "no-op, hint"; those are
+   the five that now build an injection, and no cell that already meant
+   something changed. Like `{` it leaves the cursor in a *name* slot rather than
+   in the payload, because the first thing you know about a case is what it is
+   called; and like `{` it reads the expectation before it mints anything —
+   where a variant type is expected it adopts that variant's first constructor,
+   and only where none is expected does it mint `C0`. A fresh constructor is a
+   fresh identity, and a fresh identity is never consistent with a variant the
+   context already knows, so a `` ` `` that always minted would be quarantined
+   the instant it landed anywhere that knew what it wanted (item 19(f), the same
+   argument, found the same way).
+   **(b)** `|` is **match**, taken from the reserve list because it is the
+   character the projection itself prints between the arms. `m` was the obvious
+   candidate and is rejected for the reason no letter is ever a verb here: `m`
+   starts a name run, and `main` is the name every document has. `|` climbs at
+   `PREC_BINDER` — a match extends as far right as its last arm's closing brace,
+   which is to say it does not extend at all, being delimited — so in practice
+   the climb rule never fires for it and `1 + 2` then `|` gives
+   `match ⦇1 + 2⦈ {}`, wrapping the whole sum rather than just its right operand,
+   which is what "match on this" has to mean — quarantined, because a number is
+   not a variant and the editor says so rather than refusing the key. A
+   scrutinee that *is* a variant is not parenthesised unless it is bigger than
+   an atom: the scrutinee is projected at `PREC_ATOM`, which is what keeps
+   `match e { … }` unambiguous when `e` is an application.
+   **(c)** `C-n` and `C-d` **generalise a third time**, and the third reading is
+   the one that finally names the rule: they add and drop one row of the
+   innermost list the cursor is in — an arm inside a match, a field inside a
+   record, a definition anywhere else. In a match `C-n` is `AddArm`, which is
+   the *only* way to add a constructor to a variant, and it is deliberately not
+   local: it appends a hole arm to the focused match **and to every other match
+   in the document whose arm set is the same one**, in a single action and a
+   single log entry, exactly as `C-d` on a field quarantines every projection of
+   it (item 19(c), `DECISIONS.md`, 2026-08-29). That is what makes
+   exhaustiveness hold by construction rather than by warning: the arm exists
+   before the constructor it names can be injected anywhere. `C-d` in an arm is
+   `RemoveArm`, the same sweep in reverse, and it is refused — with a hint —
+   whenever any match's scrutinee still injects that constructor, because
+   removing the arm would leave a match that could not answer.
+   **(d)** The constructor slot is **one slot to the reader and two flavours to
+   the implementation**, byte for byte the field slot's split (item 19(d)) and
+   forced by the same fact: an injection can be an arm's body, so the cursor
+   alone cannot say which constructor the slot is about. `←` from an arm's body
+   opens the **rename** flavour — the buffer *is* the constructor's display name
+   and every keystroke is `Rename(ctor, buffer)`, so one keystroke renames it at
+   every injection and every arm in the document. `` ` `` opens the **pick**
+   flavour — every keystroke is `SetConstructor(id)`, ranked over the
+   constructors of the variant expected here, then over every other constructor
+   in the document. `=` leaves either flavour for the payload or the arm's body.
+   `SetConstructor` itself reads *both* positions — on an injection it re-aims
+   the injection, and with the cursor in an arm it re-aims the arm — but only
+   the injection reading has a key. Re-aiming an arm is how the protocol says
+   "this case is that identity", which is `SetFieldId`'s job on a record and
+   what makes a match with dead arms reachable at all
+   (`action/tests/reachability.rs`); at the keyboard it would be a way to break
+   a match by hand, and it is refused the moment it would
+   (`exhaustive.rs::an_arm_can_be_re_aimed_at_another_case_but_never_off_one_the_scrutinee_injects`).
+   **(e)** Nothing else was needed, and three candidates were talked out of.
+   There is **no arm-reordering pair** to match `C-←`/`C-→` on fields: a record's
+   field order is observable (it is the order the projection prints and the
+   thing `ReorderFields` merges), and an arm's order is not — the arms of a
+   match are looked up by constructor, so reordering them is a no-op the merge
+   layer would have to invent a reason to care about. There is **no key for the
+   arm's payload binder**, because `Tab` already walks into the arm bodies and
+   the binder is named through the ordinary binder-name slot. And there is **no
+   `SetArmBinderId` binding**: `AddArm` mints the binder, `Rename` names it, and
+   the keyboard has never set an identity it did not mint.
+   Pinned by `keys::tests::a_backtick_injects_and_lands_in_the_constructor_slot`,
+   `keys::tests::a_bar_writes_a_match_with_one_arm_per_constructor`,
+   `keys::tests::control_n_adds_an_arm_to_every_match_on_the_same_variant`,
+   `keys::tests::renaming_a_constructor_renames_every_use_of_it_at_once`,
+   `complete::tests::the_constructors_of_the_expected_variant_outrank_the_rest_of_the_document`,
+   and the two new rows of all eight columns of `tui/tests/matrix.rs`.
+
 Measured, replacing the predicted table's middle column (`tui/tests/keys/`,
 one keystroke per line). The 2026-08-28 column is the definition era: the
 programs are documents now, and `factorial` and `record` were rebuilt to say
@@ -866,7 +971,7 @@ what they always meant rather than what Phase 1 could express.
 | 1 | factorial | 84 | 28 | 33 | 0.33× | 16 / 0.19× |
 | 2 | list_map | 114 | 44 | 53 | 0.39× | 29 / 0.25× |
 | 3 | record | 65 | 50 | 43 | 0.77× | 33 / 0.51× |
-| 4 | state_machine | 151 | 24 | 33 | 0.16× | unchanged |
+| 4 | state_machine | 151 | 41 | 53 | 0.27× | 24 / 0.16× |
 | 5 | nested_conditional | 146 | 31 | 42 | 0.21× | unchanged |
 | 6 | greeting | 127 | 52 | 56 | 0.41× | new (2026-08-29) |
 
@@ -887,6 +992,20 @@ that walk the cursor out of the record before `C-n` means "new definition"
 rather than "new field" (item 19(c)). The annotations got *shorter*, which
 is not a saving — a record type is never spelled, so two positions the pair
 fixture typed as `Num * Num` are holes.
+
+Row 4 changed on 2026-08-29 when variants arrived, and it is the largest of
+these upgrades: the fixture had faked a three-case state machine with a chain
+of equality tests on the numeric codes 0/1/2 since Phase 0, and now writes the
+match the reference text actually describes. 24 keystrokes became 41 and the
+ratio went from 0.16× to 0.27×, which is the price of three cases that are
+identities rather than magic numbers. 18 of the 41 are the three constructor
+names, which no projection can make cheaper; the whole of the rest — the
+lambda, the match, the three arms, the three injections and their `{}`
+payloads — is 23. The state-machine projection reads a match now
+(`state_machine::tests::recognizes_the_reference_state_machine`), and still
+reads the old if-chain (`…::the_chain_of_equality_tests_is_still_a_state_machine`),
+because a program someone wrote before variants existed does not stop being a
+state machine.
 
 Row 6 arrived with strings on 2026-08-29 and is the first reference whose
 cost is mostly *content*: 27 of its 52 keystrokes are the characters and

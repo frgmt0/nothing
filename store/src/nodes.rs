@@ -197,6 +197,38 @@ fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32
             let idx = push_entry(table, hash, 17, payload, vec![subject_idx]);
             (idx, hash)
         }
+        Exp::Inj(ctor, payload) => {
+            let (payload_idx, payload_hash) = build_rec(payload, stack, table);
+            let mut payload_bytes = Vec::new();
+            write_id(&mut payload_bytes, *ctor);
+            let hash = hash_node(18, &payload_bytes, &[payload_hash]);
+            let idx = push_entry(table, hash, 18, payload_bytes, vec![payload_idx]);
+            (idx, hash)
+        }
+        Exp::Match(scrutinee, arms) => {
+            let (scrutinee_idx, scrutinee_hash) = build_rec(scrutinee, stack, table);
+            let mut child_idxs = vec![scrutinee_idx];
+            let mut child_hashes = vec![scrutinee_hash];
+            for (_, binder, body) in arms {
+                stack.push(*binder);
+                let (idx, hash) = build_rec(body, stack, table);
+                stack.pop();
+                child_idxs.push(idx);
+                child_hashes.push(hash);
+            }
+            let mut canon = Vec::new();
+            crate::codec::write_varint(&mut canon, arms.len() as u64);
+            for (ctor, _, _) in arms {
+                write_id(&mut canon, *ctor);
+            }
+            let hash = hash_node(19, &canon, &child_hashes);
+            let mut payload = canon;
+            for (_, binder, _) in arms {
+                write_id(&mut payload, *binder);
+            }
+            let idx = push_entry(table, hash, 19, payload, child_idxs);
+            (idx, hash)
+        }
         Exp::EmptyHole(h) => {
             let hash = hash_node(10, &[], &[]);
             let mut payload = Vec::new();
@@ -333,6 +365,28 @@ fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
             let subject = decode_child(entries, entry, 0)?;
             Ok(Exp::field(subject, id))
         }
+        18 => {
+            let ctor = read_id(&entry.payload, &mut pos)?;
+            let payload = decode_child(entries, entry, 0)?;
+            Ok(Exp::inj(ctor, payload))
+        }
+        19 => {
+            let count = crate::codec::read_varint(&entry.payload, &mut pos)? as usize;
+            if count + 1 != entry.children.len() {
+                return Err(DecodeError::MissingChild);
+            }
+            let mut ctors = Vec::with_capacity(count);
+            for _ in 0..count {
+                ctors.push(read_id(&entry.payload, &mut pos)?);
+            }
+            let scrutinee = decode_child(entries, entry, 0)?;
+            let mut arms = Vec::with_capacity(count);
+            for (which, ctor) in ctors.into_iter().enumerate() {
+                let binder = read_id(&entry.payload, &mut pos)?;
+                arms.push((ctor, binder, decode_child(entries, entry, which + 1)?));
+            }
+            Ok(Exp::Match(Box::new(scrutinee), arms))
+        }
         10 => {
             let h = read_hole_id(&entry.payload, &mut pos)?;
             Ok(Exp::empty_hole(h))
@@ -451,6 +505,55 @@ mod tests {
             Exp::record([]),
             Exp::record([(x, Exp::num(1))]),
             Exp::field(Exp::record([(x, Exp::num(1)), (y, Exp::str_("hi"))]), y),
+        ] {
+            let table = build_node_table(&e);
+            assert_eq!(decode_node_table(&table).unwrap(), e);
+        }
+    }
+
+    #[test]
+    fn a_constructor_is_an_identity_and_an_arm_binder_is_a_position() {
+        let red = Id::from_u128(1);
+        let green = Id::from_u128(2);
+        let x = Id::from_u128(3);
+        let y = Id::from_u128(4);
+
+        assert_ne!(
+            content_hash(&Exp::inj(red, Exp::num(1))),
+            content_hash(&Exp::inj(green, Exp::num(1))),
+            "a constructor is a document-global identity, so it hashes raw"
+        );
+
+        let scrutinee = Exp::inj(red, Exp::num(1));
+        let with_x = Exp::match_(scrutinee.clone(), [(red, x, Exp::var(x))]);
+        let with_y = Exp::match_(scrutinee.clone(), [(red, y, Exp::var(y))]);
+        assert_ne!(with_x, with_y);
+        assert_eq!(
+            content_hash(&with_x),
+            content_hash(&with_y),
+            "an arm binder binds only its own body, so it canonicalises like a lambda's"
+        );
+
+        assert_ne!(
+            content_hash(&with_x),
+            content_hash(&Exp::match_(scrutinee, [(green, x, Exp::var(x))])),
+            "which constructor an arm answers for is structure"
+        );
+    }
+
+    #[test]
+    fn an_injection_and_a_match_round_trip_through_the_node_table() {
+        let red = Id::from_u128(1);
+        let green = Id::from_u128(2);
+        let x = Id::from_u128(3);
+        let y = Id::from_u128(4);
+        for e in [
+            Exp::inj(red, Exp::unit()),
+            Exp::match_(Exp::empty_hole(HoleId::from_u128(0)), []),
+            Exp::match_(
+                Exp::inj(red, Exp::num(1)),
+                [(red, x, Exp::var(x)), (green, y, Exp::num(0))],
+            ),
         ] {
             let table = build_node_table(&e);
             assert_eq!(decode_node_table(&table).unwrap(), e);

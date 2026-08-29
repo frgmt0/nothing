@@ -22,6 +22,8 @@ pub enum Dyn {
     Fold(Box<Dyn>, Box<Dyn>, Box<Dyn>),
     Record(Vec<(Id, Dyn)>),
     Field(Box<Dyn>, Id),
+    Inj(Id, Box<Dyn>),
+    Match(Box<Dyn>, Vec<(Id, Id, Dyn)>),
 
     EmptyHole(HoleId, Env),
     NonEmptyHole(HoleId, Env, Box<Dyn>),
@@ -82,6 +84,18 @@ pub fn elaborate_in(exp: &Exp, sigma: &Env) -> Dyn {
                 .collect(),
         ),
         Exp::Field(subject, id) => Dyn::Field(Box::new(elaborate_in(subject, sigma)), *id),
+        Exp::Inj(ctor, payload) => Dyn::Inj(*ctor, Box::new(elaborate_in(payload, sigma))),
+        Exp::Match(scrutinee, arms) => {
+            let scrutinee = elaborate_in(scrutinee, sigma);
+            let arms = arms
+                .iter()
+                .map(|(ctor, binder, body)| {
+                    let inner = sigma.update(*binder, Dyn::Var(*binder));
+                    (*ctor, *binder, elaborate_in(body, &inner))
+                })
+                .collect();
+            Dyn::Match(Box::new(scrutinee), arms)
+        }
         Exp::EmptyHole(h) => Dyn::EmptyHole(*h, sigma.clone()),
         Exp::NonEmptyHole(h, inner) => {
             Dyn::NonEmptyHole(*h, sigma.clone(), Box::new(elaborate_in(inner, sigma)))
@@ -139,6 +153,19 @@ pub fn subst(x: Id, v: &Dyn, d: &Dyn) -> Dyn {
                 .collect(),
         ),
         Dyn::Field(subject, id) => Dyn::Field(Box::new(subst(x, v, subject)), *id),
+        Dyn::Inj(ctor, payload) => Dyn::Inj(*ctor, Box::new(subst(x, v, payload))),
+        Dyn::Match(scrutinee, arms) => Dyn::Match(
+            Box::new(subst(x, v, scrutinee)),
+            arms.iter()
+                .map(|(ctor, binder, body)| {
+                    if *binder == x {
+                        (*ctor, *binder, body.clone())
+                    } else {
+                        (*ctor, *binder, subst(x, v, body))
+                    }
+                })
+                .collect(),
+        ),
         Dyn::EmptyHole(h, env) => Dyn::EmptyHole(*h, subst_env(x, v, env)),
         Dyn::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, subst_env(x, v, env), Box::new(subst(x, v, inner)))
@@ -155,6 +182,7 @@ pub fn is_value(d: &Dyn) -> bool {
         Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::Nil => true,
         Dyn::Pair(fst, snd) | Dyn::Cons(fst, snd) => is_value(fst) && is_value(snd),
         Dyn::Record(fields) => fields.iter().all(|(_, value)| is_value(value)),
+        Dyn::Inj(_, payload) => is_value(payload),
         _ => false,
     }
 }
@@ -190,6 +218,13 @@ pub fn to_exp(d: &Dyn) -> Exp {
                 .collect(),
         ),
         Dyn::Field(subject, id) => Exp::Field(Box::new(to_exp(subject)), *id),
+        Dyn::Inj(ctor, payload) => Exp::Inj(*ctor, Box::new(to_exp(payload))),
+        Dyn::Match(scrutinee, arms) => Exp::Match(
+            Box::new(to_exp(scrutinee)),
+            arms.iter()
+                .map(|(ctor, binder, body)| (*ctor, *binder, to_exp(body)))
+                .collect(),
+        ),
         Dyn::EmptyHole(h, _) => Exp::EmptyHole(*h),
         Dyn::NonEmptyHole(h, _, inner) => Exp::NonEmptyHole(*h, Box::new(to_exp(inner))),
     }
@@ -202,10 +237,15 @@ pub fn render(d: &Dyn, names: &NameTable) -> String {
 pub fn size(d: &Dyn) -> usize {
     match d {
         Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::EmptyHole(..) => 1,
-        Dyn::Lam(_, _, b) | Dyn::Proj(_, b) | Dyn::Field(b, _) | Dyn::NonEmptyHole(_, _, b) => {
-            1 + size(b)
-        }
+        Dyn::Lam(_, _, b)
+        | Dyn::Proj(_, b)
+        | Dyn::Field(b, _)
+        | Dyn::Inj(_, b)
+        | Dyn::NonEmptyHole(_, _, b) => 1 + size(b),
         Dyn::Record(fields) => 1 + fields.iter().map(|(_, value)| size(value)).sum::<usize>(),
+        Dyn::Match(scrutinee, arms) => {
+            1 + size(scrutinee) + arms.iter().map(|(_, _, body)| size(body)).sum::<usize>()
+        }
         Dyn::Ap(a, b)
         | Dyn::BinOp(_, a, b)
         | Dyn::Let(_, a, b)

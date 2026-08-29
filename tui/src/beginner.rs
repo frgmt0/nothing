@@ -59,6 +59,37 @@ pub fn phrase(exp: &Exp, names: &NameTable) -> String {
         Exp::Field(subject, id) => {
             format!("the {} of {}", names.display(*id), phrase(subject, names))
         }
+        Exp::Inj(ctor, payload) => inj_phrase(*ctor, &phrase(payload, names), names),
+        Exp::Match(scrutinee, arms) => {
+            let parts: Vec<String> = arms
+                .iter()
+                .map(|(ctor, binder, body)| arm_phrase(*ctor, *binder, &phrase(body, names), names))
+                .collect();
+            match_phrase(&phrase(scrutinee, names), &parts)
+        }
+    }
+}
+
+fn inj_phrase(ctor: Id, payload: &str, names: &NameTable) -> String {
+    if payload == record_phrase(&[]) {
+        return format!("{} carrying nothing", names.display(ctor));
+    }
+    format!("{} carrying {payload}", names.display(ctor))
+}
+
+fn arm_phrase(ctor: Id, binder: Id, body: &str, names: &NameTable) -> String {
+    format!(
+        "when it is {} {}: {body}",
+        names.display(ctor),
+        names.display(binder)
+    )
+}
+
+fn match_phrase(scrutinee: &str, arms: &[String]) -> String {
+    match arms.split_last() {
+        None => format!("looking at {scrutinee}, which has no cases yet"),
+        Some((last, [])) => format!("looking at {scrutinee}, {last}"),
+        Some((last, rest)) => format!("looking at {scrutinee}, {}, and {last}", rest.join(", ")),
     }
 }
 
@@ -105,6 +136,11 @@ pub fn ty_phrase(ty: &Ty) -> String {
             0 => "a record with no fields".to_string(),
             1 => "a record with 1 field".to_string(),
             n => format!("a record with {n} fields"),
+        },
+        Ty::Variant(ctors) => match ctors.len() {
+            0 => "a choice with no cases".to_string(),
+            1 => "a choice with 1 case".to_string(),
+            n => format!("a choice between {n} cases"),
         },
     }
 }
@@ -176,6 +212,25 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
             record_phrase(&parts)
         }
         Frame::FieldSubject(id) => format!("the {} of {child}", names.display(*id)),
+        Frame::InjPayload(ctor) => inj_phrase(*ctor, child, names),
+        Frame::MatchScrutinee(arms) => {
+            let parts: Vec<String> = arms
+                .iter()
+                .map(|(ctor, binder, body)| arm_phrase(*ctor, *binder, &phrase(body, names), names))
+                .collect();
+            match_phrase(child, &parts)
+        }
+        Frame::MatchArm(scrutinee, others, index, ctor, binder) => {
+            let mut parts: Vec<String> = others
+                .iter()
+                .map(|(other, other_binder, body)| {
+                    arm_phrase(*other, *other_binder, &phrase(body, names), names)
+                })
+                .collect();
+            let here = arm_phrase(*ctor, *binder, child, names);
+            parts.insert((*index).min(parts.len()), here);
+            match_phrase(&phrase(scrutinee, names), &parts)
+        }
     }
 }
 
@@ -347,7 +402,10 @@ mod tests {
             .expect("the embedded state machine fixture must replay cleanly");
         assert_eq!(
             phrase(&replayed.exp(), &replayed.names),
-            "a function taking x0 (a number) and returning if whether x0 equals 0 then 1 otherwise if whether x0 equals 1 then 2 otherwise 0"
+            "a function taking s (an unknown type) and returning looking at s, \
+             when it is Idle x0: Running carrying nothing, \
+             when it is Running x1: Stopped carrying nothing, \
+             and when it is Stopped x2: Idle carrying nothing"
         );
     }
 

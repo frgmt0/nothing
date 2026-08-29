@@ -311,8 +311,8 @@ fn entry_line(state: &AppState) -> Option<String> {
 }
 
 pub fn key_line() -> &'static str {
-    "↑↓←→ move · Tab hole · 0-9a-z\" lit · +-*<=&: op · space\\?;,[]/!{. form · :. slot · \
-     Enter fit · C-↑↓ defs · C-n/d add/drop · C-l/t name/ty · C-z undo · C-q quit"
+    "↑↓←→ move · Tab hole · 0-9a-z\" lit · +-*<=&: op · space\\?;,[]/!{`| form · :.` slot · \
+     Enter fit · C-↑↓ defs · C-n/d ±row · C-l/t name/ty · C-z undo · C-q quit"
 }
 
 fn focus_label(exp: &Exp) -> &'static str {
@@ -333,6 +333,8 @@ fn focus_label(exp: &Exp) -> &'static str {
         Exp::Fold(..) => "fold",
         Exp::Record(..) => "record",
         Exp::Field(..) => "field projection",
+        Exp::Inj(..) => "injection",
+        Exp::Match(..) => "match",
         Exp::EmptyHole(_) => "empty hole",
         Exp::NonEmptyHole(..) => "quarantined ⦇e⦈",
     }

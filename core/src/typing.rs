@@ -2,7 +2,7 @@ use crate::ctx::Ctx;
 use crate::exp::{Exp, Id, Op, Side};
 use crate::ty::{
     Ty, is_consistent, matched_arrow, matched_list, matched_prod, matched_record,
-    matched_record_fields,
+    matched_record_fields, matched_variant, variant_constructors,
 };
 
 pub fn fields_are_distinct(ids: &[Id]) -> bool {
@@ -68,7 +68,37 @@ pub fn join(a: &Ty, b: &Ty) -> Option<Ty> {
             }
             Some(Ty::Record(fields))
         }
+        (Ty::Variant(a), Ty::Variant(b)) => {
+            let mut ctors = Vec::with_capacity(a.len() + b.len());
+            for (id, left) in a {
+                match b.iter().find(|(other, _)| other == id) {
+                    Some((_, right)) => ctors.push((*id, join(left, right)?)),
+                    None => ctors.push((*id, left.clone())),
+                }
+            }
+            for (id, right) in b {
+                if !a.iter().any(|(other, _)| other == id) {
+                    ctors.push((*id, right.clone()));
+                }
+            }
+            Some(Ty::Variant(ctors))
+        }
         _ => None,
+    }
+}
+
+pub fn arm_payload_ty(scrutinee_ty: &Ty, ctor: Id) -> Ty {
+    matched_variant(scrutinee_ty, ctor).unwrap_or(Ty::Hole)
+}
+
+fn arms_cover(scrutinee_ty: &Ty, arms: &[(Id, Id, Exp)]) -> bool {
+    let ids: Vec<Id> = arms.iter().map(|(ctor, _, _)| *ctor).collect();
+    if !fields_are_distinct(&ids) {
+        return false;
+    }
+    match variant_constructors(scrutinee_ty) {
+        Some(required) => required.iter().all(|ctor| ids.contains(ctor)),
+        None => false,
     }
 }
 
@@ -77,6 +107,55 @@ pub fn step_ty(elem: &Ty, acc: &Ty) -> Ty {
         Box::new(elem.clone()),
         Box::new(Ty::Arrow(Box::new(acc.clone()), Box::new(acc.clone()))),
     )
+}
+
+fn syn_cons(ctx: &Ctx, head: &Exp, tail: &Exp) -> Option<Ty> {
+    let tail_ty = syn(ctx, tail)?;
+    let from_tail = matched_list(&tail_ty)?;
+    let head_ty = syn(ctx, head)?;
+    let elem = join(&head_ty, &from_tail)?;
+    if ana(ctx, tail, &Ty::List(Box::new(elem.clone()))) {
+        Some(Ty::List(Box::new(elem)))
+    } else {
+        None
+    }
+}
+
+fn syn_fold(ctx: &Ctx, list: &Exp, init: &Exp, step: &Exp) -> Option<Ty> {
+    let list_ty = syn(ctx, list)?;
+    let elem = matched_list(&list_ty)?;
+    let acc = syn(ctx, init)?;
+    if ana(ctx, step, &step_ty(&elem, &acc)) {
+        Some(acc)
+    } else {
+        None
+    }
+}
+
+fn syn_record(ctx: &Ctx, fields: &[(Id, Exp)]) -> Option<Ty> {
+    let ids: Vec<Id> = fields.iter().map(|(id, _)| *id).collect();
+    if !fields_are_distinct(&ids) {
+        return None;
+    }
+    let mut tys = Vec::with_capacity(fields.len());
+    for (id, e) in fields {
+        tys.push((*id, syn(ctx, e)?));
+    }
+    Some(Ty::Record(tys))
+}
+
+fn syn_match(ctx: &Ctx, scrutinee: &Exp, arms: &[(Id, Id, Exp)]) -> Option<Ty> {
+    let scrutinee_ty = syn(ctx, scrutinee)?;
+    if !arms_cover(&scrutinee_ty, arms) {
+        return None;
+    }
+    let mut result = Ty::Hole;
+    for (ctor, binder, body) in arms {
+        let payload = arm_payload_ty(&scrutinee_ty, *ctor);
+        let body_ty = syn(&ctx.extend(*binder, payload), body)?;
+        result = join(&result, &body_ty)?;
+    }
+    Some(result)
 }
 
 pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
@@ -142,45 +221,23 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
 
         Exp::Nil => Some(Ty::List(Box::new(Ty::Hole))),
 
-        Exp::Cons(head, tail) => {
-            let tail_ty = syn(ctx, tail)?;
-            let from_tail = matched_list(&tail_ty)?;
-            let head_ty = syn(ctx, head)?;
-            let elem = join(&head_ty, &from_tail)?;
-            if ana(ctx, tail, &Ty::List(Box::new(elem.clone()))) {
-                Some(Ty::List(Box::new(elem)))
-            } else {
-                None
-            }
-        }
+        Exp::Cons(head, tail) => syn_cons(ctx, head, tail),
 
-        Exp::Fold(list, init, step) => {
-            let list_ty = syn(ctx, list)?;
-            let elem = matched_list(&list_ty)?;
-            let acc = syn(ctx, init)?;
-            if ana(ctx, step, &step_ty(&elem, &acc)) {
-                Some(acc)
-            } else {
-                None
-            }
-        }
+        Exp::Fold(list, init, step) => syn_fold(ctx, list, init, step),
 
-        Exp::Record(fields) => {
-            let ids: Vec<Id> = fields.iter().map(|(id, _)| *id).collect();
-            if !fields_are_distinct(&ids) {
-                return None;
-            }
-            let mut tys = Vec::with_capacity(fields.len());
-            for (id, e) in fields {
-                tys.push((*id, syn(ctx, e)?));
-            }
-            Some(Ty::Record(tys))
-        }
+        Exp::Record(fields) => syn_record(ctx, fields),
 
         Exp::Field(subject, field) => {
             let subject_ty = syn(ctx, subject)?;
             matched_record(&subject_ty, *field)
         }
+
+        Exp::Inj(ctor, payload) => {
+            let payload_ty = syn(ctx, payload)?;
+            Some(Ty::Variant(vec![(*ctor, payload_ty)]))
+        }
+
+        Exp::Match(scrutinee, arms) => syn_match(ctx, scrutinee, arms),
 
         Exp::EmptyHole(_) => Some(Ty::Hole),
 
@@ -250,6 +307,28 @@ pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
                     .all(|((_, e), want)| ana(ctx, e, want)),
                 None => false,
             }
+        }
+
+        Exp::Inj(ctor, payload) => match ty {
+            Ty::Hole => syn(ctx, payload).is_some(),
+            Ty::Variant(ctors) => match ctors.iter().find(|(id, _)| id == ctor) {
+                Some((_, want)) => ana(ctx, payload, want),
+                None => syn(ctx, payload).is_some(),
+            },
+            _ => false,
+        },
+
+        Exp::Match(scrutinee, arms) => {
+            let Some(scrutinee_ty) = syn(ctx, scrutinee) else {
+                return false;
+            };
+            if !arms_cover(&scrutinee_ty, arms) {
+                return false;
+            }
+            arms.iter().all(|(ctor, binder, body)| {
+                let payload = arm_payload_ty(&scrutinee_ty, *ctor);
+                ana(&ctx.extend(*binder, payload), body, ty)
+            })
         }
 
         _ => match syn(ctx, exp) {
@@ -751,5 +830,196 @@ mod tests {
             Exp::record([(fx(), Exp::bool_(true))]),
         );
         assert_eq!(syn(&Ctx::empty(), &mismatched), None);
+    }
+
+    fn red() -> Id {
+        Id::from_u128(0xc1)
+    }
+
+    fn green() -> Id {
+        Id::from_u128(0xc2)
+    }
+
+    fn payload(n: u128) -> Id {
+        Id::from_u128(0xb0 + n)
+    }
+
+    fn two_coloured() -> Exp {
+        Exp::if_(
+            Exp::bool_(true),
+            Exp::inj(red(), Exp::unit()),
+            Exp::inj(green(), Exp::num(1)),
+        )
+    }
+
+    #[test]
+    fn an_injection_synthesises_the_one_case_it_knows_about() {
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::inj(red(), Exp::unit())),
+            Some(crate::ty::variant([(red(), crate::ty::unit())]))
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::inj(red(), Exp::num(1))),
+            Some(crate::ty::variant([(red(), Ty::Num)]))
+        );
+    }
+
+    #[test]
+    fn joining_two_injections_is_the_union_of_their_cases() {
+        assert_eq!(
+            syn(&Ctx::empty(), &two_coloured()),
+            Some(crate::ty::variant([
+                (red(), crate::ty::unit()),
+                (green(), Ty::Num)
+            ])),
+            "a sum accepts whatever either branch produces"
+        );
+
+        let disagreeing_payloads = Exp::if_(
+            Exp::bool_(true),
+            Exp::inj(red(), Exp::num(1)),
+            Exp::inj(red(), Exp::bool_(true)),
+        );
+        assert_eq!(syn(&Ctx::empty(), &disagreeing_payloads), None);
+    }
+
+    #[test]
+    fn an_injection_analyses_against_any_variant_that_has_its_case() {
+        let colour = crate::ty::variant([(red(), crate::ty::unit()), (green(), Ty::Num)]);
+        assert!(ana(&Ctx::empty(), &Exp::inj(red(), Exp::unit()), &colour));
+        assert!(ana(&Ctx::empty(), &Exp::inj(green(), Exp::num(1)), &colour));
+        assert!(ana(&Ctx::empty(), &Exp::inj(red(), Exp::unit()), &Ty::Hole));
+
+        assert!(
+            !ana(&Ctx::empty(), &Exp::inj(green(), Exp::unit()), &colour),
+            "the case is there but the payload is not"
+        );
+        assert!(
+            ana(
+                &Ctx::empty(),
+                &Exp::inj(Id::from_u128(0xc9), Exp::unit()),
+                &colour
+            ),
+            "a case the expected variant has never heard of widens it rather than failing"
+        );
+        assert!(!ana(&Ctx::empty(), &Exp::inj(red(), Exp::unit()), &Ty::Num));
+        assert!(!ana(
+            &Ctx::empty(),
+            &Exp::inj(red(), Exp::var(Id::from_u128(0xdead))),
+            &Ty::Hole
+        ));
+        assert!(
+            !ana(
+                &Ctx::empty(),
+                &Exp::inj(green(), Exp::unit()),
+                &crate::ty::variant([(green(), Ty::Num)])
+            ),
+            "the analytic rule reads the payload the variant declares, not any payload"
+        );
+    }
+
+    #[test]
+    fn a_match_must_answer_for_every_constructor_its_scrutinee_can_produce() {
+        let complete = Exp::match_(
+            two_coloured(),
+            [
+                (red(), payload(0), Exp::num(0)),
+                (green(), payload(1), Exp::var(payload(1))),
+            ],
+        );
+        assert_eq!(syn(&Ctx::empty(), &complete), Some(Ty::Num));
+
+        let missing = Exp::match_(two_coloured(), [(red(), payload(0), Exp::num(0))]);
+        assert_eq!(
+            syn(&Ctx::empty(), &missing),
+            None,
+            "a missing arm is not a program"
+        );
+        assert!(!ana(&Ctx::empty(), &missing, &Ty::Num));
+
+        let doubled = Exp::match_(
+            two_coloured(),
+            [
+                (red(), payload(0), Exp::num(0)),
+                (red(), payload(1), Exp::num(1)),
+                (green(), payload(2), Exp::num(2)),
+            ],
+        );
+        assert_eq!(syn(&Ctx::empty(), &doubled), None);
+    }
+
+    #[test]
+    fn a_dead_arm_is_legal_and_binds_a_payload_of_unknown_type() {
+        let with_spare = Exp::match_(
+            Exp::inj(red(), Exp::unit()),
+            [
+                (red(), payload(0), Exp::num(0)),
+                (green(), payload(1), Exp::num(1)),
+            ],
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &with_spare),
+            Some(Ty::Num),
+            "an arm the scrutinee cannot reach is how a case is prepared"
+        );
+
+        let uses_the_spare = Exp::match_(
+            Exp::inj(red(), Exp::unit()),
+            [
+                (red(), payload(0), Exp::num(0)),
+                (green(), payload(1), Exp::var(payload(1))),
+            ],
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &uses_the_spare),
+            Some(Ty::Num),
+            "the dead arm's binder has the unknown type, and the join keeps the precise one"
+        );
+    }
+
+    #[test]
+    fn a_match_on_an_unknown_scrutinee_needs_no_arms_at_all() {
+        let c = Id::from_u128(0xa7);
+        let f = Exp::lam(c, Ty::Hole, Exp::match_(Exp::var(c), []));
+        assert_eq!(
+            syn(&Ctx::empty(), &f),
+            Some(Ty::Arrow(Box::new(Ty::Hole), Box::new(Ty::Hole)))
+        );
+        assert!(is_well_typed(&f));
+
+        let one_arm = Exp::lam(
+            c,
+            Ty::Hole,
+            Exp::match_(Exp::var(c), [(red(), payload(0), Exp::num(1))]),
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &one_arm),
+            Some(Ty::Arrow(Box::new(Ty::Hole), Box::new(Ty::Num)))
+        );
+    }
+
+    #[test]
+    fn a_match_on_something_that_is_not_a_sum_has_no_type() {
+        let e = Exp::match_(Exp::num(1), [(red(), payload(0), Exp::num(0))]);
+        assert_eq!(syn(&Ctx::empty(), &e), None);
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::match_(Exp::num(1), [])),
+            None,
+            "even with no arms, a number is not something to case-split"
+        );
+    }
+
+    #[test]
+    fn a_match_analyses_by_pushing_the_expectation_into_every_arm() {
+        let e = Exp::match_(
+            two_coloured(),
+            [
+                (red(), payload(0), Exp::empty_hole(h(0))),
+                (green(), payload(1), Exp::num(2)),
+            ],
+        );
+        assert!(ana(&Ctx::empty(), &e, &Ty::Num));
+        assert!(ana(&Ctx::empty(), &e, &Ty::Hole));
+        assert!(!ana(&Ctx::empty(), &e, &Ty::Bool));
     }
 }

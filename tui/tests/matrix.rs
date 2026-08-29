@@ -44,6 +44,8 @@ fn observe(state: &AppState) -> String {
         Slot::DefAnn => out.push_str("def ann: "),
         Slot::FieldName => out.push_str("field: "),
         Slot::FieldPick => out.push_str("pick: "),
+        Slot::ConstructorName => out.push_str("ctor: "),
+        Slot::ConstructorPick => out.push_str("tag: "),
     }
     out.push_str(&program_line(state));
     if !state.entry.is_empty() {
@@ -101,6 +103,8 @@ fn column_a_empty_hole() {
             (':', "λx0:Num. »⦇⦈« :: ⦇⦈"),
             ('.', "λx0:Num. »⦇⦈«"),
             ('{', "field: λx0:Num. {f0 = »⦇⦈«}"),
+            ('`', "tag: λx0:Num. »`C0 ⦇⦈«"),
+            ('|', "λx0:Num. match »⦇⦈« {}"),
             ('>', "λx0:Num. »⦇⦈«"),
             ('(', "λx0:Num. »⦇⦈«"),
             (')', "λx0:Num. »⦇⦈«"),
@@ -143,6 +147,8 @@ fn column_b_written_expression() {
             (':', "λx0:Num. x0 :: »⦇⦈«"),
             ('.', "λx0:Num. »x0«"),
             ('{', "field: λx0:Num. {f0 = »x0«}"),
+            ('`', "tag: λx0:Num. »`C0 x0«"),
+            ('|', "λx0:Num. »match ⦇x0⦈ {}«"),
             ('>', "λx0:Num. »x0«"),
             ('(', "λx0:Num. »x0«"),
             (')', "λx0:Num. »x0«"),
@@ -174,6 +180,8 @@ fn column_c_focused_number() {
             (':', "λx0:Num. 12 :: »⦇⦈«"),
             ('.', "λx0:Num. »12«"),
             ('{', "field: λx0:Num. {f0 = »12«}"),
+            ('`', "tag: λx0:Num. »`C0 12«"),
+            ('|', "λx0:Num. »match ⦇12⦈ {}«"),
             ('@', "λx0:Num. »12«"),
         ],
     );
@@ -202,6 +210,8 @@ fn column_d_name_run() {
             (':', "λx0:Num. x0 :: »⦇⦈«"),
             ('.', "λx0:Num. »x0«"),
             ('{', "field: λx0:Num. {f0 = »x0«}"),
+            ('`', "tag: λx0:Num. »`C0 x0«"),
+            ('|', "λx0:Num. »match ⦇x0⦈ {}«"),
             ('@', "λx0:Num. »x0«"),
         ],
     );
@@ -225,6 +235,8 @@ fn column_e_annotation_slot() {
             (':', "ann: λx0:»Num«. ⦇⦈"),
             ('.', "λx0:Num. »⦇⦈«"),
             ('{', "field: λx0:Num. {f0 = »⦇⦈«}"),
+            ('`', "tag: λx0:Num. »`C0 ⦇⦈«"),
+            ('|', "λx0:Num. match »⦇⦈« {}"),
             ('0', "λx0:Num. »0«"),
             ('x', "λx0:Num. »x0« ⟨x⟩"),
             ('+', "λx0:Num. »⦇⦈« + ⦇⦈"),
@@ -252,6 +264,8 @@ fn column_f_binder_name_slot() {
             (':', "ann: λx:»?«. ⦇⦈"),
             ('.', "λx:?. »⦇⦈«"),
             ('{', "field: λx:?. {f0 = »⦇⦈«}"),
+            ('`', "tag: λx:?. »`C0 ⦇⦈«"),
+            ('|', "λx:?. match »⦇⦈« {}"),
             ('~', "name: λ»x«:?. ⦇⦈ ⟨x⟩"),
             ('=', "λx:?. »⦇⦈« == ⦇⦈"),
             ('&', "λx:?. »⦇⦈« ++ ⦇⦈"),
@@ -289,6 +303,8 @@ fn column_g_non_empty_hole() {
             ('~', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈"),
             ('.', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈"),
             ('{', "field: λx0:Num. if ⦇{f0 = »x0«}⦈ then ⦇⦈ else ⦇⦈"),
+            ('`', "tag: λx0:Num. if ⦇»`C0 x0«⦈ then ⦇⦈ else ⦇⦈"),
+            ('|', "λx0:Num. if ⦇»match ⦇x0⦈ {}«⦈ then ⦇⦈ else ⦇⦈"),
             ('@', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈"),
         ],
     );
@@ -316,6 +332,8 @@ fn column_h_inside_a_string() {
             (':', "λx0:Str. »\"ab:\"«"),
             ('.', "λx0:Str. »\"ab.\"«"),
             ('{', "λx0:Str. »\"ab{\"«"),
+            ('`', "λx0:Str. »\"ab`\"«"),
+            ('|', "λx0:Str. »\"ab|\"«"),
             ('>', "λx0:Str. »\"ab>\"«"),
             ('(', "λx0:Str. »\"ab(\"«"),
             (')', "λx0:Str. »\"ab)\"«"),
@@ -359,7 +377,7 @@ fn exiting_a_slot_costs_no_keystroke() {
 
 #[test]
 fn no_row_of_the_matrix_can_break_the_program() {
-    let alphabet = "0123456789abnsxtfyz_+-*<=& \\?;,[]/!~:.>()@{}\"";
+    let alphabet = "0123456789abnsxtfyz_+-*<=& \\?;,[]/!~:.>()@{}\"`|";
     for name in [
         "A empty hole",
         "B written expr",

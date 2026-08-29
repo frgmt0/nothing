@@ -3,7 +3,7 @@ use nothing_core::names::NameTable;
 use nothing_core::ty::Ty;
 
 const KEYWORDS: &[&str] = &[
-    "if", "then", "else", "let", "in", "true", "false", "fst", "snd", "nil", "fold",
+    "if", "then", "else", "let", "in", "true", "false", "fst", "snd", "nil", "fold", "match",
 ];
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -43,6 +43,7 @@ pub fn parse_program(text: &str) -> Result<Parsed, TextError> {
         pos: 0,
         scope: Vec::new(),
         fields: Vec::new(),
+        ctors: Vec::new(),
         next_id: 0,
         next_hole: 0,
         names: &mut names,
@@ -62,6 +63,7 @@ struct Parser<'a> {
     pos: usize,
     scope: Vec<(String, Id)>,
     fields: Vec<(String, Id)>,
+    ctors: Vec<(String, Id)>,
     next_id: u128,
     next_hole: u128,
     names: &'a mut NameTable,
@@ -144,6 +146,16 @@ impl Parser<'_> {
         id
     }
 
+    fn ctor_id(&mut self, name: &str) -> Id {
+        if let Some((_, id)) = self.ctors.iter().find(|(known, _)| known == name) {
+            return *id;
+        }
+        let id = self.fresh_id();
+        self.names.set(id, name.to_string());
+        self.ctors.push((name.to_string(), id));
+        id
+    }
+
     fn ty_arrow(&mut self) -> Result<Ty, TextError> {
         let left = self.ty_prod()?;
         if self.eat_symbol("->") {
@@ -178,6 +190,7 @@ impl Parser<'_> {
                 Ok(inner)
             }
             Some('{') => self.ty_record(),
+            Some('[') => self.ty_variant(),
             _ => match self.take_word() {
                 None => Err(TextError("expected a type".to_string())),
                 Some(word) => match word.to_ascii_lowercase().as_str() {
@@ -215,6 +228,73 @@ impl Parser<'_> {
                 return Ok(Ty::Record(fields));
             }
             return Err(TextError("a record type needs `,` or `}`".to_string()));
+        }
+    }
+
+    fn ty_variant(&mut self) -> Result<Ty, TextError> {
+        self.pos += 1;
+        let mut ctors = Vec::new();
+        if self.eat_symbol("]") {
+            return Ok(Ty::Variant(ctors));
+        }
+        loop {
+            self.skip_ws();
+            let name = self
+                .take_word()
+                .ok_or_else(|| TextError("a variant case needs a name".to_string()))?;
+            if !self.eat_symbol(":") {
+                return Err(TextError("a variant case needs `:`".to_string()));
+            }
+            let ty = self.ty_arrow()?;
+            ctors.push((self.ctor_id(&name), ty));
+            if self.eat_symbol("|") {
+                continue;
+            }
+            if self.eat_symbol("]") {
+                return Ok(Ty::Variant(ctors));
+            }
+            return Err(TextError("a variant type needs `|` or `]`".to_string()));
+        }
+    }
+
+    fn match_(&mut self) -> Result<Exp, TextError> {
+        let scrutinee = self.atom()?;
+        if !self.eat_symbol("{") {
+            return Err(TextError("a match needs `{`".to_string()));
+        }
+        let mut arms = Vec::new();
+        if self.eat_symbol("}") {
+            return Ok(Exp::match_(scrutinee, arms));
+        }
+        loop {
+            self.skip_ws();
+            let ctor = self
+                .take_word()
+                .ok_or_else(|| TextError("a match arm needs a case name".to_string()))?;
+            self.skip_ws();
+            let binder = self
+                .take_word()
+                .ok_or_else(|| TextError("a match arm needs a payload name".to_string()))?;
+            if KEYWORDS.contains(&binder.as_str()) {
+                return Err(TextError(format!("`{binder}` is a keyword, not a name")));
+            }
+            if !self.eat_symbol("->") {
+                return Err(TextError("a match arm needs `->`".to_string()));
+            }
+            let ctor_id = self.ctor_id(&ctor);
+            let binder_id = self.fresh_id();
+            self.names.set(binder_id, binder.clone());
+            self.scope.push((binder, binder_id));
+            let body = self.cmp();
+            self.scope.pop();
+            arms.push((ctor_id, binder_id, body?));
+            if self.eat_symbol("|") {
+                continue;
+            }
+            if self.eat_symbol("}") {
+                return Ok(Exp::match_(scrutinee, arms));
+            }
+            return Err(TextError("a match needs `|` or `}`".to_string()));
         }
     }
 
@@ -366,6 +446,14 @@ impl Parser<'_> {
     }
 
     fn application(&mut self) -> Result<Exp, TextError> {
+        if self.eat_symbol("`") {
+            self.skip_ws();
+            let name = self
+                .take_word()
+                .ok_or_else(|| TextError("an injection needs a case name".to_string()))?;
+            let id = self.ctor_id(&name);
+            return Ok(Exp::inj(id, self.atom()?));
+        }
         let mut head = if self.eat_word("fst") {
             Exp::proj(Side::L, self.atom()?)
         } else if self.eat_word("snd") {
@@ -451,6 +539,9 @@ impl Parser<'_> {
 
     fn base_atom(&mut self) -> Result<Exp, TextError> {
         self.skip_ws();
+        if self.eat_word("match") {
+            return self.match_();
+        }
         match self.peek() {
             None => Err(TextError("unexpected end of program".to_string())),
             Some('?') => {

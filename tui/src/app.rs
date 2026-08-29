@@ -23,6 +23,8 @@ pub enum Slot {
     DefAnn,
     FieldName,
     FieldPick,
+    ConstructorName,
+    ConstructorPick,
 }
 
 impl Slot {
@@ -34,11 +36,16 @@ impl Slot {
             Slot::DefName => "definition name",
             Slot::DefAnn => "definition type",
             Slot::FieldName | Slot::FieldPick => "field",
+            Slot::ConstructorName | Slot::ConstructorPick => "constructor",
         }
     }
 
     pub fn names_a_field(self) -> bool {
         matches!(self, Slot::FieldName | Slot::FieldPick)
+    }
+
+    pub fn names_a_constructor(self) -> bool {
+        matches!(self, Slot::ConstructorName | Slot::ConstructorPick)
     }
 }
 
@@ -300,7 +307,12 @@ impl AppState {
 
     pub fn move_down(&self) -> Option<AppState> {
         match self.slot {
-            Slot::BinderName | Slot::Annotation | Slot::FieldName | Slot::FieldPick => None,
+            Slot::BinderName
+            | Slot::Annotation
+            | Slot::FieldName
+            | Slot::FieldPick
+            | Slot::ConstructorName
+            | Slot::ConstructorPick => None,
             Slot::DefName => Some(self.in_slot(Slot::DefAnn)),
             Slot::DefAnn => Some(self.in_slot(Slot::Node)),
             Slot::Node => match self.binder_kind() {
@@ -318,9 +330,12 @@ impl AppState {
 
     pub fn move_up(&self) -> Option<AppState> {
         match self.slot {
-            Slot::BinderName | Slot::Annotation | Slot::FieldName | Slot::FieldPick => {
-                Some(self.in_slot(Slot::Node))
-            }
+            Slot::BinderName
+            | Slot::Annotation
+            | Slot::FieldName
+            | Slot::FieldPick
+            | Slot::ConstructorName
+            | Slot::ConstructorPick => Some(self.in_slot(Slot::Node)),
             Slot::DefName => None,
             Slot::DefAnn => Some(self.in_slot(Slot::DefName)),
             Slot::Node => match self.apply_actions(&[Action::MoveParent]) {
@@ -342,11 +357,16 @@ impl AppState {
             (Slot::Annotation, _) => self.apply_actions(&[Action::MoveChild(0)]),
             (Slot::BinderName, None) => None,
             (Slot::FieldName | Slot::FieldPick, _) => Some(self.in_slot(Slot::Node)),
+            (Slot::ConstructorName | Slot::ConstructorPick, _) => Some(self.in_slot(Slot::Node)),
             (Slot::Node, _) => match self.edit.zipper.path.last() {
                 Some(Frame::LamBody(..)) | Some(Frame::LetBody(..)) => None,
                 Some(Frame::RecordField(..)) => Some(
                     self.apply_actions(&[Action::MoveNextSibling])?
                         .in_slot(Slot::FieldName),
+                ),
+                Some(Frame::MatchArm(..)) => Some(
+                    self.apply_actions(&[Action::MoveNextSibling])?
+                        .in_slot(Slot::ConstructorName),
                 ),
                 Some(_) => self.apply_actions(&[Action::MoveNextSibling]),
                 None => None,
@@ -360,8 +380,9 @@ impl AppState {
             Slot::DefAnn => Some(self.in_slot(Slot::DefName)),
             Slot::Annotation => Some(self.in_slot(Slot::BinderName)),
 
-            Slot::BinderName | Slot::FieldPick => None,
+            Slot::BinderName | Slot::FieldPick | Slot::ConstructorPick => None,
             Slot::FieldName => self.apply_actions(&[Action::MovePrevSibling]),
+            Slot::ConstructorName => self.apply_actions(&[Action::MovePrevSibling]),
             Slot::Node => match self.edit.zipper.path.last() {
                 Some(Frame::LamBody(..)) => Some(
                     self.apply_actions(&[Action::MoveParent])?
@@ -372,6 +393,7 @@ impl AppState {
                         .in_slot(Slot::BinderName),
                 ),
                 Some(Frame::RecordField(..)) => Some(self.in_slot(Slot::FieldName)),
+                Some(Frame::MatchArm(..)) => Some(self.in_slot(Slot::ConstructorName)),
                 Some(_) => self.apply_actions(&[Action::MovePrevSibling]),
                 None => None,
             },
@@ -402,6 +424,32 @@ impl AppState {
 
     pub fn in_record(&self) -> bool {
         matches!(self.focus(), Exp::Record(_)) || self.edit.zipper.record_field_id().is_some()
+    }
+
+    pub fn constructor_slot_id(&self) -> Option<Id> {
+        match self.slot {
+            Slot::ConstructorName => self.edit.zipper.arm_constructor_id(),
+            Slot::ConstructorPick => self.edit.zipper.injected_constructor_id(),
+            _ => None,
+        }
+    }
+
+    pub fn constructor_name_target(&self) -> Option<AppState> {
+        if self.edit.zipper.arm_constructor_id().is_some() {
+            return Some(self.in_slot(Slot::ConstructorName));
+        }
+        let last = match self.focus() {
+            Exp::Match(_, arms) if !arms.is_empty() => arms.len(),
+            _ => return None,
+        };
+        Some(
+            self.apply_actions(&[Action::MoveChild(last)])?
+                .in_slot(Slot::ConstructorName),
+        )
+    }
+
+    pub fn in_match(&self) -> bool {
+        matches!(self.focus(), Exp::Match(..)) || self.edit.zipper.arm_constructor_id().is_some()
     }
 
     pub fn move_to_hole(&self, forward: bool) -> Option<AppState> {
@@ -518,6 +566,12 @@ fn children(exp: &Exp) -> Vec<&Exp> {
             Vec::new()
         }
         Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::NonEmptyHole(_, b) => vec![b],
+        Exp::Inj(_, payload) => vec![payload],
+        Exp::Match(scrutinee, arms) => {
+            let mut out = vec![&**scrutinee];
+            out.extend(arms.iter().map(|(_, _, body)| body));
+            out
+        }
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
