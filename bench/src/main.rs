@@ -53,6 +53,14 @@ fn reference_programs() -> Vec<ReferenceProgram> {
             neovim_keystrokes: 146,
             approximate: false,
         },
+        ReferenceProgram {
+            name: "greeting",
+            reference: 6,
+            fixture: "greeting.actions",
+            keys_fixture: "greeting.keys",
+            neovim_keystrokes: 127,
+            approximate: true,
+        },
     ]
 }
 
@@ -261,8 +269,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn there_are_five_reference_programs() {
-        assert_eq!(reference_programs().len(), 5);
+    fn there_are_six_reference_programs() {
+        assert_eq!(reference_programs().len(), 6);
     }
 
     #[test]
@@ -395,6 +403,10 @@ mod tests {
         assert!(
             text.contains("2026-08-28"),
             "RESULTS.md is not dated with the Phase B1 definition-era run date"
+        );
+        assert!(
+            text.contains("2026-08-29"),
+            "RESULTS.md is not dated with the Phase B2 string-era run date"
         );
     }
 }

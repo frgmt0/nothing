@@ -1,6 +1,7 @@
 use std::fmt;
 
 use nothing_core::exp::{Id, Op, Side};
+use nothing_core::render::quote_str;
 use nothing_core::ty::Ty;
 
 use crate::act::{Action, EditState};
@@ -99,17 +100,19 @@ editing:
   delete                  replace the focus with an empty hole
   construct-num N         write a numeric literal
   construct-bool BOOL     write true or false
+  construct-str \"TEXT\"    write a string literal; only \\\" and \\\\ are escapes
   construct-var NAME      reference the in-scope binder or definition NAME
   construct-lam           e becomes λx:?. e
   construct-ap            e becomes e ⦇⦈
-  construct-binop OP      e becomes e OP ⦇⦈   (add|sub|mul|lt|eq, or + - * < ==)
+  construct-binop OP      e becomes e OP ⦇⦈
+                          OP := add|sub|mul|lt|eq|concat, or + - * < == ++
   construct-if            e becomes if e then ⦇⦈ else ⦇⦈
   construct-let           e becomes let x = e in ⦇⦈
   construct-pair          e becomes (e, ⦇⦈)
   construct-proj SIDE     e becomes fst e / snd e   (l|r, fst|snd, left|right)
   construct-non-empty-hole  e becomes ⦇e⦈
   set-ann TY              set the focused lambda's annotation
-                          TY := Num | Bool | ? | TY -> TY | TY * TY | ( TY )
+                          TY := Num | Bool | Str | ? | TY -> TY | TY * TY | ( TY )
   set-binder-id UUID      re-identify the focused lambda or let binder
   rename NAME             give the focused binder the display name NAME
   finish                  unwrap a non-empty hole whose contents now fit
@@ -172,6 +175,7 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
 
         "construct-num" => act(Action::ConstructNum(parse_i64(head, rest)?)),
         "construct-bool" => act(Action::ConstructBool(parse_bool(head, rest)?)),
+        "construct-str" => act(Action::ConstructStr(parse_string(head, rest)?)),
         "construct-var" => Ok(Step::Var(parse_name(head, rest)?)),
         "construct-lam" => no_arg(Action::ConstructLam),
         "construct-ap" => no_arg(Action::ConstructAp),
@@ -219,6 +223,7 @@ pub fn action_name(action: &Action) -> String {
         Action::Delete => "delete".to_string(),
         Action::ConstructNum(n) => format!("construct-num {n}"),
         Action::ConstructBool(b) => format!("construct-bool {b}"),
+        Action::ConstructStr(text) => format!("construct-str {}", quote_str(text)),
         Action::ConstructVar(id) => format!("construct-var {id}"),
         Action::ConstructLam => "construct-lam".to_string(),
         Action::ConstructAp => "construct-ap".to_string(),
@@ -248,6 +253,7 @@ fn op_name(op: Op) -> &'static str {
         Op::Mul => "mul",
         Op::Lt => "lt",
         Op::Eq => "eq",
+        Op::Concat => "concat",
     }
 }
 
@@ -298,10 +304,50 @@ fn parse_op(rest: &str) -> Result<Op, ParseError> {
         "mul" | "*" => Ok(Op::Mul),
         "lt" | "<" => Ok(Op::Lt),
         "eq" | "==" => Ok(Op::Eq),
+        "concat" | "++" => Ok(Op::Concat),
         other => Err(ParseError(format!(
-            "unknown operator `{other}` (expected add|sub|mul|lt|eq)"
+            "unknown operator `{other}` (expected add|sub|mul|lt|eq|concat)"
         ))),
     }
+}
+
+fn parse_string(head: &str, rest: &str) -> Result<String, ParseError> {
+    let mut chars = rest.chars();
+    if chars.next() != Some('"') {
+        return Err(ParseError(format!(
+            "`{head}` expects a quoted string, got `{rest}`"
+        )));
+    }
+    let mut out = String::new();
+    let mut closed = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                closed = true;
+                break;
+            }
+            '\\' => match chars.next() {
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    return Err(ParseError(format!(
+                        "unknown escape `\\{other}` in a string (only \\\" and \\\\ exist)"
+                    )));
+                }
+                None => return Err(ParseError("a string ends inside an escape".to_string())),
+            },
+            _ => out.push(c),
+        }
+    }
+    if !closed {
+        return Err(ParseError(format!("unterminated string in `{rest}`")));
+    }
+    if chars.next().is_some() {
+        return Err(ParseError(format!(
+            "`{head}` takes one quoted string, got `{rest}`"
+        )));
+    }
+    Ok(out)
 }
 
 fn parse_side(rest: &str) -> Result<Side, ParseError> {
@@ -386,6 +432,7 @@ fn ty_atom(tokens: &[String], pos: &mut usize) -> Result<Ty, ParseError> {
     match token.to_ascii_lowercase().as_str() {
         "num" => Ok(Ty::Num),
         "bool" => Ok(Ty::Bool),
+        "str" => Ok(Ty::Str),
         "?" | "hole" => Ok(Ty::Hole),
         "(" => {
             let inner = ty_arrow(tokens, pos)?;
@@ -597,7 +644,12 @@ mod tests {
         assert!(parse_step("construct-binop pow").is_err());
         assert!(parse_step("construct-proj middle").is_err());
         assert!(parse_step("set-ann").is_err());
-        assert!(parse_step("set-ann Str").is_err());
+        assert!(parse_step("set-ann Text").is_err());
+        assert!(parse_step("construct-str").is_err());
+        assert!(parse_step("construct-str hello").is_err());
+        assert!(parse_step(r#"construct-str "unterminated"#).is_err());
+        assert!(parse_step(r#"construct-str "a" "b""#).is_err());
+        assert!(parse_step(r#"construct-str "a\nb""#).is_err());
         assert!(parse_step("set-ann (Num").is_err());
         assert!(parse_step("set-ann Num ->").is_err());
         assert!(parse_step("set-ann Num Num").is_err());

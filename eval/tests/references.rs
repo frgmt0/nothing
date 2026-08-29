@@ -46,7 +46,7 @@ fn drop_calls_to(exp: &Exp, target: Id, next: &mut u128) -> Exp {
             *next += 1;
             Exp::empty_hole(HoleId::from_u128(*next))
         }
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => exp.clone(),
         Exp::Lam(id, ty, body) => Exp::lam(*id, ty.clone(), drop_calls_to(body, target, next)),
         Exp::Proj(side, body) => Exp::proj(*side, drop_calls_to(body, target, next)),
         Exp::NonEmptyHole(h, body) => Exp::non_empty_hole(*h, drop_calls_to(body, target, next)),

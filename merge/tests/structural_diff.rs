@@ -241,3 +241,27 @@ fn changing_a_lambda_annotation_is_a_shape_operation() {
     assert_eq!(ops.len(), 1, "{ops:#?}");
     assert!(matches!(ops[0], Operation::SetAnn { .. }));
 }
+
+#[test]
+fn editing_a_string_literal_is_one_replace() {
+    let names = NameTable::new();
+    let before = Version::new(
+        Exp::bin_op(Op::Concat, Exp::str_("hello, "), Exp::str_("world")),
+        names.clone(),
+    );
+    let after = Version::new(
+        Exp::bin_op(Op::Concat, Exp::str_("hello, "), Exp::str_("there")),
+        names,
+    );
+    let ops = diff(&before, &after);
+    assert_eq!(ops.len(), 1, "{ops:#?}");
+    match &ops[0] {
+        Operation::Replace { path, to, .. } => {
+            assert_eq!(path, &[1]);
+            assert_eq!(to, &Exp::str_("there"));
+        }
+        other => panic!("expected a Replace, got {other:?}"),
+    }
+    let replayed = apply_all(&before, &ops);
+    assert!(structurally_equal(&replayed.version.exp, &after.exp));
+}

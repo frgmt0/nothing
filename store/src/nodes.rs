@@ -104,6 +104,13 @@ fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32
             let idx = push_entry(table, hash, 4, payload, vec![]);
             (idx, hash)
         }
+        Exp::Str(text) => {
+            let mut payload = Vec::new();
+            crate::codec::write_string(&mut payload, text);
+            let hash = hash_node(12, &payload, &[]);
+            let idx = push_entry(table, hash, 12, payload, vec![]);
+            (idx, hash)
+        }
         Exp::BinOp(op, l, r) => {
             let (l_idx, l_hash) = build_rec(l, stack, table);
             let (r_idx, r_hash) = build_rec(r, stack, table);
@@ -220,6 +227,10 @@ fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
                 other => Err(DecodeError::BadBool(other)),
             }
         }
+        12 => {
+            let text = crate::codec::read_string(&entry.payload, &mut pos)?;
+            Ok(Exp::str_(text))
+        }
         5 => {
             let op = decode_op(read_u8(&entry.payload, &mut pos)?)?;
             let l = decode_child(entries, entry, 0)?;
@@ -310,6 +321,19 @@ mod tests {
             Exp::bin_op(nothing_core::exp::Op::Add, Exp::var(x), Exp::num(2)),
         );
         assert_ne!(content_hash(&a), content_hash(&b));
+    }
+
+    #[test]
+    fn a_string_hashes_its_text_because_the_text_is_the_meaning() {
+        assert_ne!(
+            content_hash(&Exp::str_("hello")),
+            content_hash(&Exp::str_("hallo"))
+        );
+        assert_eq!(
+            content_hash(&Exp::str_("hello")),
+            content_hash(&Exp::str_("hello"))
+        );
+        assert_ne!(content_hash(&Exp::str_("")), content_hash(&Exp::num(0)));
     }
 
     #[test]

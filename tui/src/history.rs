@@ -7,6 +7,8 @@ pub struct Typing {
     pub slot: Slot,
     pub text: String,
     pub committed: bool,
+    pub string_open: bool,
+    pub escape_armed: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -104,6 +106,8 @@ mod tests {
             slot: Slot::Node,
             text: text.to_string(),
             committed: !text.is_empty(),
+            string_open: false,
+            escape_armed: false,
         }
     }
 

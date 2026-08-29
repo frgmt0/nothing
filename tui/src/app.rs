@@ -41,6 +41,8 @@ pub struct AppState {
     pub slot: Slot,
     pub entry: String,
     pub entry_committed: bool,
+    pub string_open: bool,
+    pub escape_armed: bool,
     pub hint: Option<String>,
     pub quit: bool,
     pub engine: EngineHandle,
@@ -69,6 +71,8 @@ impl AppState {
             slot: Slot::Node,
             entry: String::new(),
             entry_committed: false,
+            string_open: false,
+            escape_armed: false,
             hint: None,
             quit: false,
             engine: EngineHandle::new(),
@@ -213,6 +217,8 @@ impl AppState {
     pub fn clear_entry(&mut self) {
         self.entry.clear();
         self.entry_committed = false;
+        self.string_open = false;
+        self.escape_armed = false;
     }
 
     pub fn actions(&self) -> &[Action] {
@@ -238,6 +244,8 @@ impl AppState {
             slot: self.slot,
             text: self.entry.clone(),
             committed: self.entry_committed,
+            string_open: self.string_open,
+            escape_armed: self.escape_armed,
         }
     }
 
@@ -264,6 +272,8 @@ impl AppState {
         self.slot = typing.slot;
         self.entry = typing.text;
         self.entry_committed = typing.committed;
+        self.string_open = typing.string_open;
+        self.escape_armed = typing.escape_armed;
     }
 
     fn in_slot(&self, slot: Slot) -> AppState {
@@ -456,7 +466,7 @@ fn is_unfinished(exp: &Exp) -> bool {
 
 fn children(exp: &Exp) -> Vec<&Exp> {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => Vec::new(),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => Vec::new(),
         Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::NonEmptyHole(_, b) => vec![b],
         Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => vec![a, b],
         Exp::If(c, t, e) => vec![c, t, e],

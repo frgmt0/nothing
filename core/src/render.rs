@@ -14,7 +14,7 @@ pub const PREC_ATOM: Prec = 5;
 
 pub fn op_prec(op: Op) -> Prec {
     match op {
-        Op::Add | Op::Sub => PREC_ADD,
+        Op::Add | Op::Sub | Op::Concat => PREC_ADD,
         Op::Mul => PREC_MUL,
         Op::Lt | Op::Eq => PREC_CMP,
     }
@@ -27,7 +27,24 @@ pub fn op_str(op: Op) -> &'static str {
         Op::Mul => "*",
         Op::Lt => "<",
         Op::Eq => "==",
+        Op::Concat => "++",
     }
+}
+
+pub fn escape_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+pub fn quote_str(s: &str) -> String {
+    format!("\"{}\"", escape_str(s))
 }
 
 pub fn render_id(id: Id, names: &NameTable) -> String {
@@ -61,6 +78,9 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
         }
         Exp::Bool(b) => {
             write!(out, "{b}").unwrap();
+        }
+        Exp::Str(s) => {
+            out.push_str(&quote_str(s));
         }
         Exp::EmptyHole(_) => {
             out.push_str("⦇⦈");
@@ -131,6 +151,7 @@ fn prec_of(exp: &Exp) -> Prec {
         Exp::Var(_)
         | Exp::Num(_)
         | Exp::Bool(_)
+        | Exp::Str(_)
         | Exp::EmptyHole(_)
         | Exp::NonEmptyHole(_, _)
         | Exp::Pair(_, _) => PREC_ATOM,
@@ -156,6 +177,31 @@ mod tests {
             names.set(x(n), format!("x{n}"));
         }
         names
+    }
+
+    #[test]
+    fn a_string_renders_between_quotes_with_only_two_escapes() {
+        assert_eq!(render(&Exp::str_("hello"), &names()), "\"hello\"");
+        assert_eq!(render(&Exp::str_(""), &names()), "\"\"");
+        assert_eq!(
+            render(&Exp::str_("a \"b\" c"), &names()),
+            "\"a \\\"b\\\" c\""
+        );
+        assert_eq!(render(&Exp::str_("a\\b"), &names()), "\"a\\\\b\"");
+        assert_eq!(render(&Exp::str_("1 + 2 ⦇⦈"), &names()), "\"1 + 2 ⦇⦈\"");
+    }
+
+    #[test]
+    fn concat_renders_and_associates_like_addition() {
+        let e = Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::str_("b"));
+        assert_eq!(render(&e, &names()), "\"a\" ++ \"b\"");
+
+        let e = Exp::bin_op(
+            Op::Mul,
+            Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::str_("b")),
+            Exp::num(3),
+        );
+        assert_eq!(render(&e, &names()), "(\"a\" ++ \"b\") * 3");
     }
 
     #[test]

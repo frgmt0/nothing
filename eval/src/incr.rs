@@ -18,6 +18,7 @@ pub enum Value {
     Ap(Box<Value>, Box<Value>),
     Num(i64),
     Bool(bool),
+    Str(String),
     BinOp(Op, Box<Value>, Box<Value>),
     If(Box<Value>, Arc<Exp>, Arc<Exp>),
     Pair(Box<Value>, Box<Value>),
@@ -28,7 +29,7 @@ pub enum Value {
 
 fn is_fully_reduced(v: &Value) -> bool {
     match v {
-        Value::Num(_) | Value::Bool(_) | Value::Closure(..) => true,
+        Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) => true,
         Value::Pair(a, b) => is_fully_reduced(a) && is_fully_reduced(b),
         _ => false,
     }
@@ -47,6 +48,7 @@ pub fn value_to_dyn(v: &Value) -> Dyn {
         Value::Ap(f, a) => Dyn::Ap(Box::new(value_to_dyn(f)), Box::new(value_to_dyn(a))),
         Value::Num(n) => Dyn::Num(*n),
         Value::Bool(b) => Dyn::Bool(*b),
+        Value::Str(text) => Dyn::Str(text.clone()),
         Value::BinOp(op, l, r) => {
             Dyn::BinOp(*op, Box::new(value_to_dyn(l)), Box::new(value_to_dyn(r)))
         }
@@ -85,18 +87,34 @@ fn collect_blocked(v: &Value, out: &mut Vec<Blocked>) {
         }
         Value::If(c, _, _) => collect_blocked(c, out),
         Value::Proj(_, inner) => collect_blocked(inner, out),
-        Value::Var(_) | Value::Num(_) | Value::Bool(_) | Value::Closure(..) => {}
+        Value::Var(_) | Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) => {}
     }
 }
 
-fn apply_op(op: Op, a: i64, b: i64) -> Option<Value> {
+fn apply_num_op(op: Op, a: i64, b: i64) -> Option<Value> {
     Some(match op {
         Op::Add => Value::Num(a.checked_add(b)?),
         Op::Sub => Value::Num(a.checked_sub(b)?),
         Op::Mul => Value::Num(a.checked_mul(b)?),
         Op::Lt => Value::Bool(a < b),
         Op::Eq => Value::Bool(a == b),
+        Op::Concat => return None,
     })
+}
+
+fn apply_str_op(op: Op, a: &str, b: &str) -> Option<Value> {
+    match op {
+        Op::Concat => Some(Value::Str(format!("{a}{b}"))),
+        Op::Eq => Some(Value::Bool(a == b)),
+        Op::Add | Op::Sub | Op::Mul | Op::Lt => None,
+    }
+}
+
+fn apply_bool_op(op: Op, a: bool, b: bool) -> Option<Value> {
+    match op {
+        Op::Eq => Some(Value::Bool(a == b)),
+        Op::Add | Op::Sub | Op::Mul | Op::Lt | Op::Concat => None,
+    }
 }
 
 fn free_vars(exp: &Exp) -> HashSet<Id> {
@@ -132,7 +150,7 @@ fn free_vars(exp: &Exp) -> HashSet<Id> {
                 go(e, bound, out);
             }
             Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => go(e, bound, out),
-            Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => {}
+            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => {}
         }
     }
     let mut out = HashSet::new();
@@ -352,6 +370,7 @@ impl IncrEngine {
             },
             Exp::Num(n) => Value::Num(*n),
             Exp::Bool(b) => Value::Bool(*b),
+            Exp::Str(text) => Value::Str(text.clone()),
             Exp::Lam(id, ty, body) => {
                 Value::Closure(*id, ty.clone(), Arc::new((**body).clone()), env.clone())
             }
@@ -375,12 +394,15 @@ impl IncrEngine {
             Exp::BinOp(op, l, r) => {
                 let (vl, _) = self.eval_node(l, env);
                 let (vr, _) = self.eval_node(r, env);
-                match (&vl, &vr) {
-                    (Value::Num(a), Value::Num(b)) => match apply_op(*op, *a, *b) {
-                        Some(v) => v,
-                        None => Value::BinOp(*op, Box::new(vl), Box::new(vr)),
-                    },
-                    _ => Value::BinOp(*op, Box::new(vl), Box::new(vr)),
+                let applied = match (&vl, &vr) {
+                    (Value::Num(a), Value::Num(b)) => apply_num_op(*op, *a, *b),
+                    (Value::Str(a), Value::Str(b)) => apply_str_op(*op, a, b),
+                    (Value::Bool(a), Value::Bool(b)) => apply_bool_op(*op, *a, *b),
+                    _ => None,
+                };
+                match applied {
+                    Some(v) => v,
+                    None => Value::BinOp(*op, Box::new(vl), Box::new(vr)),
                 }
             }
             Exp::If(cond, then, else_) => {
@@ -495,7 +517,7 @@ fn walk_with_table(
             }
             hash
         }
-        Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => next_hash(table, idx),
+        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => next_hash(table, idx),
         Exp::Lam(id, _, body) => {
             let mut inner: Vec<(Id, Digest)> =
                 scope.iter().filter(|(bid, _)| bid != id).cloned().collect();
@@ -663,6 +685,40 @@ mod tests {
             "editing one leaf re-evaluated {delta} nodes, expected fewer than 10"
         );
         assert!(delta > 0, "the edited path must actually be recomputed");
+    }
+
+    #[test]
+    fn a_string_node_evaluates_caches_and_re_evaluates_only_its_own_path() {
+        let program = Exp::bin_op(
+            Op::Concat,
+            Exp::bin_op(Op::Concat, Exp::str_("hello"), Exp::str_(", ")),
+            Exp::str_("world"),
+        );
+        let mut engine = IncrEngine::new();
+        let outcome = engine.eval_with_fuel(&program, 10_000);
+        assert!(outcome.is_value());
+        assert_eq!(outcome.str(), Some("hello, world"));
+        let baseline = engine.node_evals;
+        assert_eq!(baseline, 5, "a cold cache evaluates every node once");
+
+        let again = engine.eval_with_fuel(&program, 10_000);
+        assert_eq!(again.str(), Some("hello, world"));
+        assert_eq!(
+            engine.node_evals, baseline,
+            "a second evaluation of the same strings evaluates nothing"
+        );
+
+        let dirty = dirty_set(&program, content_hash(&Exp::str_("world")));
+        engine.invalidate(&dirty);
+        let edited = Exp::bin_op(
+            Op::Concat,
+            Exp::bin_op(Op::Concat, Exp::str_("hello"), Exp::str_(", ")),
+            Exp::str_("there"),
+        );
+        let after = engine.eval_with_fuel(&edited, 10_000);
+        assert_eq!(after.str(), Some("hello, there"));
+        let delta = engine.node_evals - baseline;
+        assert!(delta > 0 && delta < 5, "re-evaluated {delta} nodes");
     }
 
     #[test]

@@ -325,3 +325,133 @@ judgement — `is_well_typed_in`, `Zipper::ctx_in`,
 `ctx_and_expected_ty_at_in` all take the context to start from, so the
 single-expression functions are the same functions applied at
 `Ctx::empty()`, and no typing rule was duplicated for definitions.
+
+### 2026-08-29 — Equality compares at one base type, and `?` is not one of them
+
+Phase B2 added `Str`, which forced a decision that Phase 1 had been able to
+duck: `Op::Eq` typed `Num × Num → Bool` because `Num` was the only thing
+worth comparing. With `Bool` and `Str` in the language that rule is
+arbitrary — `"a" == "b"` is the most ordinary thing a beginner will write.
+
+Three shapes were on the table.
+
+1. **`Eq : ? × ? → Bool`.** One line, and unsound in the way that matters
+   here: `?` is consistent with everything, so `1 == true` would typecheck
+   and the auto-quarantine would never fire. The whole point of this
+   editor is that a nonsense comparison lands visibly in `⦇⦈` instead of
+   being waved through, and this rule waves everything through.
+2. **A per-operand type variable** (`Eq : α × α → Bool`). Correct, and it
+   is the first thing in this language that would need unification. There
+   are no type variables anywhere in `core::ty`; adding one for a single
+   operator would put an inference engine underneath a calculus that has
+   deliberately been kept to consistency and matched judgements.
+3. **Compare at a single *base* type, chosen from the operands.**
+
+Decision: **(3).** `typing::is_comparable` admits `Num`, `Bool`, `Str` and
+`Hole`. `operand_ty(Eq, l, r)` synthesises both sides, requires both to be
+comparable, and takes τ to be the first of the two that is not `?`; both
+operands are then analysed against τ, so consistency does the rest. An
+operand that does not synthesise, or synthesises a function or a product,
+makes the comparison ill-typed and the editor quarantines it. `⦇⦈ == ⦇⦈`
+is well-typed at τ = `?`, which is what an editor that lets you write the
+operator before either side requires.
+
+Concretely: `1 == 2`, `true == false`, `"a" == "b"` and `⦇⦈ == 1` are
+well-typed; `1 == true`, `f == g` and `(1,2) == (1,2)` are not. Nothing
+that was well-typed under the old `Num`-only rule became ill-typed — the
+new rule is strictly more permissive — so this could not break an existing
+document, only accept more of them.
+
+The cost is that `Eq` is the only operator whose operand type depends on
+its sibling, and that shows up in exactly three places, all of which now
+take the operator: `typing::operand_expectation` (what the editor expects
+at a hole next to an `==`), `act::lhs_of_a_binop_fits` (whether
+`ConstructBinOp` wraps the focus or quarantines it first), and
+`repair::ensure_comparable` (what a merge does when it joins two branches
+into a comparison that cannot be made). One test changed behaviour and was
+adapted rather than deleted:
+`keys::operators_climb_so_left_to_right_typing_means_what_it_says` typed
+`1<2=3` and expected `⦇1 < 2⦈ == 3`, because `1 < 2 : Bool` was not
+comparable; it is now, so the same keystrokes give `1 < 2 == ⦇3⦈` — the
+quarantine moved from the left operand to the right, which is the correct
+answer and a better one.
+
+`Concat` needed no such thought: `Str × Str → Str`, unconditionally.
+
+### 2026-08-29 — What the first Phase B2 feature actually cost
+
+`spec-build.md` predicts that features get cheap once the thread is wired
+end to end. Strings are the first test of that prediction, so here is the
+bill, recorded whether or not it flatters the prediction.
+
+**Files touched: 50 modified, 5 added.** By layer:
+
+| layer | files | what changed |
+|---|---:|---|
+| type grammar | 1 | `Ty::Str`, one consistency row, `Display` |
+| expression grammar | 1 | `Exp::Str(String)`, `Exp::str_`, one reachability count |
+| typing | 1 | `syn` for `Str`, `Concat`, and the `Eq` rule above |
+| zipper | 1 | **no new frames** — a `Str` is a leaf, like `Num` |
+| actions | 4 | `ConstructStr`, op-aware wrapping, generators, script |
+| rendering | 1 | `escape_str`/`quote_str`, one precedence row |
+| serialisation | 8 (+2 new) | v2→v3, `store/src/v2.rs`, 15 committed v2 fixtures |
+| evaluation | 3 | `Dyn::Str`, `Value::Str`, the op split |
+| diff/merge | 4 | one `structurally_equal` row, `ensure_comparable`, a scenario |
+| hole context | 1 | one candidate, one template |
+| provenance | 1 | one `shallow_key` row |
+| TUI | 6 | the string run, the status line, the beginner voice, the matrix |
+| benchmark | 3 (+3 new) | the sixth reference program |
+| docs | 4 | `KEYS.md`, `FORMAT.md`, `bench/references.md`, this file |
+
+**Tests: 38 added**, 6 honestly adapted, 0 deleted. The count was 710
+before and is 748 after. Added, by crate: core 9, eval 3, store 5, merge 4,
+agentapi 5, tui 11, cli 1. The proptest generators grew a `Str` arm and the
+sensibility suite went from 26 to 27 action variants; it still passes at
+10 000 cases.
+
+**Adapted, each for a real reason:** four tests asserted that the *string*
+`"Str"` was not a parseable type (in `script.rs`, `encode.rs`,
+`text_parse.rs`) — it is one now, so they assert on `Text` instead and each
+gained string cases of its own. Two asserted the format's version number as
+a literal `2` and now read `VERSION_MAJOR`. One —
+`operators_climb_so_left_to_right_typing_means_what_it_says` — changed
+answer, for the reason given in the entry above.
+
+**What was free.** The zipper (no new frame: a leaf needs none). Evaluation
+around holes (the `Str` arms are three lines and the indeterminate cases
+were already generic). The CLI (`run` and `check` needed *nothing* — the
+first feature in this project to reach the command line without a line of
+code). Auto-quarantine, completion ranking, undo, the projections other
+than the beginner one, incremental caching, content addressing.
+
+**What fought back, in order of how much:**
+
+1. **The keyboard.** A string is the first thing in this language that is
+   *delimited* — every other literal ends when a non-matching key is
+   pressed, and a string cannot, because every printable key belongs to it.
+   That is a run with an explicit close, and the escape character needs one
+   keystroke of lookahead (`\` arms; the next key is taken literally),
+   which is the single non-committing keystroke in an editor whose whole
+   invariant is that keystrokes commit. It is documented as such in
+   `KEYS.md` rather than hidden. Designing this on paper first, before any
+   code, was the right order and would have been the right order even if
+   the task had not required it.
+2. **`Eq`.** See the entry above. The only place where a new *value* type
+   forced a change to an existing *rule* rather than an addition to it.
+3. **The format.** v2→v3 is four new tags and no shape change, so the
+   reader is the same reader; the work was generating the v2 fixture set
+   from the genuinely-unmodified v2 encoder (`git stash`, generate, pop)
+   *before* touching the encoder, so the v3 reader is tested against real
+   v2 bytes instead of bytes produced by the code under test.
+4. **The 80×12 status line.** Adding `"` and `&` to the key hint line
+   wrapped it and broke an unrelated layout test. Cosmetic, but it is the
+   kind of thing that only shows up because the tests are pixel-honest.
+
+**Verdict on the prediction: mostly held.** Nine of the fourteen layers
+were a row in a table or a match arm. The two that were not — the keyboard
+and `Eq` — were not expensive because the architecture resisted them; they
+were expensive because a delimited literal and a polymorphic comparison are
+genuinely new *design* questions that no amount of prior wiring answers for
+you. The next value type (a character, a byte string) would be nearly free.
+A type with *structure* would not be, and nothing here is evidence that it
+would.

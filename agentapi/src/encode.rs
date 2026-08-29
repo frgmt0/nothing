@@ -14,6 +14,7 @@ pub fn op_str(op: Op) -> &'static str {
         Op::Mul => "Mul",
         Op::Lt => "Lt",
         Op::Eq => "Eq",
+        Op::Concat => "Concat",
     }
 }
 
@@ -24,6 +25,7 @@ pub fn op_from_str(text: &str) -> Option<Op> {
         "mul" | "*" => Some(Op::Mul),
         "lt" | "<" => Some(Op::Lt),
         "eq" | "==" => Some(Op::Eq),
+        "concat" | "++" => Some(Op::Concat),
         _ => None,
     }
 }
@@ -47,6 +49,7 @@ pub fn ty_json(ty: &Ty) -> Json {
     match ty {
         Ty::Num => Json::obj(vec![("ty", Json::str("Num"))]),
         Ty::Bool => Json::obj(vec![("ty", Json::str("Bool"))]),
+        Ty::Str => Json::obj(vec![("ty", Json::str("Str"))]),
         Ty::Hole => Json::obj(vec![("ty", Json::str("Hole"))]),
         Ty::Arrow(a, b) => Json::obj(vec![
             ("ty", Json::str("Arrow")),
@@ -72,6 +75,7 @@ pub fn ty_from_json(value: &Json) -> Result<Ty, String> {
     match tag {
         "Num" => Ok(Ty::Num),
         "Bool" => Ok(Ty::Bool),
+        "Str" => Ok(Ty::Str),
         "Hole" => Ok(Ty::Hole),
         "Arrow" => {
             let from = value
@@ -123,6 +127,10 @@ pub fn exp_json(exp: &Exp, names: &NameTable) -> Json {
         ]),
         Exp::Num(n) => Json::obj(vec![("exp", Json::str("Num")), ("value", Json::Int(*n))]),
         Exp::Bool(b) => Json::obj(vec![("exp", Json::str("Bool")), ("value", Json::Bool(*b))]),
+        Exp::Str(text) => Json::obj(vec![
+            ("exp", Json::str("Str")),
+            ("value", Json::str(text.clone())),
+        ]),
         Exp::BinOp(op, l, r) => Json::obj(vec![
             ("exp", Json::str("BinOp")),
             ("op", Json::str(op_str(*op))),
@@ -171,6 +179,7 @@ pub fn exp_kind(exp: &Exp) -> &'static str {
         Exp::Ap(..) => "Ap",
         Exp::Num(_) => "Num",
         Exp::Bool(_) => "Bool",
+        Exp::Str(_) => "Str",
         Exp::BinOp(..) => "BinOp",
         Exp::If(..) => "If",
         Exp::Let(..) => "Let",
@@ -198,6 +207,10 @@ pub fn action_json(action: &Action) -> Json {
         Action::ConstructBool(b) => Json::obj(vec![
             ("action", Json::str("ConstructBool")),
             ("value", Json::Bool(*b)),
+        ]),
+        Action::ConstructStr(text) => Json::obj(vec![
+            ("action", Json::str("ConstructStr")),
+            ("value", Json::str(text.clone())),
         ]),
         Action::ConstructVar(id) => Json::obj(vec![
             ("action", Json::str("ConstructVar")),
@@ -286,6 +299,12 @@ pub fn action_from_json(value: &Json) -> Result<Action, String> {
                 .ok_or_else(|| "`ConstructBool` needs a boolean `value`".to_string())?;
             Ok(Action::ConstructBool(b))
         }
+        "ConstructStr" => {
+            let text = field(value, "value", tag)?
+                .as_str()
+                .ok_or_else(|| "`ConstructStr` needs a string `value`".to_string())?;
+            Ok(Action::ConstructStr(text.to_string()))
+        }
         "ConstructVar" => Ok(Action::ConstructVar(id_field(value, "id", tag)?)),
         "ConstructLam" => Ok(Action::ConstructLam),
         "ConstructAp" => Ok(Action::ConstructAp),
@@ -371,7 +390,7 @@ pub fn holes(exp: &Exp) -> (usize, usize) {
                 *non_empty += 1;
                 go(inner, empty, non_empty);
             }
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => {}
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
             Exp::Lam(_, _, b) | Exp::Proj(_, b) => go(b, empty, non_empty),
             Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
                 go(a, empty, non_empty);
@@ -398,7 +417,7 @@ pub fn hole_ids(exp: &Exp) -> Vec<HoleId> {
                 out.push(*h);
                 go(inner, out);
             }
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => {}
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
             Exp::Lam(_, _, b) | Exp::Proj(_, b) => go(b, out),
             Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
                 go(a, out);
@@ -487,7 +506,9 @@ mod tests {
             r#"{"action":"ConstructNum"}"#,
             r#"{"action":"ConstructVar","id":"nine"}"#,
             r#"{"action":"ConstructBinOp","op":"pow"}"#,
-            r#"{"action":"SetAnn","ty":"Str"}"#,
+            r#"{"action":"SetAnn","ty":"Text"}"#,
+            r#"{"action":"ConstructStr"}"#,
+            r#"{"action":"ConstructStr","value":3}"#,
         ] {
             let value = parse(text).unwrap();
             assert!(action_from_json(&value).is_err(), "{text}");

@@ -1,0 +1,45 @@
+# 6. Greeting formatter (bench/references.md §6). A function that builds a
+# piece of text: two string literals joined around a variable, chosen by a
+# conditional.
+#
+#   λx0:Str. λx1:Bool. if x1 then "Good evening, " ++ x0 ++ "." else "hi " ++ x0 ++ "!"
+#
+# The only change from the reference is currying: `nothing` has no
+# multi-argument functions, so `greet(name, formal)` is two nested lambdas.
+
+# λx0:Str. ⦇⦈
+construct-lam
+move-parent
+rename x0
+set-ann Str
+move-child 0
+
+# λx1:Bool. ⦇⦈
+construct-lam
+move-parent
+rename x1
+set-ann Bool
+move-child 0
+
+# if x1 then ⦇⦈ else ⦇⦈
+construct-if
+construct-var x1
+move-next-sibling
+
+# then: "Good evening, " ++ x0 ++ "."
+construct-str "Good evening, "
+construct-binop concat
+construct-var x0
+move-parent
+construct-binop concat
+construct-str "."
+
+# else: "hi " ++ x0 ++ "!"
+move-parent
+move-next-sibling
+construct-str "hi "
+construct-binop concat
+construct-var x0
+move-parent
+construct-binop concat
+construct-str "!"

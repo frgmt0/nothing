@@ -27,6 +27,7 @@ pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
         (Exp::Var(x), Exp::Var(y)) => x == y,
         (Exp::Num(x), Exp::Num(y)) => x == y,
         (Exp::Bool(x), Exp::Bool(y)) => x == y,
+        (Exp::Str(x), Exp::Str(y)) => x == y,
         (Exp::Lam(x, tx, bx), Exp::Lam(y, ty, by)) => {
             x == y && tx == ty && structurally_equal(bx, by)
         }

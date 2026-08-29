@@ -9,10 +9,20 @@ magic bytes below.
 A "document" is the three things a saved program needs: the **definitions**,
 the name table, and the action log that produced it.
 
-**Format version 2** (this revision) replaces version 1's single expression
-with an ordered list of top-level definitions. Version 1 files still open —
-see §11, which is normative: a migrating reader for the previous version
-ships with every format change from here on.
+**Format version 3** (this revision) adds string literals: a node tag, a
+`Ty` tag, an `Op` tag and an action tag, and nothing else — the layout of
+§3.1 is unchanged from version 2. Version 1 and version 2 files still open
+— see §11, which is normative: a migrating reader for every previous
+version ships with every format change from here on.
+
+A string literal is **data, not a name**. Every other payload in this
+format that contains user-visible text — a definition's display name, a
+binder's name — lives in the name table (§7), keyed by a uuid, because
+those are *identities* the program refers to and the editor renames. The
+bytes inside `Str` are none of that: they are the value the program
+computes with, exactly as `Num`'s `i64` is. So they are stored inline in
+the node (§5), they are hashed as meaning (§6), and renaming has nothing
+to say about them.
 
 ---
 
@@ -49,7 +59,7 @@ raw bytes.
 ```
 offset  size  field
 0       4     magic:   4E 54 48 47   ("NTHG", ASCII)
-4       1     version_major:  0x02
+4       1     version_major:  0x03
 5       1     version_minor:  0x00
 6       1     kind:    0x01 (Document — the only kind this version defines)
 ```
@@ -66,7 +76,9 @@ node-table-only export); this version of the format only ever writes
 Everything after the 7-byte header is, in order: the **definition list**
 (§3.1), the **name table**, the **action log**. A `version_major` of `0x01`
 selects the version-1 layout instead (**node table**, **root index**, name
-table, action log) and is decoded through the migrating reader in §11.
+table, action log) and is decoded through the migrating reader in §11; a
+`version_major` of `0x02` selects a layout identical to this one minus the
+tags added in version 3, and is read by the same body decoder.
 
 ## 3.1 The definition list
 
@@ -182,10 +194,12 @@ decode").
 | 9 | `Proj(side, e)` | 1 byte: `side` (§5.3) | `[e]` |
 | 10 | `EmptyHole(h)` | 16 bytes: `h` | none |
 | 11 | `NonEmptyHole(h, e)` | 16 bytes: `h` | `[e]` |
+| 12 | `Str(s)` | a string (§1): varint byte length, then that many UTF-8 bytes | none |
 
-This table is exhaustive over the twelve `Exp` variants as of Phase 5. If a
-thirteenth variant is added to `core::exp::Exp`, it gets the next tag
-(`12`) and a row here; a reader must treat an unrecognised tag as a hard
+This table is exhaustive over the thirteen `Exp` variants as of Phase B2.
+Tags 0–11 are unchanged from version 2; tag `12` is the version-3 addition.
+If a fourteenth variant is added to `core::exp::Exp`, it gets the next tag
+(`13`) and a row here; a reader must treat an unrecognised tag as a hard
 decode error, not skip it silently (the `payload_len`/`children_count`
 framing lets it skip the *bytes*, but it cannot reconstruct an `Exp` it has
 no variant for).
@@ -202,10 +216,11 @@ determined entirely by the tag byte):
 | 2 | `Arrow(a, b)` | `Ty(a)` then `Ty(b)` |
 | 3 | `Prod(a, b)` | `Ty(a)` then `Ty(b)` |
 | 4 | `Hole` | none |
+| 5 | `Str` | none |
 
 #### 5.2 `Op` encoding (1 byte)
 
-`Add = 0`, `Sub = 1`, `Mul = 2`, `Lt = 3`, `Eq = 4`.
+`Add = 0`, `Sub = 1`, `Mul = 2`, `Lt = 3`, `Eq = 4`, `Concat = 5`.
 
 #### 5.3 `Side` encoding (1 byte)
 
@@ -257,8 +272,13 @@ full, via the §5.1 encoding — `λx:Num.x` and `λx:Bool.x` are genuinely
 different programs, and nothing about that distinction is identity rather
 than meaning.
 
-Everything else (`Num`'s `i64`, `Bool`'s bit, `BinOp`/`Proj`'s `Op`/`Side`
-tag) is meaning, not identity, and is hashed as its literal bytes — see the
+Everything else (`Num`'s `i64`, `Bool`'s bit, `Str`'s UTF-8 bytes,
+`BinOp`/`Proj`'s `Op`/`Side` tag) is meaning, not identity, and is hashed
+as its literal bytes. A `Str` node in particular hashes its **text**, with
+its varint length prefix, into the canonical payload: `"a" ++ "b"` and
+`"a" ++ "c"` are different programs and must have different content
+hashes, or the incremental evaluator would reuse a cached result across an
+edit that changed the answer — see the
 "canonical payload" column implied by §5's payload column, minus the `Id`
 and `HoleId` fields called out above.
 
@@ -358,12 +378,14 @@ log_entry:
 | 23 | `MoveNextDef` | empty |
 | 24 | `MovePrevDef` | empty |
 | 25 | `MoveToDef(id)` | 16 bytes |
+| 26 | `ConstructStr(s)` | a string (§1) |
 
-This table is exhaustive over the twenty-six `Action` variants as of
-format version 2. Tags 0–19 are unchanged from version 1, so a version-1
-log decodes under the version-2 reader without translation. The same rule
-as §5 applies to a future twenty-seventh variant: next tag, new row, hard
-decode error on an unrecognised tag rather than a silent skip.
+This table is exhaustive over the twenty-seven `Action` variants as of
+format version 3. Tags 0–19 are unchanged from version 1 and tags 0–25 from
+version 2, so an older log decodes under the current reader without
+translation. The same rule as §5 applies to a future twenty-eighth variant:
+next tag, new row, hard decode error on an unrecognised tag rather than a
+silent skip.
 
 Note that renaming a *definition* uses tag 18, `Rename` — the same action
 that renames a lambda binder, because a definition's display name lives in
@@ -413,10 +435,10 @@ byte-for-byte here the way the binary format is; it is not a wire format,
 and Phase 7 only asks that it exist.
 
 
-## 11. Migration from version 1
+## 11. Migration from versions 1 and 2
 
-Format stability starts at version 1, so version 1 files open. The reader
-dispatches on `version_major` in the header (§3):
+Format stability starts at version 1, so every earlier version's files
+open. The reader dispatches on `version_major` in the header (§3):
 
 - `0x01` → `store::v1::decode_document_v1`, the version-1 layout: node
   table, root index, name table, action log. It is a complete, separate
@@ -424,11 +446,18 @@ dispatches on `version_major` in the header (§3):
   except by the migration test's fixture builder
   (`store::v1::encode_document_v1`, which exists so the migration path is
   exercised against real v1 bytes rather than a hypothesis).
-- `0x02` → the version-2 layout in §3.1.
+- `0x02` → the version-2 body layout, which is the §3.1 layout: the same
+  `decode_defs` the current version uses reads it, because version 3 added
+  only tags, never a shape. A version-2 file simply cannot contain any of
+  them. `store::v2::encode_document_v2` exists for the same reason
+  `encode_document_v1` does — the committed v2 fixtures under
+  `store/fixtures/v2/` are generated by it, so the version-3 reader is
+  exercised against real version-2 bytes rather than a hypothesis.
+- `0x03` → the current layout in §3.1.
 - anything else → `DecodeError::UnsupportedVersion`.
 
-A version-1 file is a single expression. It becomes a version-2 document
-with exactly one definition:
+A version-1 file is a single expression. It becomes a document with
+exactly one definition:
 
 | field | value |
 |-------|-------|
@@ -444,9 +473,15 @@ hashes are stable. And two people who migrate the *same* v1 file
 independently get the same definition id, so the merge engine matches
 their definitions instead of seeing an add-and-delete pair.
 
+Version 2 → version 3 needs no rewriting at all: every version-2 node,
+type, operator and action tag means the same thing under version 3, and
+version 3 only added tags version 2 never wrote. The migration is the
+header bump, and it happens on save.
+
 Migration is read-only and lossless in the direction that matters: the
 name table and the action log carry across untouched (§8's tags 0–19 are
-version-stable), and the expression is byte-identical after re-encoding
-as the single definition's node table. There is no v2 → v1 writer;
-saving a migrated file writes version 2, and the version-1 bytes on disk
-are only replaced when the user saves.
+version-stable across all three versions, and 20–25 across the last two),
+and the expression is byte-identical after re-encoding as the single
+definition's node table. There is no downgrading writer; saving a migrated
+file writes the current version, and the older bytes on disk are only
+replaced when the user saves.

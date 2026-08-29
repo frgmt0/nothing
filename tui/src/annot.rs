@@ -25,7 +25,7 @@ pub fn accept(buffer: &str, c: char) -> Accept {
         ')' if open_parens(buffer) > 0 => Accept::Append,
         ')' => Accept::Ignore,
         c if c.is_alphabetic() && in_word(buffer) => Accept::Swallow,
-        'n' | 'N' | 'b' | 'B' => Accept::Append,
+        'n' | 'N' | 'b' | 'B' | 's' | 'S' => Accept::Append,
         _ => Accept::Exit,
     }
 }
@@ -47,6 +47,7 @@ fn tokens(buffer: &str) -> Vec<Tok> {
             match c {
                 'n' | 'N' => out.push(Tok::Base("Num")),
                 'b' | 'B' => out.push(Tok::Base("Bool")),
+                's' | 'S' => out.push(Tok::Base("Str")),
                 '?' => out.push(Tok::Base("?")),
                 '>' => out.push(Tok::Op("->")),
                 '*' => out.push(Tok::Op("*")),

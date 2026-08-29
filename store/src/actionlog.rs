@@ -70,6 +70,10 @@ fn encode_action_body(buf: &mut Vec<u8>, action: &Action) {
             buf.push(25);
             write_id(buf, *id);
         }
+        Action::ConstructStr(text) => {
+            buf.push(26);
+            write_string(buf, text);
+        }
     }
 }
 
@@ -134,6 +138,10 @@ fn decode_action_body(bytes: &[u8], pos: &mut usize) -> Result<Action, DecodeErr
         25 => {
             let id = read_id(bytes, pos)?;
             Ok(Action::MoveToDef(id))
+        }
+        26 => {
+            let text = read_string(bytes, pos)?;
+            Ok(Action::ConstructStr(text))
         }
         other => Err(DecodeError::BadTag(other)),
     }

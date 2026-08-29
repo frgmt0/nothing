@@ -46,6 +46,7 @@ pub struct HoleContext {
 
 pub const NUM_TEMPLATE: &str = "construct-num <integer>";
 pub const BOOL_TEMPLATE: &str = "construct-bool <true|false>";
+pub const STR_TEMPLATE: &str = "construct-str \"<text>\"";
 
 fn cursor_path(state: &EditState) -> Vec<usize> {
     state.zipper.path.iter().map(Frame::child_index).collect()
@@ -106,6 +107,7 @@ fn candidate_actions(state: &EditState) -> Vec<Action> {
         Action::ConstructNum(0),
         Action::ConstructBool(true),
         Action::ConstructBool(false),
+        Action::ConstructStr(String::new()),
     ];
     for binding in in_scope(state) {
         out.push(Action::ConstructVar(binding.id));
@@ -118,6 +120,7 @@ fn candidate_actions(state: &EditState) -> Vec<Action> {
         Action::ConstructBinOp(Op::Mul),
         Action::ConstructBinOp(Op::Lt),
         Action::ConstructBinOp(Op::Eq),
+        Action::ConstructBinOp(Op::Concat),
         Action::ConstructIf,
         Action::ConstructLet,
         Action::ConstructPair,
@@ -145,6 +148,7 @@ fn template_for(action: &Action) -> Option<String> {
     match action {
         Action::ConstructNum(_) => Some(NUM_TEMPLATE.to_string()),
         Action::ConstructBool(_) => Some(BOOL_TEMPLATE.to_string()),
+        Action::ConstructStr(_) => Some(STR_TEMPLATE.to_string()),
         _ => None,
     }
 }
@@ -452,6 +456,52 @@ mod tests {
         assert!(
             steps.iter().any(|s| s == "construct-num 0"),
             "a Num hole must offer a number: {steps:?}"
+        );
+    }
+
+    #[test]
+    fn a_str_hole_offers_a_string_with_a_template_and_nothing_that_quarantines() {
+        let state = state_from("construct-str \"a\"\nconstruct-binop concat\n");
+        assert_eq!(
+            ctx_and_expected_ty_at_in(&state.scope(), &state.zipper).1,
+            Ty::Str,
+            "the right operand of ++ expects Str"
+        );
+        assert_constructions_are_clean(&state);
+
+        let offered = well_typed_constructions(&state);
+        let steps: Vec<String> = offered.iter().filter_map(|c| c.step.clone()).collect();
+        assert!(
+            steps.iter().any(|s| s == "construct-str \"\""),
+            "a Str hole must offer a string: {steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.starts_with("construct-num")),
+            "a Str hole offered a number: {steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.starts_with("construct-bool")),
+            "a Str hole offered a boolean: {steps:?}"
+        );
+        assert_eq!(
+            offered
+                .iter()
+                .find(|c| matches!(c.action, Action::ConstructStr(_)))
+                .and_then(|c| c.template.clone()),
+            Some(STR_TEMPLATE.to_string())
+        );
+    }
+
+    #[test]
+    fn a_num_hole_does_not_offer_a_string() {
+        let state = state_from("construct-num 1\nconstruct-binop add\n");
+        let steps: Vec<String> = well_typed_constructions(&state)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        assert!(
+            !steps.iter().any(|s| s.starts_with("construct-str")),
+            "a Num hole offered a string: {steps:?}"
         );
     }
 

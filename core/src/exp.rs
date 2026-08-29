@@ -143,6 +143,7 @@ pub enum Op {
     Mul,
     Lt,
     Eq,
+    Concat,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -158,6 +159,7 @@ pub enum Exp {
     Ap(Box<Exp>, Box<Exp>),
     Num(i64),
     Bool(bool),
+    Str(String),
     BinOp(Op, Box<Exp>, Box<Exp>),
     If(Box<Exp>, Box<Exp>, Box<Exp>),
     Let(Id, Box<Exp>, Box<Exp>),
@@ -198,6 +200,10 @@ impl Exp {
 
     pub fn bool_(b: bool) -> Exp {
         Exp::Bool(b)
+    }
+
+    pub fn str_(s: impl Into<String>) -> Exp {
+        Exp::Str(s.into())
     }
 
     pub fn bin_op(op: Op, lhs: impl Into<Box<Exp>>, rhs: impl Into<Box<Exp>>) -> Exp {
@@ -250,6 +256,7 @@ mod tests {
             Exp::ap(Exp::var(x), Exp::num(1)),
             Exp::num(42),
             Exp::bool_(true),
+            Exp::str_("hello"),
             Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)),
             Exp::if_(Exp::bool_(true), Exp::num(1), Exp::num(2)),
             Exp::let_(x, Exp::num(1), Exp::var(x)),
@@ -259,7 +266,7 @@ mod tests {
             Exp::non_empty_hole(h1, Exp::bool_(true)),
         ];
 
-        assert_eq!(exps.len(), 12);
+        assert_eq!(exps.len(), 13);
     }
 
     #[test]

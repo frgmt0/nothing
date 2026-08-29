@@ -127,6 +127,22 @@ fn run_prints_a_value_for_a_program_that_finishes() {
 }
 
 #[test]
+fn run_and_check_handle_a_string_program() {
+    let greeting = Exp::bin_op(
+        nothing_core::exp::Op::Concat,
+        Exp::str_("hello, "),
+        Exp::str_("world"),
+    );
+    let path = write_fixture("run-string.nothing", greeting);
+    let (code, stdout, _) = run(&["check", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert!(stdout.contains("well-typed: true"));
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert_eq!(stdout.trim(), "\"hello, world\"");
+}
+
+#[test]
 fn run_reports_an_indeterminate_result_and_its_hole() {
     let path = write_fixture("run-indeterminate.nothing", examples::add_with_empty_hole());
     let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);

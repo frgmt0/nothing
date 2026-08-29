@@ -133,14 +133,14 @@ pub fn references(exp: &Exp, target: Id) -> bool {
         Exp::If(c, t, e) => references(c, target) || references(t, target) || references(e, target),
         Exp::Proj(_, e) => references(e, target),
         Exp::NonEmptyHole(_, e) => references(e, target),
-        Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => false,
+        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => false,
     }
 }
 
 pub fn vacate(exp: &Exp, target: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
     match exp {
         Exp::Var(id) if *id == target => Exp::empty_hole(fresh()),
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => exp.clone(),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => exp.clone(),
         Exp::Lam(id, ty, body) => {
             if *id == target {
                 exp.clone()

@@ -82,56 +82,67 @@ MOVEMENT                                   LITERALS & NAMES
   ←      prev sibling/slot   MovePrevSib     a-zA-Z_  name run: live-filtered,
   Tab    next hole, either kind (wraps)            type-ranked, commit-live
   S-Tab  previous hole, either kind                (true/false are candidates)
-
-OPERATORS  (climb, then wrap)             FORMS  (wrap the focus)
-  +   add        e + ⦇⦈    ConstructBinOp    space  apply       e ⦇⦈   ConstructAp
-  -   subtract   e - ⦇⦈         "            \      lambda      λ⦇⦈:?. e   …Lam
-  *   multiply   e * ⦇⦈         "            ?      if e then ⦇⦈ else ⦇⦈   …If
-  <   less than  e < ⦇⦈         "            ;      let ⦇⦈ = e in ⦇⦈       …Let
-  =   equals     e == ⦇⦈        "            ,      pair        (e, ⦇⦈)   …Pair
-                                             [  ]   fst e / snd e   ConstructProj
-IN A BINDER-NAME SLOT                        !      quarantine  ⦇e⦈   …NonEmptyHole
-  a-zA-Z0-9_  name the binder  Rename
-  :   → annotation slot                   HOLES & HISTORY
-  =   → bound expression (let)              Bksp  run: un-type one char ·
-  .   → body                                      empty hole: ascend · else Delete
-                                            Del   focus → ⦇⦈           Delete
-IN AN ANNOTATION SLOT (re-issues SetAnn)    Enter Finish the ⦇e⦈ on or around
-  n Num  b Bool  ? unknown  > arrow               the cursor, else next hole
-  * product  ( ) grouping  Bksp drop tok    Esc   end the name run (no-op else)
-  .  → body     Tab/Enter → next hole       C-z / C-r  undo / redo · C-q quit
-
-DEFINITIONS  (the document is a list of them; a body may call any of them)
+                                             "    string run: open, and close
+OPERATORS  (climb, then wrap)                     with " again. Inside it every
+  +   add        e + ⦇⦈    ConstructBinOp        printable key is one character
+  -   subtract   e - ⦇⦈         〃                of text; \" and \\ escape
+  *   multiply   e * ⦇⦈         〃
+  <   less than  e < ⦇⦈         〃         FORMS  (wrap the focus)
+  =   equals     e == ⦇⦈        〃           space  apply       e ⦇⦈   ConstructAp
+  &   join text  e ++ ⦇⦈        〃           \      lambda      λ⦇⦈:?. e   …Lam
+                                             ?      if e then ⦇⦈ else ⦇⦈   …If
+IN A BINDER-NAME SLOT                        ;      let ⦇⦈ = e in ⦇⦈       …Let
+  a-zA-Z0-9_  name the binder  Rename        ,      pair        (e, ⦇⦈)   …Pair
+  :   → annotation slot                      [  ]   fst e / snd e   ConstructProj
+  =   → bound expression (let)               !      quarantine  ⦇e⦈   …NonEmptyHole
+  .   → body
+                                          HOLES & HISTORY
+IN AN ANNOTATION SLOT (re-issues SetAnn)    Bksp  run: un-type one char ·
+  n Num  b Bool  s Str  ? unknown                 empty hole: ascend · else Delete
+  > arrow  * product  ( ) grouping          Del   focus → ⦇⦈           Delete
+  Bksp drop tok  .  → body                  Enter Finish the ⦇e⦈ on or around
+  Tab/Enter → next hole                           the cursor, else next hole
+                                            Esc   end the run (no-op otherwise)
+DEFINITIONS  (the document is a list of      C-z / C-r  undo / redo · C-q quit
+  them; a body may call any of them)
   C-↓  next definition      MoveNextDef      C-l  → definition-name slot
   C-↑  previous definition  MovePrevDef      C-t  → definition-type slot
   C-n  new definition, cursor in its name    CreateDefinition
   C-d  drop this definition (never the last) DeleteDefinition
 ```
 
-37 bindings. Deliberately unbound and held in reserve for Phase 6+:
-`( ) { } / | & ^ % $ # @ ' " . >` outside the slots, and `` ` ``.
+39 bindings. Deliberately unbound and held in reserve for Phase 6+:
+`( ) { } / | ^ % $ # @ ' . >` outside the slots, and `` ` ``.
+
+`&` rather than a doubled `+`: `++` cannot be two keystrokes, because the
+first `+` would already have committed an addition, and a key whose meaning
+depends on what the previous key built is the lookahead this grammar spends
+nothing on. `&` is the join-text operator most non-programmers have already
+met (spreadsheets, Basic), it is not an operator on numbers, so it never means
+two things, and `+` stays arithmetic so `1 + 2` never has to be disambiguated.
 
 ---
 
 ## The printable-character matrix
 
-Normative. Seven contexts cover every place a cursor can be; number entry
+Normative. Eight contexts cover every place a cursor can be; number entry
 is not a context because it is a pure function of the focused node.
 
-| | **A** empty hole `⦇⦈` | **B** written expr `e` | **C** focused `Num n` | **D** mid-name run | **E** annotation slot | **F** binder-name slot | **G** non-empty hole `⦇e⦈` |
-|---|---|---|---|---|---|---|---|
-| **digit** `0-9` | `ConstructNum(d)` | replace: `ConstructNum(d)` | **append**: `n·10±d` | append to run, re-filter, re-commit | exit → body, reprocess | append to name | descend into `e`, then as its column |
-| **letter / `_`** | start name run | start name run (commit replaces `e`) | start name run | append, re-filter, re-commit | `n`/`b` set base type (spelled `num`/`bool` also works — unknown letters inside a spelled name are swallowed); other letters exit → body, reprocess | append to name | descend, then as inner |
-| **op** `+ - * < =` | wrap: `⦇⦈ op ⦇⦈` | climb, then wrap | climb, then wrap | end run, then as B | `*` product; others exit → body, reprocess | `=` on a `let` → bound slot; others exit → body, reprocess | descend, then as inner |
-| **form** `space \ ? ; ,` | insert the form | climb (`\ ? ; ,`), then wrap | climb, then wrap | end run, then as B | `?` = the unknown type; others exit → body, reprocess | exit → body, reprocess | descend, then as inner |
-| **`[` `]`** | `fst ⦇⦈` / `snd ⦇⦈` | climb (app-level), then wrap | wrap: `fst ⦇n⦈` (quarantined) | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner |
-| **`!`** | wrap the hole: `⦇⦇⦈⦈` | quarantine: `⦇e⦈` | `⦇n⦈` | end run, then as B | exit → body, reprocess | exit → body, reprocess | **acts on the wrapper**: `⦇⦇e⦈⦈` |
-| **`~`** | no-op, hint | no-op unless `Num` | negate: `ConstructNum(-n)` | end run, then as B | exit → body, reprocess | no-op | descend, then as inner |
-| **`:`** | no-op, hint "annotations live on binders" | focused `Lam`: → its annotation slot; else no-op + hint | no-op, hint | end run, then as B | no-op | → annotation slot (`Lam` only) | descend, then as inner |
-| **`.`** | no-op, hint | no-op, hint | no-op, hint | end run, then as B | → body slot | → body slot | descend, then as inner |
-| **anything else** | no-op, status-line hint | no-op, hint | no-op, hint | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner |
+| | **A** empty hole `⦇⦈` | **B** written expr `e` | **C** focused `Num n` | **D** mid-name run | **E** annotation slot | **F** binder-name slot | **G** non-empty hole `⦇e⦈` | **H** inside a string `"s»«"` |
+|---|---|---|---|---|---|---|---|---|
+| **digit** `0-9` | `ConstructNum(d)` | replace: `ConstructNum(d)` | **append**: `n·10±d` | append to run, re-filter, re-commit | exit → body, reprocess | append to name | descend into `e`, then as its column | append the character |
+| **letter / `_`** | start name run | start name run (commit replaces `e`) | start name run | append, re-filter, re-commit | `n`/`b`/`s` set base type (spelled `num`/`bool`/`str` also works — unknown letters inside a spelled name are swallowed); other letters exit → body, reprocess | append to name | descend, then as inner | append the character |
+| **op** `+ - * < = &` | wrap: `⦇⦈ op ⦇⦈` | climb, then wrap | climb, then wrap | end run, then as B | `*` product; others exit → body, reprocess | `=` on a `let` → bound slot; others exit → body, reprocess | descend, then as inner | append the character |
+| **form** `space \ ? ; ,` | insert the form | climb (`\ ? ; ,`), then wrap | climb, then wrap | end run, then as B | `?` = the unknown type; others exit → body, reprocess | exit → body, reprocess | descend, then as inner | append — except `\`, which arms the escape |
+| **`"`** | `ConstructStr("")`, run opens | replace: `ConstructStr("")`, run opens — on a focused `Str`, **re-open** at its end | replace: `ConstructStr("")`, run opens | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | **close the run**; armed, append `"` |
+| **`[` `]`** | `fst ⦇⦈` / `snd ⦇⦈` | climb (app-level), then wrap | wrap: `fst ⦇n⦈` (quarantined) | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`!`** | wrap the hole: `⦇⦇⦈⦈` | quarantine: `⦇e⦈` | `⦇n⦈` | end run, then as B | exit → body, reprocess | exit → body, reprocess | **acts on the wrapper**: `⦇⦇e⦈⦈` | append the character |
+| **`~`** | no-op, hint | no-op unless `Num` | negate: `ConstructNum(-n)` | end run, then as B | exit → body, reprocess | no-op | descend, then as inner | append the character |
+| **`:`** | no-op, hint "annotations live on binders" | focused `Lam`: → its annotation slot; else no-op + hint | no-op, hint | end run, then as B | no-op | → annotation slot (`Lam` only) | descend, then as inner | append the character |
+| **`.`** | no-op, hint | no-op, hint | no-op, hint | end run, then as B | → body slot | → body slot | descend, then as inner | append the character |
+| **anything else** | no-op, status-line hint | no-op, hint | no-op, hint | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | printable: append; otherwise close the run, reprocess |
 
-Four rules generalise the table:
+Five rules generalise the table:
 
 - **Typing replaces the selection.** A leaf construction overwrites a
   written expression; `C-z` is one key. The one exception is a digit on a
@@ -148,6 +159,12 @@ Four rules generalise the table:
 - **"End run, then as B"** means the name run is already committed (see
   below), so the key simply acts on the committed focus. No keystroke is
   consumed by the run ending.
+- **Column H is one rule, not eleven.** Inside a string every printable
+  character is a character of the string; only `"` (close), `\` (arm the
+  escape) and `Bksp` (un-type one character) mean anything else, and every
+  non-printable key closes the run and is reprocessed. The column is spelled
+  out row by row anyway because a matrix that had an exception in it would be
+  worth reading, and this one does not.
 
 ---
 
@@ -166,6 +183,34 @@ get `427`, which is also the right answer to "extend this number". `Bksp`
 on a `Num` drops the last digit (one digit left ⇒ `Delete`). `~` negates.
 This is why `-` stays subtraction: if `-` negated, `1 - 2` would be
 untypable.
+
+**Strings — delimited, because nothing else can delimit them.** `"` issues
+`ConstructStr("")` and opens the string run; every printable key after it
+re-issues `ConstructStr(s + c)`, so the literal in the program is the buffer
+and there is nothing else to keep. `Bksp` re-issues `ConstructStr(s[..−1])`
+and `Delete`s at the empty string, exactly as a digit-drop does on a `Num`.
+`"` again closes the run; so does `Enter`, `Esc`, an arrow, `Tab`, or any
+other key with a binding of its own — those close it and are then reprocessed,
+which is rule 3 applied one level in.
+
+The run is delimited where the name run is not, and that is forced, not
+chosen: the name run ends at the first character outside its alphabet, and a
+string's alphabet is *every* character, so there is no such character to end
+it with. That is the whole cost of strings in this grammar — one reserved key
+spent on a delimiter — and it buys the property that space, `+`, `;` and `?`
+are ordinary text inside a literal without a single escape.
+
+Escapes are the delimiter's own consequence and stop there: `\"` for a quote
+and `\\` for a backslash, which is exactly what the projection prints between
+the quotes, so what you read back is what you type. `\` **arms** the escape
+rather than committing one — the single keystroke in this document that does
+not change the program, shown as a pending `\` in the focus position and
+undone by `Bksp`. `\` followed by anything other than `"` or `\` appends the
+backslash and reprocesses the character as text, so `\n` is the two characters
+you can see and no keystroke is refused. The alternative — commit the
+backslash immediately and let a following `"` retract it — keeps commit-live
+at the price of making `"\\"` and `"\""` type differently from how they read,
+and a literal you cannot copy off the screen is worse than one pending key.
 
 **Names — the one real run.** A letter starts a run **anchored** at the
 focus as it was. Candidates are the in-scope binder display names
@@ -196,8 +241,9 @@ name, which is what you meant.
 buffer on every keystroke, parsed by the `script::parse_ty` grammar with
 `>` for `->`. Every prefix parses because a trailing operator takes `?` as
 its missing operand: `:n` → `Num`, `:n>` → `Num -> ?`, `:n>n` →
-`Num -> Num`, `:n*n` → `Num * Num`. Letters that are not `n`/`b` are
-swallowed inside a spelled base type, so `num > bool` works too.
+`Num -> Num`, `:n*n` → `Num * Num`, `:s` → `Str`. Letters that are not
+`n`/`b`/`s` are swallowed inside a spelled base type, so `num > bool` works
+too.
 
 **Binder names.** Free text, one keystroke per character. Since Phase 5 the
 slot is a name-table write: every keystroke re-issues `Rename(id, buffer)`
@@ -220,7 +266,7 @@ key choice compensates for.
 > **(c)** the parent's precedence ≥ the arriving key's.
 
 Precedence ladder (matching `core::render`'s public `PREC_*` table):
-`space [ ]` 4 (`PREC_APP`) · `*` 3 · `+ -` 2 · `< =` 1 · `? ; , \` 0.
+`space [ ]` 4 (`PREC_APP`) · `*` 3 · `+ - &` 2 · `< =` 1 · `? ; , \` 0.
 
 `1 * 2` + `+` → `1 * 2 + ⦇⦈`; `1 + 2` + `*` → `1 + 2 * ⦇⦈`; `f 1` +
 `space` → `f 1 ⦇⦈` (left-associative, because ≥ not >). Climbing never
@@ -414,9 +460,10 @@ the same reason it was worst in Phase 3 (deep nesting, four binders).
 | `ConstructNum(i64)` | `0`–`9`, `~` | `SetAnn(Ty)` | `:` + annotation slot |
 | `ConstructBool(bool)` | `t`/`f` (top-ranked candidates) | `Rename(Id, String)` | typing in the binder slot |
 | `ConstructVar(Id)` | letters (name run) | `Finish` | `Enter` on or inside `⦇e⦈` |
-| `ConstructLam` | `\` | undo / redo | `C-z` / `C-r` |
-| `ConstructAp` | `space` | quit | `C-q` |
-| `ConstructBinOp(Op)` | `+ - * < =` | | |
+| `ConstructStr(String)` | `"` opens the run; every printable key re-issues it with one more character | undo / redo | `C-z` / `C-r` |
+| `ConstructLam` | `\` | quit | `C-q` |
+| `ConstructAp` | `space` | | |
+| `ConstructBinOp(Op)` | `+ - * < =`, and `&` for `Op::Concat` | | |
 | `CreateDefinition` | `C-n` | `MoveNextDef` | `C-↓` |
 | `DeleteDefinition` | `C-d` | `MovePrevDef` | `C-↑` |
 | `SetDefAnn(Ty)` | `C-t` + annotation slot | `MoveToDef(Id)` | `C-↑`/`C-↓` repeated (the pane shows how far); the protocol has it by name |
@@ -441,6 +488,10 @@ Not bindings — the grammar does not work without these:
   candidate's type shown, rendered beside the buffer *in the focus
   position* — entry must look like it is happening to the program,
   because it is;
+- **that a string run is open**, and the pending `\` when the escape is
+  armed — the run is the one piece of state a keystroke's meaning depends on
+  that the projection does not already show, so it is the one thing the line
+  may never omit;
 - **a quarantine marker** on every non-empty hole, with "fits now — press
   Enter" whenever `Finish` would succeed — and the same answer from *inside*
   the wrapper (`inside ⦇⦈ · fits now — press Enter`), because that is where
@@ -608,6 +659,38 @@ Item 16 is dated **2026-08-28** and belongs to Phase B1.
    real cursor, and the pane is showing you where it went. Pinned by
    `tui/tests/definitions.rs`.
 
+Item 17 is dated **2026-08-29** and belongs to Phase B2.
+
+17. **The string run is a run, not a slot.** It adds no row to the §Slots
+   table and no `Frame` to the zipper: the open flag lives beside the name
+   run's buffer in the editor, and the *literal in the program is the
+   buffer*, so there is nothing to keep in sync. Four cases the matrix
+   leaves to the implementation:
+   **(a)** `"` on a focused `Str` **re-opens** the run at the end of the
+   string rather than replacing it, which is the digit-on-a-`Num` rule
+   generalised — come back a week later and add a word. Every other focus
+   replaces, because that is what typing a literal has always done.
+   **(b)** A string run survives the descent into a quarantine, exactly as a
+   name run does (item 5). `"` at a `Num` hole gives `⦇""⦈` with the cursor
+   on the wrapper and the run still open, so the next character goes on
+   building the string inside it.
+   **(c)** The armed `\` is the only keystroke in this file that changes
+   nothing — not the program and not the cursor — so `C-z` is not spent on
+   it (item 7's second half) and `Bksp` disarms it. The status line says
+   `string · pending escape · \" or \\`, and the projection shows the
+   pending backslash in the focus position, because a keystroke that has not
+   landed anywhere has to be visible somewhere.
+   **(d)** `&` climbs like `+` and quarantines like every other operator:
+   `1` then `&` gives `⦇1⦈ ++ ⦇⦈`, and `"a" ++ 1` cannot be typed without the
+   quarantine showing. `=` is the one operator whose operand type is not
+   fixed by the key — it compares at whichever of `Num`, `Bool` or `Str` its
+   operands are (`DECISIONS.md`, 2026-08-29), so `"a"` then `=` gives
+   `"a" == ⦇⦈` with the hole expecting `Str`, and the ranking at that hole is
+   about strings without the user having said so.
+   Pinned by `keys::tests::a_string_run_takes_every_printable_key_as_text`,
+   `keys::tests::a_quote_reopens_a_finished_string_at_its_end`, and
+   `tui/tests/matrix.rs`, which is column H as a table.
+
 Measured, replacing the predicted table's middle column (`tui/tests/keys/`,
 one keystroke per line). The 2026-08-28 column is the definition era: the
 programs are documents now, and `factorial` and `record` were rebuilt to say
@@ -620,6 +703,13 @@ what they always meant rather than what Phase 1 could express.
 | 3 | record | 65 | 46 | 40 | 0.71× | 33 / 0.51× |
 | 4 | state_machine | 151 | 24 | 33 | 0.16× | unchanged |
 | 5 | nested_conditional | 146 | 31 | 42 | 0.21× | unchanged |
+| 6 | greeting | 127 | 52 | 56 | 0.41× | new (2026-08-29) |
+
+Row 6 arrived with strings on 2026-08-29 and is the first reference whose
+cost is mostly *content*: 27 of its 52 keystrokes are the characters and
+quotes of four string literals, which no projection can make cheaper. The
+structure cost 25. The other five rows are byte-identical to 2026-08-28 —
+the string run taxed nothing that existed.
 
 `record` is still the number to watch, and it got worse for a good reason:
 its constructor is a named, annotated top-level definition instead of a

@@ -50,6 +50,13 @@ fn references() -> Vec<Reference> {
             expected: include_str!("../../bench/fixtures/nested_conditional.expected"),
             neovim: 146,
         },
+        Reference {
+            name: "greeting",
+            keys: include_str!("keys/greeting.keys"),
+            actions: include_str!("../../bench/fixtures/greeting.actions"),
+            expected: include_str!("../../bench/fixtures/greeting.expected"),
+            neovim: 127,
+        },
     ]
 }
 
@@ -71,7 +78,7 @@ fn go(exp: &Exp, next: &mut u128, seen: &mut Vec<Id>) -> Exp {
         id
     };
     match exp {
-        Exp::Num(_) | Exp::Bool(_) => exp.clone(),
+        Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => exp.clone(),
         Exp::Var(id) => Exp::var(canonical(*id, seen)),
         Exp::Lam(id, ty, body) => {
             let id = canonical(*id, seen);

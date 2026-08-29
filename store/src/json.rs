@@ -27,6 +27,7 @@ fn ty_json(ty: &Ty) -> String {
     match ty {
         Ty::Num => "{\"ty\":\"Num\"}".to_string(),
         Ty::Bool => "{\"ty\":\"Bool\"}".to_string(),
+        Ty::Str => "{\"ty\":\"Str\"}".to_string(),
         Ty::Hole => "{\"ty\":\"Hole\"}".to_string(),
         Ty::Arrow(a, b) => format!(
             "{{\"ty\":\"Arrow\",\"from\":{},\"to\":{}}}",
@@ -48,6 +49,7 @@ fn op_str(op: Op) -> &'static str {
         Op::Mul => "Mul",
         Op::Lt => "Lt",
         Op::Eq => "Eq",
+        Op::Concat => "Concat",
     }
 }
 
@@ -74,6 +76,7 @@ fn exp_json(exp: &Exp) -> String {
         ),
         Exp::Num(n) => format!("{{\"exp\":\"Num\",\"value\":{n}}}"),
         Exp::Bool(b) => format!("{{\"exp\":\"Bool\",\"value\":{b}}}"),
+        Exp::Str(text) => format!("{{\"exp\":\"Str\",\"value\":{}}}", escape(text)),
         Exp::BinOp(op, l, r) => format!(
             "{{\"exp\":\"BinOp\",\"op\":{},\"lhs\":{},\"rhs\":{}}}",
             escape(op_str(*op)),
@@ -139,6 +142,9 @@ fn action_json(action: &Action) -> String {
         Action::Delete => "{\"action\":\"Delete\"}".to_string(),
         Action::ConstructNum(n) => format!("{{\"action\":\"ConstructNum\",\"value\":{n}}}"),
         Action::ConstructBool(b) => format!("{{\"action\":\"ConstructBool\",\"value\":{b}}}"),
+        Action::ConstructStr(text) => {
+            format!("{{\"action\":\"ConstructStr\",\"value\":{}}}", escape(text))
+        }
         Action::ConstructVar(id) => format!(
             "{{\"action\":\"ConstructVar\",\"id\":{}}}",
             escape(&id.to_string())

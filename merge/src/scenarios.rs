@@ -110,6 +110,29 @@ fn adder(step: i64) -> Exp {
     )
 }
 
+fn greet(prefix: &str, suffix: &str) -> Exp {
+    Exp::lam(
+        id(X),
+        Ty::Str,
+        Exp::bin_op(
+            Op::Concat,
+            Exp::bin_op(Op::Concat, Exp::str_(prefix), Exp::var(id(X))),
+            Exp::str_(suffix),
+        ),
+    )
+}
+
+fn greeting_program(prefix: &str, suffix: &str) -> Version {
+    Version::new(
+        program(
+            [F, G, H],
+            [greet(prefix, suffix), bump(1), drop2(2)],
+            Exp::ap(Exp::var(id(F)), Exp::str_("world")),
+        ),
+        names(),
+    )
+}
+
 fn call_tail() -> Exp {
     Exp::bin_op(
         Op::Add,
@@ -159,6 +182,7 @@ fn renamed(version: &Version, target: u128, name: &str) -> Version {
 
 pub fn all() -> Vec<Scenario> {
     let base3 = three_bindings([F, G, H], stock());
+    let greeting = greeting_program("hello, ", "!");
     let moved_base = pair_program(adder(10), Exp::empty_hole(hole(1)));
 
     vec![
@@ -337,6 +361,17 @@ pub fn all() -> Vec<Scenario> {
             base: base3.clone(),
             ours: three_bindings([F, G, H], [square(0), bump(2), drop2(2)]),
             theirs: three_bindings([F, G, H], [square(0), bump(3), drop2(2)]),
+            base_style: CANONICAL,
+            ours_style: CANONICAL,
+            theirs_style: CANONICAL,
+        },
+        Scenario {
+            name: "rename the greeted parameter vs reword the greeting itself",
+            category: Category::Renaming,
+            note: "one branch renames `x` to `who`; the other rewrites the string literals around it",
+            base: greeting.clone(),
+            ours: renamed(&greeting, X, "who"),
+            theirs: greeting_program("hi there, ", "!!"),
             base_style: CANONICAL,
             ours_style: CANONICAL,
             theirs_style: CANONICAL,

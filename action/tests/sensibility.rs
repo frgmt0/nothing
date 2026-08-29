@@ -17,6 +17,7 @@ fn variant_name(action: &Action) -> &'static str {
         Action::Delete => "Delete",
         Action::ConstructNum(_) => "ConstructNum",
         Action::ConstructBool(_) => "ConstructBool",
+        Action::ConstructStr(_) => "ConstructStr",
         Action::ConstructVar(_) => "ConstructVar",
         Action::ConstructLam => "ConstructLam",
         Action::ConstructAp => "ConstructAp",
@@ -39,7 +40,7 @@ fn variant_name(action: &Action) -> &'static str {
     }
 }
 
-const ALL_VARIANTS: [&str; 26] = [
+const ALL_VARIANTS: [&str; 27] = [
     "MoveChild",
     "MoveParent",
     "MoveNextSibling",
@@ -47,6 +48,7 @@ const ALL_VARIANTS: [&str; 26] = [
     "Delete",
     "ConstructNum",
     "ConstructBool",
+    "ConstructStr",
     "ConstructVar",
     "ConstructLam",
     "ConstructAp",
@@ -75,6 +77,7 @@ fn arb_op() -> impl Strategy<Value = Op> {
         Just(Op::Mul),
         Just(Op::Lt),
         Just(Op::Eq),
+        Just(Op::Concat),
     ]
 }
 
@@ -88,6 +91,16 @@ fn arb_ty() -> impl Strategy<Value = Ty> {
 
 fn arb_id() -> impl Strategy<Value = Id> {
     (0u128..8).prop_map(Id::from_u128)
+}
+
+fn arb_text() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just(String::new()),
+        Just("hello".to_string()),
+        Just("a b".to_string()),
+        Just("\"".to_string()),
+        Just("\\".to_string()),
+    ]
 }
 
 fn arb_name() -> impl Strategy<Value = String> {
@@ -108,6 +121,7 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
         Just(Action::Delete).boxed(),
         any::<i64>().prop_map(Action::ConstructNum).boxed(),
         any::<bool>().prop_map(Action::ConstructBool).boxed(),
+        arb_text().prop_map(Action::ConstructStr).boxed(),
         arb_id().prop_map(Action::ConstructVar).boxed(),
         Just(Action::ConstructLam).boxed(),
         Just(Action::ConstructAp).boxed(),
@@ -148,12 +162,16 @@ fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
         Action::Delete,
         Action::ConstructNum(7),
         Action::ConstructBool(true),
+        Action::ConstructStr(String::new()),
+        Action::ConstructStr("hello".to_string()),
         Action::ConstructVar(Id::from_u128(0)),
         Action::ConstructVar(Id::from_u128(1)),
         Action::ConstructLam,
         Action::ConstructAp,
         Action::ConstructBinOp(Op::Add),
         Action::ConstructBinOp(Op::Lt),
+        Action::ConstructBinOp(Op::Eq),
+        Action::ConstructBinOp(Op::Concat),
         Action::ConstructIf,
         Action::ConstructLet,
         Action::ConstructPair,
@@ -161,6 +179,7 @@ fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
         Action::ConstructProj(Side::R),
         Action::ConstructNonEmptyHole,
         Action::SetAnn(Ty::Num),
+        Action::SetAnn(Ty::Str),
         Action::SetAnn(Ty::Hole),
         Action::SetAnn(Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool))),
         Action::SetBinderId(Id::from_u128(0)),

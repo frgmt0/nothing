@@ -22,6 +22,8 @@ fn context(name: &str) -> AppState {
         "F binder name" => typed("\\x"),
 
         "G non-empty hole" => handle_key(key(KeyCode::Esc), typed("\\x0:n.?x")),
+
+        "H inside a string" => typed("\\x0:s.\"ab"),
         other => panic!("unknown context {other}"),
     }
 }
@@ -82,6 +84,8 @@ fn column_a_empty_hole() {
             ('*', "λx0:Num. »⦇⦈« * ⦇⦈"),
             ('<', "λx0:Num. »⦇⦈« < ⦇⦈"),
             ('=', "λx0:Num. »⦇⦈« == ⦇⦈"),
+            ('&', "λx0:Num. »⦇⦈« ++ ⦇⦈"),
+            ('"', "λx0:Num. »\"\"«"),
             (' ', "λx0:Num. »⦇⦈« ⦇⦈"),
             ('\\', "name: λx0:Num. λ»x1«:?. ⦇⦈"),
             ('?', "λx0:Num. if »⦇⦈« then ⦇⦈ else ⦇⦈"),
@@ -120,6 +124,8 @@ fn column_b_written_expression() {
             ('*', "λx0:Num. x0 * »⦇⦈«"),
             ('<', "λx0:Num. x0 < »⦇⦈«"),
             ('=', "λx0:Num. x0 == »⦇⦈«"),
+            ('&', "λx0:Num. ⦇x0⦈ ++ »⦇⦈«"),
+            ('"', "λx0:Num. »\"\"«"),
             (' ', "λx0:Num. ⦇x0⦈ »⦇⦈«"),
             ('\\', "name: λx0:Num. λ»x1«:?. x0"),
             ('?', "λx0:Num. if ⦇x0⦈ then »⦇⦈« else ⦇⦈"),
@@ -150,6 +156,8 @@ fn column_c_focused_number() {
             ('x', "λx0:Num. »x0« ⟨x⟩"),
             ('z', "λx0:Num. »12« ⟨z⟩"),
             ('+', "λx0:Num. 12 + »⦇⦈«"),
+            ('&', "λx0:Num. ⦇12⦈ ++ »⦇⦈«"),
+            ('"', "λx0:Num. »\"\"«"),
             (' ', "λx0:Num. ⦇12⦈ »⦇⦈«"),
             ('?', "λx0:Num. if ⦇12⦈ then »⦇⦈« else ⦇⦈"),
             ('[', "λx0:Num. »fst ⦇12⦈«"),
@@ -173,6 +181,8 @@ fn column_d_name_run() {
             ('x', "λx0:Num. »⦇⦈« ⟨xx⟩"),
             ('_', "λx0:Num. »⦇⦈« ⟨x_⟩"),
             ('+', "λx0:Num. x0 + »⦇⦈«"),
+            ('&', "λx0:Num. ⦇x0⦈ ++ »⦇⦈«"),
+            ('"', "λx0:Num. »\"\"«"),
             (' ', "λx0:Num. ⦇x0⦈ »⦇⦈«"),
             ('?', "λx0:Num. if ⦇x0⦈ then »⦇⦈« else ⦇⦈"),
             ('[', "λx0:Num. »fst ⦇x0⦈«"),
@@ -192,6 +202,7 @@ fn column_e_annotation_slot() {
         &[
             ('n', "ann: λx0:»Num«. ⦇⦈ ⟨n⟩"),
             ('b', "ann: λx0:»Bool«. ⦇⦈ ⟨b⟩"),
+            ('s', "ann: λx0:»Str«. ⦇⦈ ⟨s⟩"),
             ('?', "ann: λx0:»?«. ⦇⦈ ⟨?⟩"),
             ('*', "ann: λx0:»? * ?«. ⦇⦈ ⟨*⟩"),
             ('>', "ann: λx0:»? -> ?«. ⦇⦈ ⟨>⟩"),
@@ -202,6 +213,8 @@ fn column_e_annotation_slot() {
             ('0', "λx0:Num. »0«"),
             ('x', "λx0:Num. »x0« ⟨x⟩"),
             ('+', "λx0:Num. »⦇⦈« + ⦇⦈"),
+            ('&', "λx0:Num. »⦇⦈« ++ ⦇⦈"),
+            ('"', "λx0:Num. »\"\"«"),
             (' ', "λx0:Num. »⦇⦈« ⦇⦈"),
             ('!', "λx0:Num. ⦇»⦇⦈«⦈"),
             ('~', "λx0:Num. »⦇⦈«"),
@@ -224,6 +237,8 @@ fn column_f_binder_name_slot() {
             ('.', "λx:?. »⦇⦈«"),
             ('~', "name: λ»x«:?. ⦇⦈ ⟨x⟩"),
             ('=', "λx:?. »⦇⦈« == ⦇⦈"),
+            ('&', "λx:?. »⦇⦈« ++ ⦇⦈"),
+            ('"', "λx:?. »\"\"«"),
             ('+', "λx:?. »⦇⦈« + ⦇⦈"),
             ('?', "λx:?. if »⦇⦈« then ⦇⦈ else ⦇⦈"),
             ('[', "λx:?. fst »⦇⦈«"),
@@ -244,6 +259,8 @@ fn column_g_non_empty_hole() {
             ('z', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈ ⟨z⟩"),
             ('+', "λx0:Num. if ⦇x0 + »⦇⦈«⦈ then ⦇⦈ else ⦇⦈"),
             ('<', "λx0:Num. if ⦇x0 < »⦇⦈«⦈ then ⦇⦈ else ⦇⦈"),
+            ('&', "λx0:Num. if ⦇⦇x0⦈ ++ »⦇⦈«⦈ then ⦇⦈ else ⦇⦈"),
+            ('"', "λx0:Num. if ⦇»\"\"«⦈ then ⦇⦈ else ⦇⦈"),
             (' ', "λx0:Num. if ⦇⦇x0⦈ »⦇⦈«⦈ then ⦇⦈ else ⦇⦈"),
             (',', "λx0:Num. if ⦇(x0, »⦇⦈«)⦈ then ⦇⦈ else ⦇⦈"),
             ('[', "λx0:Num. if ⦇»fst ⦇x0⦈«⦈ then ⦇⦈ else ⦇⦈"),
@@ -252,6 +269,51 @@ fn column_g_non_empty_hole() {
             ('.', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈"),
             ('@', "λx0:Num. if ⦇»x0«⦈ then ⦇⦈ else ⦇⦈"),
         ],
+    );
+}
+
+#[test]
+fn column_h_inside_a_string() {
+    check(
+        "H inside a string",
+        context("H inside a string"),
+        &[
+            ('0', "λx0:Str. »\"ab0\"«"),
+            ('z', "λx0:Str. »\"abz\"«"),
+            ('+', "λx0:Str. »\"ab+\"«"),
+            ('&', "λx0:Str. »\"ab&\"«"),
+            (' ', "λx0:Str. »\"ab \"«"),
+            ('?', "λx0:Str. »\"ab?\"«"),
+            (';', "λx0:Str. »\"ab;\"«"),
+            (',', "λx0:Str. »\"ab,\"«"),
+            ('[', "λx0:Str. »\"ab[\"«"),
+            (']', "λx0:Str. »\"ab]\"«"),
+            ('!', "λx0:Str. »\"ab!\"«"),
+            ('~', "λx0:Str. »\"ab~\"«"),
+            (':', "λx0:Str. »\"ab:\"«"),
+            ('.', "λx0:Str. »\"ab.\"«"),
+            ('>', "λx0:Str. »\"ab>\"«"),
+            ('(', "λx0:Str. »\"ab(\"«"),
+            (')', "λx0:Str. »\"ab)\"«"),
+            ('@', "λx0:Str. »\"ab@\"«"),
+            ('\\', "λx0:Str. »\"ab\\\"«"),
+            ('"', "λx0:Str. »\"ab\"«"),
+        ],
+    );
+
+    let open = context("H inside a string");
+    assert!(open.string_open, "the run is open before the closing quote");
+    assert!(
+        !handle_key(key(KeyCode::Char('"')), open.clone()).string_open,
+        "a quote closes the run"
+    );
+    assert!(
+        handle_key(key(KeyCode::Char('z')), open.clone()).string_open,
+        "an ordinary character leaves the run open"
+    );
+    assert!(
+        handle_key(key(KeyCode::Char('\\')), open).escape_armed,
+        "a backslash arms the escape"
     );
 }
 
@@ -273,7 +335,7 @@ fn exiting_a_slot_costs_no_keystroke() {
 
 #[test]
 fn no_row_of_the_matrix_can_break_the_program() {
-    let alphabet = "0123456789abnxtfyz_+-*<= \\?;,[]!~:.>()@";
+    let alphabet = "0123456789abnsxtfyz_+-*<=& \\?;,[]!~:.>()@\"";
     for name in [
         "A empty hole",
         "B written expr",
@@ -281,6 +343,7 @@ fn no_row_of_the_matrix_can_break_the_program() {
         "D mid-name run",
         "F binder name",
         "G non-empty hole",
+        "H inside a string",
     ] {
         let state = context(name);
         for c in alphabet.chars() {

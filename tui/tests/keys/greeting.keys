@@ -1,0 +1,69 @@
+# 6. Greeting formatter — bench/references.md §6:
+#
+#   λx0:Str. λx1:Bool. if x1 then "Good evening, " ++ x0 ++ "."
+#                              else "hi " ++ x0 ++ "!"
+#
+# x0 is the name being greeted, x1 the formality flag. Currying stands in
+# for the reference's two parameters; nothing else is approximated.
+
+# λx0:Str. ⦇⦈
+\
+x
+0
+:
+s
+.
+
+# λx1:Bool. ⦇⦈
+\
+x
+1
+:
+b
+.
+
+# if x1 then ⦇⦈ else ⦇⦈
+?
+x
+1
+tab
+
+# then: the formal greeting, joined around the name
+"
+G
+o
+o
+d
+space
+e
+v
+e
+n
+i
+n
+g
+,
+space
+"
+&
+x
+0
+&
+"
+.
+"
+
+# else: the informal one, built the same way
+tab
+"
+h
+i
+space
+"
+&
+x
+0
+&
+"
+!
+"

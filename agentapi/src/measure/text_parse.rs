@@ -245,12 +245,18 @@ impl Parser<'_> {
         let mut left = self.multiplicative()?;
         loop {
             self.skip_ws();
-            let op = match self.peek() {
-                Some('+') => Op::Add,
-                Some('-') if self.chars.get(self.pos + 1) != Some(&'>') => Op::Sub,
-                _ => return Ok(left),
+            let op = if self.eat("++") {
+                Op::Concat
+            } else {
+                match self.peek() {
+                    Some('+') => Op::Add,
+                    Some('-') if self.chars.get(self.pos + 1) != Some(&'>') => Op::Sub,
+                    _ => return Ok(left),
+                }
             };
-            self.pos += 1;
+            if op != Op::Concat {
+                self.pos += 1;
+            }
             let right = self.multiplicative()?;
             left = Exp::bin_op(op, left, right);
         }
@@ -296,7 +302,7 @@ impl Parser<'_> {
 
     fn starts_atom(&mut self) -> bool {
         match self.peek() {
-            Some('(') | Some('⦇') | Some('?') => true,
+            Some('(') | Some('⦇') | Some('?') | Some('"') => true,
             Some(c) if c.is_ascii_digit() => true,
             Some('-') => matches!(self.chars.get(self.pos + 1), Some(c) if c.is_ascii_digit()),
             Some(c) if c.is_alphabetic() || c == '_' => match self.peek_word() {
@@ -349,6 +355,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 Ok(first)
             }
+            Some('"') => self.string(),
             Some(c) if c.is_ascii_digit() || c == '-' => self.number(),
             Some(c) if c.is_alphabetic() || c == '_' => {
                 let word = self
@@ -368,6 +375,32 @@ impl Parser<'_> {
             }
             Some(c) => Err(TextError(format!("unexpected character `{c}`"))),
         }
+    }
+
+    fn string(&mut self) -> Result<Exp, TextError> {
+        self.pos += 1;
+        let mut out = String::new();
+        while let Some(c) = self.peek() {
+            self.pos += 1;
+            match c {
+                '"' => return Ok(Exp::str_(out)),
+                '\\' => match self.peek() {
+                    Some('"') => {
+                        out.push('"');
+                        self.pos += 1;
+                    }
+                    Some('\\') => {
+                        out.push('\\');
+                        self.pos += 1;
+                    }
+                    _ => {
+                        return Err(TextError("a string escapes only \\\" and \\\\".to_string()));
+                    }
+                },
+                _ => out.push(c),
+            }
+        }
+        Err(TextError("unclosed `\"` in a string".to_string()))
     }
 
     fn number(&mut self) -> Result<Exp, TextError> {
@@ -465,7 +498,9 @@ mod tests {
             "if 1 then",
             "let x = 1",
             "λx. x",
-            "λx:Str. x",
+            "λx:Text. x",
+            "\"unclosed",
+            "\"bad \\escape\"",
             "λ:Num. 1",
             "(1, 2",
             "⦇1",

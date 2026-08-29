@@ -11,7 +11,7 @@ fn holes(exp: &Exp) -> usize {
     match exp {
         Exp::EmptyHole(_) => 1,
         Exp::NonEmptyHole(_, inner) => 1 + holes(inner),
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => 0,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => 0,
         Exp::Lam(_, _, b) | Exp::Proj(_, b) => holes(b),
         Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
             holes(a) + holes(b)
@@ -52,7 +52,7 @@ fn free_vars(
             free_vars(e, bound, out);
         }
         Dyn::Proj(_, inner) | Dyn::NonEmptyHole(_, _, inner) => free_vars(inner, bound, out),
-        Dyn::Num(_) | Dyn::Bool(_) => {}
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) => {}
         Dyn::EmptyHole(_, env) => {
             for (id, value) in env.iter() {
                 if value != &Dyn::Var(*id) {

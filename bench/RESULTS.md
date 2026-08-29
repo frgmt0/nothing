@@ -5,7 +5,8 @@ file is the trend line, and a trend line you are allowed to retouch is not
 evidence of anything.
 
 The denominator is always the permanent Neovim baseline fixed in
-`bench/references.md` (84 / 114 / 65 / 151 / 146). It is never recomputed.
+`bench/references.md` (84 / 114 / 65 / 151 / 146, and 127 for the sixth
+reference added on 2026-08-29). It is never recomputed.
 
 ---
 
@@ -404,3 +405,97 @@ Still not an editing session: these fixtures type a known program once,
 correctly, with no exploration, no mistakes and no backtracking — the
 caveat carried forward from 2026-08-26 §3 and repeated in both 2026-08-27
 entries. Nothing in this run changes that.
+
+---
+
+## 2026-08-29 — Phase B2, strings
+
+Reproduce with:
+
+```
+cargo run -p nothing-bench -- keytable
+cargo run -p nothing-bench -- table
+cargo test -p nothing-tui --test references -- --nocapture
+```
+
+The re-run required by Phase B2. Strings added a sixth reference program
+(`bench/references.md` §6, a greeting formatter) because the first five
+contain no text at all and so could not measure the feature. Its Neovim
+denominator, 127, was hand-counted by the same method as the other five and
+is fixed forever from this entry onward.
+
+The five existing fixtures were **not touched**. Their programs, keystroke
+counts and action counts are byte-identical to 2026-08-28.
+
+| # | Program | Neovim keystrokes | `nothing` keystrokes | `nothing` actions | Ratio | vs. 2026-08-28 | Guard |
+|---|---------|------------------:|----------------------:|-------------------:|------:|:--------------:|:-----:|
+| 1 | factorial | 84 | 28 | 33 | 0.33x | unchanged | OK |
+| 2 | list_map * | 114 | 29 | 35 | 0.25x | unchanged | OK |
+| 3 | record | 65 | 46 | 40 | 0.71x | unchanged | OK |
+| 4 | state_machine * | 151 | 24 | 33 | 0.16x | unchanged | OK |
+| 5 | nested_conditional | 146 | 31 | 42 | 0.21x | unchanged | OK |
+| 6 | greeting * | 127 | 52 | 56 | 0.41x | new | OK |
+
+`*` — `greeting` joins `list_map` and `state_machine` in the approximate
+column, for one reason only: `nothing` has no multi-argument functions, so
+`greet(name, formal)` is two nested lambdas. Both string literals, both
+joins, the conditional and both parameter references are exact.
+
+### 52 keystrokes, 33 of which are the text itself
+
+The greeting fixture is the first reference whose cost is dominated by
+*content* rather than structure:
+
+| part of the program | keystrokes |
+|---------------------|-----------:|
+| the two lambdas (`\x0:s.` and `\x1:b.`) | 12 |
+| the conditional and its condition (`?x1`) | 3 |
+| the two `Tab`s to the branch holes | 2 |
+| the four `&` joins and the two `x0` references | 8 |
+| **the characters inside the four string literals** | **19** |
+| the eight `"` that open and close them | 8 |
+
+Nineteen of the 52 are characters that would have to be typed in any
+editor, and eight more are the quotes that would also have to be typed. A
+projectional editor has no leverage over the contents of a string, and this
+is the entry that says so out loud: the ratio here (0.41×) is worse than
+four of the five older references not because the grammar got worse but
+because 27 of the 52 keystrokes are text, where the structural advantage is
+exactly zero. The right way to read 0.41× is that the *structure* cost 25
+keystrokes against a 127-keystroke Neovim baseline.
+
+The action count (56) is higher than the keystroke count (52) for the first
+time in this file, and for the same reason: every keystroke inside a string
+run re-issues `ConstructStr` with the whole run so far (see `KEYS.md`, the
+commit-live invariant — there is no uncommitted buffer anywhere in this
+editor, strings included), so a 14-character literal is 14 actions. That is
+the price of "every keystroke is a real edit to the real program", and it
+is paid in the log, not at the keyboard.
+
+### Action counts, for comparison with the earlier tables
+
+```
+cargo run -p nothing-bench -- table
+```
+
+These come from the hand-written `bench/fixtures/<name>.actions` scripts,
+not from the keyboard, which is why `greeting` is 27 here and 56 above: the
+script writes each string literal with a single `construct-str`, where the
+keyboard re-issues one per character typed.
+
+| # | Program | Neovim | actions | Ratio | 2026-08-28 actions |
+|---|---------|-------:|--------:|------:|-------------------:|
+| 1 | factorial | 84 | 23 | 0.27x | 23 |
+| 2 | list_map * | 114 | 22 | 0.19x | 22 |
+| 3 | record | 65 | 25 | 0.38x | 25 |
+| 4 | state_machine * | 151 | 24 | 0.16x | 24 |
+| 5 | nested_conditional | 146 | 35 | 0.24x | 35 |
+| 6 | greeting * | 127 | 27 | 0.21x | new |
+
+### Guard status: PASS
+
+Worst case is still `record` at **0.71×**; `greeting` at 0.41× is the
+second worst and is under a seventh of the 3× guard. Both tripwires
+(`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
+and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
+now cover six programs and pass.

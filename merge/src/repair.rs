@@ -1,10 +1,10 @@
 use nothing_action::act::Fresh;
 use nothing_core::ctx::Ctx;
-use nothing_core::exp::Exp;
+use nothing_core::exp::{Exp, Op};
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
 use nothing_core::ty::{Ty, matched_arrow, matched_prod};
-use nothing_core::typing::{ana, is_well_typed_in, join, syn};
+use nothing_core::typing::{ana, is_comparable, is_well_typed_in, join, operand_expectation, syn};
 
 use crate::path::{Path, extend, label};
 
@@ -88,6 +88,14 @@ impl State {
         }
     }
 
+    fn ensure_comparable(&mut self, ctx: &Ctx, exp: Exp, path: &[usize]) -> Exp {
+        if syn(ctx, &exp).is_some_and(|ty| is_comparable(&ty)) {
+            exp
+        } else {
+            self.quarantine(exp, path, "the merge left a value equality cannot compare")
+        }
+    }
+
     fn go(&mut self, ctx: &Ctx, exp: &Exp, path: &[usize]) -> Exp {
         match exp {
             Exp::Var(id) => {
@@ -97,7 +105,7 @@ impl State {
                     self.vacate(exp, path, "the merge left this variable unbound")
                 }
             }
-            Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => exp.clone(),
+            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => exp.clone(),
 
             Exp::Lam(id, ann, body) => {
                 let inner = ctx.extend(*id, ann.clone());
@@ -133,20 +141,39 @@ impl State {
             Exp::BinOp(op, lhs, rhs) => {
                 let lhs = self.go(ctx, lhs, &extend(path, 0));
                 let rhs = self.go(ctx, rhs, &extend(path, 1));
-                let lhs = self.ensure_ana(
-                    ctx,
-                    lhs,
-                    &Ty::Num,
-                    &extend(path, 0),
-                    "the merge left a non-numeric left operand",
-                );
-                let rhs = self.ensure_ana(
-                    ctx,
-                    rhs,
-                    &Ty::Num,
-                    &extend(path, 1),
-                    "the merge left a non-numeric right operand",
-                );
+                let (lhs, rhs) = match op {
+                    Op::Eq => {
+                        let lhs = self.ensure_comparable(ctx, lhs, &extend(path, 0));
+                        let rhs = self.ensure_comparable(ctx, rhs, &extend(path, 1));
+                        let operand = operand_expectation(ctx, Op::Eq, &lhs);
+                        let rhs = self.ensure_ana(
+                            ctx,
+                            rhs,
+                            &operand,
+                            &extend(path, 1),
+                            "the merge left an equality between two different types",
+                        );
+                        (lhs, rhs)
+                    }
+                    _ => {
+                        let operand = operand_expectation(ctx, *op, &Exp::Bool(false));
+                        let lhs = self.ensure_ana(
+                            ctx,
+                            lhs,
+                            &operand,
+                            &extend(path, 0),
+                            "the merge left an operand this operator cannot take",
+                        );
+                        let rhs = self.ensure_ana(
+                            ctx,
+                            rhs,
+                            &operand,
+                            &extend(path, 1),
+                            "the merge left an operand this operator cannot take",
+                        );
+                        (lhs, rhs)
+                    }
+                };
                 Exp::BinOp(*op, Box::new(lhs), Box::new(rhs))
             }
 
@@ -250,6 +277,36 @@ mod tests {
         assert!(is_well_typed(&out.exp));
         assert_eq!(out.repairs.len(), 1);
         assert!(render(&out.exp, &NameTable::new()).contains("⦇true⦈"));
+    }
+
+    #[test]
+    fn a_merge_that_joins_a_string_to_a_number_quarantines_the_number() {
+        let e = Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::num(1));
+        assert!(!is_well_typed(&e));
+        let out = repair(&e, &NameTable::new());
+        assert!(is_well_typed(&out.exp));
+        assert_eq!(out.repairs.len(), 1);
+        assert_eq!(out.repairs[0].kind, RepairKind::Quarantined);
+        assert!(render(&out.exp, &NameTable::new()).contains("⦇1⦈"));
+    }
+
+    #[test]
+    fn a_merge_that_compares_a_string_to_a_function_quarantines_the_function() {
+        let x = Id::from_u128(1);
+        let e = Exp::bin_op(Op::Eq, Exp::str_("a"), Exp::lam(x, Ty::Num, Exp::var(x)));
+        assert!(!is_well_typed(&e));
+        let out = repair(&e, &NameTable::new());
+        assert!(is_well_typed(&out.exp));
+        assert!(!out.repairs.is_empty());
+        assert_eq!(out.repairs[0].kind, RepairKind::Quarantined);
+    }
+
+    #[test]
+    fn two_strings_compare_without_any_repair_at_all() {
+        let e = Exp::bin_op(Op::Eq, Exp::str_("a"), Exp::str_("b"));
+        let out = repair(&e, &NameTable::new());
+        assert_eq!(out.exp, e);
+        assert!(out.repairs.is_empty());
     }
 
     #[test]

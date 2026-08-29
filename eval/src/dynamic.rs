@@ -11,6 +11,7 @@ pub enum Dyn {
     Ap(Box<Dyn>, Box<Dyn>),
     Num(i64),
     Bool(bool),
+    Str(String),
     BinOp(Op, Box<Dyn>, Box<Dyn>),
     If(Box<Dyn>, Box<Dyn>, Box<Dyn>),
     Let(Id, Box<Dyn>, Box<Dyn>),
@@ -30,6 +31,7 @@ pub fn elaborate_in(exp: &Exp, sigma: &Env) -> Dyn {
         Exp::Var(id) => Dyn::Var(*id),
         Exp::Num(n) => Dyn::Num(*n),
         Exp::Bool(b) => Dyn::Bool(*b),
+        Exp::Str(text) => Dyn::Str(text.clone()),
         Exp::Lam(id, ty, body) => {
             let inner = sigma.update(*id, Dyn::Var(*id));
             Dyn::Lam(*id, ty.clone(), Box::new(elaborate_in(body, &inner)))
@@ -71,6 +73,7 @@ pub fn subst(x: Id, v: &Dyn, d: &Dyn) -> Dyn {
         Dyn::Var(id) => Dyn::Var(*id),
         Dyn::Num(n) => Dyn::Num(*n),
         Dyn::Bool(b) => Dyn::Bool(*b),
+        Dyn::Str(text) => Dyn::Str(text.clone()),
         Dyn::Lam(id, ty, body) => {
             if *id == x {
                 d.clone()
@@ -111,7 +114,7 @@ fn subst_env(x: Id, v: &Dyn, env: &Env) -> Env {
 
 pub fn is_value(d: &Dyn) -> bool {
     match d {
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Lam(..) => true,
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) => true,
         Dyn::Pair(fst, snd) => is_value(fst) && is_value(snd),
         _ => false,
     }
@@ -122,6 +125,7 @@ pub fn to_exp(d: &Dyn) -> Exp {
         Dyn::Var(id) => Exp::Var(*id),
         Dyn::Num(n) => Exp::Num(*n),
         Dyn::Bool(b) => Exp::Bool(*b),
+        Dyn::Str(text) => Exp::Str(text.clone()),
         Dyn::Lam(id, ty, body) => Exp::Lam(*id, ty.clone(), Box::new(to_exp(body))),
         Dyn::Ap(fun, arg) => Exp::Ap(Box::new(to_exp(fun)), Box::new(to_exp(arg))),
         Dyn::BinOp(op, lhs, rhs) => Exp::BinOp(*op, Box::new(to_exp(lhs)), Box::new(to_exp(rhs))),
@@ -144,7 +148,7 @@ pub fn render(d: &Dyn, names: &NameTable) -> String {
 
 pub fn size(d: &Dyn) -> usize {
     match d {
-        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::EmptyHole(..) => 1,
+        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::EmptyHole(..) => 1,
         Dyn::Lam(_, _, b) | Dyn::Proj(_, b) | Dyn::NonEmptyHole(_, _, b) => 1 + size(b),
         Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Let(_, a, b) | Dyn::Pair(a, b) => {
             1 + size(a) + size(b)

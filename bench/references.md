@@ -1,11 +1,14 @@
 # Reference programs and the Neovim keystroke baseline
 
-Five reference programs, chosen per Phase 0. They are written here as
-ordinary pseudocode — not `nothing`'s own syntax, since `nothing` has no
-text syntax at all (that is the point of the project). This file exists to
-answer one question honestly: *how many keystrokes does a competent text
-editor need for these five programs?* That number is the yardstick the
-projectional editor is measured against from Phase 3 onward.
+Five reference programs, chosen per Phase 0, and a sixth added with
+strings in Phase B2 (§6). They are written here as ordinary pseudocode —
+not `nothing`'s own syntax, since `nothing` has no text syntax at all (that
+is the point of the project). This file exists to answer one question
+honestly: *how many keystrokes does a competent text editor need for these
+programs?* That number is the yardstick the projectional editor is measured
+against from Phase 3 onward. A reference, once written, is never
+recomputed; a new language feature may add a reference, and does so with
+its own permanent denominator.
 
 ## Counting method
 
@@ -98,13 +101,34 @@ Content characters: 144. Keystrokes: 1 + 144 + 1 = **146**.
 
 ---
 
+## 6. Greeting formatter (added 2026-08-29, Phase B2)
+
+```
+fn greet(name: Str, formal: Bool): Str =
+  if formal then
+    "Good evening, " ++ name ++ "."
+  else
+    "hi " ++ name ++ "!"
+```
+
+Content characters: 125. Keystrokes: 1 + 125 + 1 = **127**.
+
+This is the sixth reference, added with strings in Phase B2 because the
+first five contain no text at all and so could not measure the thing B2
+adds. It is deliberately unremarkable: a function that builds a piece of
+text out of two literals, a variable and a conditional. The Neovim
+denominator is computed by exactly the method above and joins the table
+below on the same permanent terms as the other five — computed once,
+never recomputed.
+
+---
+
 ## The baseline
 
-These five numbers are the permanent Neovim baseline. They do not get
-recomputed or "improved" later — Phase 3's and Phase 4's `RESULTS.md`
-entries compute the `nothing` action/keystroke count for the same five
-programs and divide by these numbers to get a ratio. This table is that
-denominator, fixed forever:
+These numbers are the permanent Neovim baseline. They do not get
+recomputed or "improved" later — every `RESULTS.md` entry computes the
+`nothing` action/keystroke count for the same programs and divides by these
+numbers to get a ratio. This table is that denominator, fixed forever:
 
 | # | Program | Neovim keystrokes |
 |---|---------|-------------------:|
@@ -113,6 +137,11 @@ denominator, fixed forever:
 | 3 | Record constructor + accessor | 65 |
 | 4 | Three-case state machine | 151 |
 | 5 | Three-deep nested conditional | 146 |
+| 6 | Greeting formatter | 127 |
+
+Row 6 was added on 2026-08-29 with Phase B2. Adding a *new* reference is
+not the same thing as recomputing an old one: rows 1–5 are untouched and
+untouchable, and row 6 is fixed forever from the moment it was written.
 
 ---
 
@@ -140,6 +169,7 @@ ratios flattering in a way that must not be read as progress; see
 | 3 | Record ctor + accessor | `let mkPoint = λx:Num. λy:Num. (x, y) in λp:Num * Num. fst p` | no |
 | 4 | State machine | `λs:Num. if s == 0 then 1 else if s == 1 then 2 else 0` | no |
 | 5 | Nested conditional | `λx:Num. if 0 < x then (if 10 < x then (if 100 < x then 3 else 2) else 1) else 0` | yes* |
+| 6 | Greeting formatter | `λx0:Str. λx1:Bool. if x1 then "Good evening, " ++ x0 ++ "." else "hi " ++ x0 ++ "!"` | yes* |
 
 Variables render as `x0`, `x1`, … because the fixtures rename each binder to
 the default name Phase 5's name table hands a freshly constructed one (`x`
@@ -210,3 +240,18 @@ so the operands are swapped. The three-level nesting — the entire point of
 this reference — is reproduced exactly, which is why it is marked "yes*":
 the program means what the reference means, with only the operator spelling
 differing.
+
+### 6. Greeting formatter — direct, modulo currying (2026-08-29)
+
+Added with Phase B2, and the only approximation is that `nothing` has no
+multi-argument functions: `greet(name, formal)` is two nested lambdas, and
+`greet("Ada")("Bob")`-style application is how a caller would use it. Every
+other part is exact — both string literals, both joins, the conditional,
+the parameter reference in each branch. That is why it is "yes*" in the
+same sense as reference 5: the program means what the reference means.
+
+`++` is spelled `&` at the keyboard (see `KEYS.md`), which changes no
+count here: `&` is one keystroke and `++` in the reference is two
+characters, so if anything the fixture is charged less than the reference
+is, in the fixture's favour, and by two keystrokes across the whole
+program.

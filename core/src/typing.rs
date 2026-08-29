@@ -2,15 +2,40 @@ use crate::ctx::Ctx;
 use crate::exp::{Exp, Op, Side};
 use crate::ty::{Ty, is_consistent, matched_arrow, matched_prod};
 
-fn operand_ty(op: Op) -> Ty {
+pub fn is_comparable(ty: &Ty) -> bool {
+    matches!(ty, Ty::Num | Ty::Bool | Ty::Str | Ty::Hole)
+}
+
+pub fn operand_ty(ctx: &Ctx, op: Op, lhs: &Exp, rhs: &Exp) -> Option<Ty> {
     match op {
-        Op::Add | Op::Sub | Op::Mul | Op::Lt | Op::Eq => Ty::Num,
+        Op::Add | Op::Sub | Op::Mul | Op::Lt => Some(Ty::Num),
+        Op::Concat => Some(Ty::Str),
+        Op::Eq => {
+            let left = syn(ctx, lhs)?;
+            let right = syn(ctx, rhs)?;
+            if !is_comparable(&left) || !is_comparable(&right) {
+                return None;
+            }
+            Some(if left == Ty::Hole { right } else { left })
+        }
     }
 }
 
-fn result_ty(op: Op) -> Ty {
+pub fn operand_expectation(ctx: &Ctx, op: Op, sibling: &Exp) -> Ty {
+    match op {
+        Op::Add | Op::Sub | Op::Mul | Op::Lt => Ty::Num,
+        Op::Concat => Ty::Str,
+        Op::Eq => match syn(ctx, sibling) {
+            Some(ty) if is_comparable(&ty) => ty,
+            _ => Ty::Hole,
+        },
+    }
+}
+
+pub fn result_ty(op: Op) -> Ty {
     match op {
         Op::Add | Op::Sub | Op::Mul => Ty::Num,
+        Op::Concat => Ty::Str,
         Op::Lt | Op::Eq => Ty::Bool,
     }
 }
@@ -20,6 +45,7 @@ pub fn join(a: &Ty, b: &Ty) -> Option<Ty> {
         (Ty::Hole, t) | (t, Ty::Hole) => Some(t.clone()),
         (Ty::Num, Ty::Num) => Some(Ty::Num),
         (Ty::Bool, Ty::Bool) => Some(Ty::Bool),
+        (Ty::Str, Ty::Str) => Some(Ty::Str),
         (Ty::Arrow(a1, a2), Ty::Arrow(b1, b2)) => {
             Some(Ty::Arrow(Box::new(join(a1, b1)?), Box::new(join(a2, b2)?)))
         }
@@ -51,9 +77,10 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
 
         Exp::Num(_) => Some(Ty::Num),
         Exp::Bool(_) => Some(Ty::Bool),
+        Exp::Str(_) => Some(Ty::Str),
 
         Exp::BinOp(op, lhs, rhs) => {
-            let operand = operand_ty(*op);
+            let operand = operand_ty(ctx, *op, lhs, rhs)?;
             if ana(ctx, lhs, &operand) && ana(ctx, rhs, &operand) {
                 Some(result_ty(*op))
             } else {
@@ -201,6 +228,83 @@ mod tests {
     #[test]
     fn syn_bool() {
         assert_eq!(syn(&Ctx::empty(), &Exp::bool_(false)), Some(Ty::Bool));
+    }
+
+    #[test]
+    fn syn_str() {
+        assert_eq!(syn(&Ctx::empty(), &Exp::str_("hello")), Some(Ty::Str));
+        assert_eq!(syn(&Ctx::empty(), &Exp::str_("")), Some(Ty::Str));
+    }
+
+    #[test]
+    fn syn_concat_joins_two_strings() {
+        let e = Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::str_("b"));
+        assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Str));
+
+        let e = Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::empty_hole(h(0)));
+        assert_eq!(syn(&Ctx::empty(), &e), Some(Ty::Str));
+
+        let e = Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::num(1));
+        assert_eq!(syn(&Ctx::empty(), &e), None);
+    }
+
+    #[test]
+    fn eq_compares_at_whichever_base_type_its_operands_have() {
+        for (lhs, rhs) in [
+            (Exp::num(1), Exp::num(2)),
+            (Exp::bool_(true), Exp::bool_(false)),
+            (Exp::str_("a"), Exp::str_("b")),
+            (Exp::str_("a"), Exp::empty_hole(h(0))),
+            (Exp::empty_hole(h(0)), Exp::str_("a")),
+            (Exp::empty_hole(h(0)), Exp::empty_hole(h(1))),
+        ] {
+            let e = Exp::bin_op(Op::Eq, lhs.clone(), rhs.clone());
+            assert_eq!(
+                syn(&Ctx::empty(), &e),
+                Some(Ty::Bool),
+                "{lhs:?} == {rhs:?} should compare"
+            );
+        }
+    }
+
+    #[test]
+    fn eq_never_compares_across_two_different_base_types() {
+        for (lhs, rhs) in [
+            (Exp::num(1), Exp::bool_(true)),
+            (Exp::num(1), Exp::str_("a")),
+            (Exp::str_("a"), Exp::bool_(true)),
+            (Exp::bool_(true), Exp::num(1)),
+        ] {
+            let e = Exp::bin_op(Op::Eq, lhs.clone(), rhs.clone());
+            assert_eq!(syn(&Ctx::empty(), &e), None, "{lhs:?} == {rhs:?}");
+        }
+    }
+
+    #[test]
+    fn eq_declines_types_with_no_equality() {
+        let f = Exp::lam(x(), Ty::Num, Exp::var(x()));
+        let e = Exp::bin_op(Op::Eq, f.clone(), f);
+        assert_eq!(syn(&Ctx::empty(), &e), None);
+
+        let p = Exp::pair(Exp::num(1), Exp::num(2));
+        let e = Exp::bin_op(Op::Eq, p.clone(), p);
+        assert_eq!(syn(&Ctx::empty(), &e), None);
+    }
+
+    #[test]
+    fn the_expectation_at_an_eq_operand_comes_from_the_other_one() {
+        let ctx = Ctx::empty();
+        assert_eq!(operand_expectation(&ctx, Op::Eq, &Exp::str_("a")), Ty::Str);
+        assert_eq!(operand_expectation(&ctx, Op::Eq, &Exp::num(1)), Ty::Num);
+        assert_eq!(
+            operand_expectation(&ctx, Op::Eq, &Exp::empty_hole(h(0))),
+            Ty::Hole
+        );
+        assert_eq!(
+            operand_expectation(&ctx, Op::Concat, &Exp::empty_hole(h(0))),
+            Ty::Str
+        );
+        assert_eq!(operand_expectation(&ctx, Op::Add, &Exp::str_("a")), Ty::Num);
     }
 
     #[test]

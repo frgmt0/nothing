@@ -5,7 +5,7 @@ use nothing_core::doc::{Def, Doc, MAIN_ID, MAIN_NAME, references, vacate};
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
 use nothing_core::names::{NameTable, fresh_binder_name, fresh_definition_name};
 use nothing_core::ty::{Ty, matched_arrow, matched_prod};
-use nothing_core::typing::{ana, syn};
+use nothing_core::typing::{ana, is_comparable, operand_expectation, syn};
 
 use crate::zipper::{Frame, Zipper, unzip};
 
@@ -20,6 +20,7 @@ pub enum Action {
 
     ConstructNum(i64),
     ConstructBool(bool),
+    ConstructStr(String),
     ConstructVar(Id),
 
     ConstructLam,
@@ -99,7 +100,7 @@ impl Fresh {
                 self.observe(f);
                 self.observe(a);
             }
-            Exp::Num(_) | Exp::Bool(_) => {}
+            Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
             Exp::BinOp(_, l, r) | Exp::Pair(l, r) => {
                 self.observe(l);
                 self.observe(r);
@@ -221,7 +222,8 @@ pub fn ctx_and_expected_ty_at_in(scope: &DefScope, zipper: &Zipper) -> (Ctx, Ty)
                     .map(|(in_ty, _)| in_ty)
                     .unwrap_or(Ty::Hole);
             }
-            Frame::BinOpLeft(..) | Frame::BinOpRight(..) => expected = Ty::Num,
+            Frame::BinOpLeft(op, rhs) => expected = operand_expectation(&ctx, *op, rhs),
+            Frame::BinOpRight(op, lhs) => expected = operand_expectation(&ctx, *op, lhs),
             Frame::IfCond(..) => expected = Ty::Bool,
             Frame::IfThen(_, else_) => {
                 if expected == Ty::Hole {
@@ -288,6 +290,7 @@ pub fn apply_with_in(
 
         Action::ConstructNum(n) => construct_leaf(scope, zipper, Exp::num(n), fresh),
         Action::ConstructBool(b) => construct_leaf(scope, zipper, Exp::bool_(b), fresh),
+        Action::ConstructStr(ref text) => construct_leaf(scope, zipper, Exp::str_(text), fresh),
         Action::ConstructVar(id) => {
             if ctx_at_in(scope, &zipper).lookup(&id).is_none() {
                 None
@@ -311,11 +314,13 @@ pub fn apply_with_in(
             fresh,
             |fun, fresh| Exp::ap(fun, Exp::empty_hole(fresh.hole())),
         ),
-        Action::ConstructBinOp(op) => {
-            construct_wrapping(scope, zipper, Ty::Num, fresh, |lhs, fresh| {
-                Exp::bin_op(op, lhs, Exp::empty_hole(fresh.hole()))
-            })
-        }
+        Action::ConstructBinOp(op) => construct_wrapping_if(
+            scope,
+            zipper,
+            |ctx, focus| lhs_of_a_binop_fits(ctx, op, focus),
+            fresh,
+            |lhs, fresh| Exp::bin_op(op, lhs, Exp::empty_hole(fresh.hole())),
+        ),
         Action::ConstructIf => construct_wrapping(scope, zipper, Ty::Bool, fresh, |cond, fresh| {
             Exp::if_(
                 cond,
@@ -381,7 +386,7 @@ fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
         children.iter().position(|c| matches!(c, Exp::EmptyHole(_)))
     }
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => None,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => None,
         Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::NonEmptyHole(_, b) => first(&[b]),
         Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => first(&[a, b]),
         Exp::If(c, t, e) => first(&[c, t, e]),
@@ -398,6 +403,14 @@ fn construct_leaf(
     place(scope, zipper, leaf, &ctx, &expected, fresh)
 }
 
+fn lhs_of_a_binop_fits(ctx: &Ctx, op: Op, focus: &Exp) -> bool {
+    match op {
+        Op::Eq => syn(ctx, focus).is_some_and(|ty| is_comparable(&ty)),
+        Op::Concat => ana(ctx, focus, &Ty::Str),
+        Op::Add | Op::Sub | Op::Mul | Op::Lt => ana(ctx, focus, &Ty::Num),
+    }
+}
+
 fn construct_wrapping(
     scope: &DefScope,
     zipper: Zipper,
@@ -405,9 +418,25 @@ fn construct_wrapping(
     fresh: &mut Fresh,
     build: impl FnOnce(Exp, &mut Fresh) -> Exp,
 ) -> Option<Zipper> {
+    construct_wrapping_if(
+        scope,
+        zipper,
+        |ctx, focus| ana(ctx, focus, &inner_expected),
+        fresh,
+        build,
+    )
+}
+
+fn construct_wrapping_if(
+    scope: &DefScope,
+    zipper: Zipper,
+    inner_fits: impl FnOnce(&Ctx, &Exp) -> bool,
+    fresh: &mut Fresh,
+    build: impl FnOnce(Exp, &mut Fresh) -> Exp,
+) -> Option<Zipper> {
     let (ctx, expected) = ctx_and_expected_ty_at_in(scope, &zipper);
     let focus = zipper.focus.clone();
-    let fits = syn(&ctx, &focus).is_some() && ana(&ctx, &focus, &inner_expected);
+    let fits = syn(&ctx, &focus).is_some() && inner_fits(&ctx, &focus);
     let principal = if fits {
         focus
     } else {
@@ -1466,7 +1495,7 @@ mod tests {
     fn contains_a_hole(e: &Exp) -> bool {
         match e {
             Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => true,
-            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => false,
+            Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => false,
             Exp::Lam(_, _, b) | Exp::Proj(_, b) => contains_a_hole(b),
             Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
                 contains_a_hole(a) || contains_a_hole(b)

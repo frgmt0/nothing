@@ -24,6 +24,7 @@ fn build(target: &Exp, actions: &mut Vec<Action>) {
 
         Exp::Num(n) => actions.push(Action::ConstructNum(*n)),
         Exp::Bool(b) => actions.push(Action::ConstructBool(*b)),
+        Exp::Str(text) => actions.push(Action::ConstructStr(text.clone())),
         Exp::Var(id) => actions.push(Action::ConstructVar(*id)),
 
         Exp::Lam(id, ann, body) => {
@@ -113,6 +114,7 @@ fn canonical_hole_ids(exp: &Exp) -> Exp {
             Exp::Var(id) => Exp::Var(*id),
             Exp::Num(n) => Exp::Num(*n),
             Exp::Bool(b) => Exp::Bool(*b),
+            Exp::Str(text) => Exp::Str(text.clone()),
             Exp::EmptyHole(_) => Exp::EmptyHole(fresh()),
             Exp::NonEmptyHole(_, inner) => {
                 let h = fresh();
@@ -137,7 +139,7 @@ fn eq_up_to_hole_ids(x: &Exp, y: &Exp) -> bool {
 fn is_hole_free(exp: &Exp) -> bool {
     match exp {
         Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => false,
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => true,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => true,
         Exp::Lam(_, _, b) | Exp::Proj(_, b) => is_hole_free(b),
         Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Let(_, a, b) | Exp::Pair(a, b) => {
             is_hole_free(a) && is_hole_free(b)
@@ -316,6 +318,7 @@ fn the_targets_cover_the_hard_cases() {
             Exp::Var(_) => note("Var", seen),
             Exp::Num(_) => note("Num", seen),
             Exp::Bool(_) => note("Bool", seen),
+            Exp::Str(_) => note("Str", seen),
             Exp::EmptyHole(_) => note("EmptyHole", seen),
             Exp::NonEmptyHole(_, inner) => {
                 note("NonEmptyHole", seen);
@@ -369,6 +372,7 @@ fn the_targets_cover_the_hard_cases() {
         "Var",
         "Num",
         "Bool",
+        "Str",
         "EmptyHole",
         "NonEmptyHole",
         "Lam",

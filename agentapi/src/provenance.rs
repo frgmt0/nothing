@@ -6,7 +6,7 @@ use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, Id, Side};
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, Prec, op_prec, op_str, render_id,
+    PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, Prec, op_prec, op_str, quote_str, render_id,
 };
 use nothing_merge::path::{Path, arity, at, child, extend};
 
@@ -92,6 +92,7 @@ fn shallow_key(exp: &Exp) -> String {
         Exp::Ap(..) => "Ap".to_string(),
         Exp::Num(n) => format!("Num:{n}"),
         Exp::Bool(b) => format!("Bool:{b}"),
+        Exp::Str(text) => format!("Str:{}", quote_str(text)),
         Exp::BinOp(op, ..) => format!("BinOp:{}", op_str(*op)),
         Exp::If(..) => "If".to_string(),
         Exp::Let(id, ..) => format!("Let:{id}"),
@@ -335,6 +336,7 @@ fn prec_of(exp: &Exp) -> Prec {
         Exp::Var(_)
         | Exp::Num(_)
         | Exp::Bool(_)
+        | Exp::Str(_)
         | Exp::EmptyHole(_)
         | Exp::NonEmptyHole(_, _)
         | Exp::Pair(_, _) => PREC_ATOM,
@@ -397,6 +399,7 @@ impl Marker<'_> {
             Exp::Var(id) => out.push_str(&render_id(*id, self.names)),
             Exp::Num(n) => out.push_str(&n.to_string()),
             Exp::Bool(b) => out.push_str(&b.to_string()),
+            Exp::Str(text) => out.push_str(&quote_str(text)),
             Exp::EmptyHole(_) => out.push_str("⦇⦈"),
             Exp::NonEmptyHole(..) => {
                 out.push('⦇');
@@ -564,6 +567,46 @@ mod tests {
             Some(HUMAN),
             "the wrapped `1` was written by the human"
         );
+        assert_eq!(map.get(&[1]).map(|v| v.author), Some(MODEL));
+    }
+
+    #[test]
+    fn the_shallow_key_of_a_string_carries_the_text_itself() {
+        assert_eq!(shallow_key(&Exp::str_("hi")), "Str:\"hi\"");
+        assert_ne!(shallow_key(&Exp::str_("hi")), shallow_key(&Exp::str_("ho")));
+        assert_eq!(shallow_key(&Exp::str_("a\"b")), "Str:\"a\\\"b\"");
+    }
+
+    #[test]
+    fn rewriting_the_text_of_a_string_reattributes_that_node() {
+        let mut session = AgentSession::new(HUMAN);
+        assert!(session.apply_text("construct-str \"hi\"").unwrap());
+        let before = provenance_of(session.base(), &session.applied_entries());
+        assert_eq!(before.get(&[]).map(|v| v.author), Some(HUMAN));
+
+        session.set_author(MODEL);
+        assert!(session.apply_text("construct-str \"hi there\"").unwrap());
+        assert_eq!(session.state().render(), "\"hi there\"");
+        let after = provenance_of(session.base(), &session.applied_entries());
+        assert_eq!(
+            after.get(&[]).map(|v| v.author),
+            Some(MODEL),
+            "a different payload is a different node"
+        );
+    }
+
+    #[test]
+    fn joining_a_human_string_to_a_model_string_keeps_both_authors() {
+        let mut session = AgentSession::new(HUMAN);
+        assert!(session.apply_text("construct-str \"hello, \"").unwrap());
+        session.set_author(MODEL);
+        assert!(session.apply_text("construct-binop concat").unwrap());
+        assert!(session.apply_text("construct-str \"world\"").unwrap());
+        assert_eq!(session.state().render(), "\"hello, \" ++ \"world\"");
+
+        let map = provenance_of(session.base(), &session.applied_entries());
+        assert_eq!(map.get(&[]).map(|v| v.author), Some(MODEL));
+        assert_eq!(map.get(&[0]).map(|v| v.author), Some(HUMAN));
         assert_eq!(map.get(&[1]).map(|v| v.author), Some(MODEL));
     }
 

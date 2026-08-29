@@ -4,6 +4,7 @@ use std::fmt;
 pub enum Ty {
     Num,
     Bool,
+    Str,
     Arrow(Box<Ty>, Box<Ty>),
     Prod(Box<Ty>, Box<Ty>),
     Hole,
@@ -19,6 +20,7 @@ fn fmt_prec(ty: &Ty, min_prec: u8, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match ty {
         Ty::Num => write!(f, "Num"),
         Ty::Bool => write!(f, "Bool"),
+        Ty::Str => write!(f, "Str"),
         Ty::Hole => write!(f, "?"),
         Ty::Arrow(a, b) => {
             let needs_parens = min_prec > 0;
@@ -54,7 +56,7 @@ fn fmt_prec(ty: &Ty, min_prec: u8, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 pub fn is_consistent(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
         (Ty::Hole, _) | (_, Ty::Hole) => true,
-        (Ty::Num, Ty::Num) | (Ty::Bool, Ty::Bool) => true,
+        (Ty::Num, Ty::Num) | (Ty::Bool, Ty::Bool) | (Ty::Str, Ty::Str) => true,
         (Ty::Arrow(a1, a2), Ty::Arrow(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
         (Ty::Prod(a1, a2), Ty::Prod(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
         _ => false,
@@ -93,6 +95,7 @@ mod tests {
     fn display_atoms() {
         assert_eq!(Ty::Num.to_string(), "Num");
         assert_eq!(Ty::Bool.to_string(), "Bool");
+        assert_eq!(Ty::Str.to_string(), "Str");
         assert_eq!(Ty::Hole.to_string(), "?");
     }
 
@@ -160,6 +163,16 @@ mod tests {
     #[test]
     fn consistency_unequal_atoms_fail() {
         assert!(!is_consistent(&Ty::Num, &Ty::Bool));
+        assert!(!is_consistent(&Ty::Num, &Ty::Str));
+        assert!(!is_consistent(&Ty::Bool, &Ty::Str));
+    }
+
+    #[test]
+    fn consistency_str_with_itself_and_with_the_hole() {
+        assert!(is_consistent(&Ty::Str, &Ty::Str));
+        assert!(is_consistent(&Ty::Str, &Ty::Hole));
+        assert!(is_consistent(&Ty::Hole, &Ty::Str));
+        assert!(!is_consistent(&Ty::Str, &arrow(Ty::Str, Ty::Str)));
     }
 
     #[test]

@@ -14,7 +14,7 @@ pub fn count_holes(exp: &Exp) -> HoleCounts {
 
 fn walk(exp: &Exp, counts: &mut HoleCounts) {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => {}
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
         Exp::EmptyHole(_) => counts.empty += 1,
         Exp::NonEmptyHole(_, inner) => {
             counts.non_empty += 1;

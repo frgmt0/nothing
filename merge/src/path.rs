@@ -18,7 +18,7 @@ pub fn extend(base: &[usize], step: usize) -> Path {
 
 pub fn arity(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => 0,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => 0,
         Exp::Lam(..) | Exp::Proj(..) | Exp::NonEmptyHole(..) => 1,
         Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) => 2,
         Exp::If(..) => 3,

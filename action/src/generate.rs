@@ -36,6 +36,15 @@ impl Rng {
         (self.next_u64() % 21) as i64 - 10
     }
 
+    pub fn text(&mut self) -> String {
+        const PIECES: [&str; 8] = ["", "a", "hi", "hello", "the ", "x y", "\"", "\\"];
+        let mut out = String::new();
+        for _ in 0..=self.below(3) {
+            out.push_str(PIECES[self.below(PIECES.len())]);
+        }
+        out
+    }
+
     pub fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
         &xs[self.below(xs.len())]
     }
@@ -80,12 +89,13 @@ impl Gen {
     }
 
     pub fn ty(&mut self, depth: u32) -> Ty {
-        let n = if depth == 0 { 3 } else { 5 };
+        let n = if depth == 0 { 4 } else { 6 };
         match self.rng.below(n) {
             0 => Ty::Num,
             1 => Ty::Bool,
-            2 => Ty::Hole,
-            3 => Ty::Arrow(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
+            2 => Ty::Str,
+            3 => Ty::Hole,
+            4 => Ty::Arrow(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
             _ => Ty::Prod(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
         }
     }
@@ -141,7 +151,7 @@ impl Gen {
             cands.push(Form::If);
             cands.push(Form::Ap);
             cands.push(Form::Proj);
-            if *ty == Ty::Num || *ty == Ty::Bool {
+            if *ty == Ty::Num || *ty == Ty::Bool || *ty == Ty::Str {
                 cands.push(Form::BinOp);
                 cands.push(Form::BinOp);
             }
@@ -157,6 +167,7 @@ impl Gen {
             Form::Canonical => match ty {
                 Ty::Num => Exp::num(self.rng.small_int()),
                 Ty::Bool => Exp::bool_(self.rng.boolean()),
+                Ty::Str => Exp::str_(self.rng.text()),
                 Ty::Hole => Exp::empty_hole(self.fresh_hole()),
                 Ty::Arrow(a, b) => {
                     let id = self.fresh_id();
@@ -211,13 +222,18 @@ impl Gen {
             }
 
             Form::BinOp => {
-                let op = if *ty == Ty::Num {
-                    *self.rng.pick(&[Op::Add, Op::Sub, Op::Mul])
-                } else {
-                    *self.rng.pick(&[Op::Lt, Op::Eq])
+                let op = match ty {
+                    Ty::Num => *self.rng.pick(&[Op::Add, Op::Sub, Op::Mul]),
+                    Ty::Str => Op::Concat,
+                    _ => *self.rng.pick(&[Op::Lt, Op::Eq]),
                 };
-                let lhs = self.exp_ana(ctx, &Ty::Num, d);
-                let rhs = self.exp_ana(ctx, &Ty::Num, d);
+                let operand = match op {
+                    Op::Concat => Ty::Str,
+                    Op::Eq => self.rng.pick(&[Ty::Num, Ty::Bool, Ty::Str]).clone(),
+                    _ => Ty::Num,
+                };
+                let lhs = self.exp_ana(ctx, &operand, d);
+                let rhs = self.exp_ana(ctx, &operand, d);
                 Exp::bin_op(op, lhs, rhs)
             }
 
@@ -264,7 +280,7 @@ pub fn well_typed_exp_of_ty(seed: u64, ty: &Ty, depth: u32) -> Exp {
 
 pub fn size(exp: &Exp) -> usize {
     match exp {
-        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::EmptyHole(_) => 1,
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::EmptyHole(_) => 1,
         Exp::Lam(_, _, body) => 1 + size(body),
         Exp::Ap(f, a) => 1 + size(f) + size(a),
         Exp::BinOp(_, l, r) => 1 + size(l) + size(r),
@@ -337,7 +353,7 @@ mod tests {
                     *non_empty += 1;
                     count(inner, empty, non_empty);
                 }
-                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) => {}
+                Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) => {}
                 Exp::Lam(_, _, b) => count(b, empty, non_empty),
                 Exp::Ap(f, a) => {
                     count(f, empty, non_empty);

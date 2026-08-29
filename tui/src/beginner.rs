@@ -2,6 +2,7 @@ use nothing_action::cursor_render::{CURSOR_CLOSE, CURSOR_OPEN};
 use nothing_action::zipper::{Frame, Zipper};
 use nothing_core::exp::{Exp, Op, Side};
 use nothing_core::names::NameTable;
+use nothing_core::render::quote_str;
 use nothing_core::ty::Ty;
 
 use crate::app::{AppState, Slot};
@@ -11,6 +12,7 @@ pub fn phrase(exp: &Exp, names: &NameTable) -> String {
         Exp::Var(id) => names.display(*id),
         Exp::Num(n) => n.to_string(),
         Exp::Bool(b) => if *b { "yes" } else { "no" }.to_string(),
+        Exp::Str(text) => format!("the text {}", quote_str(text)),
         Exp::EmptyHole(_) => "(blank)".to_string(),
         Exp::NonEmptyHole(_, e) => format!("(not yet fitting: {})", phrase(e, names)),
         Exp::Pair(a, b) => format!("the pair of {} and {}", phrase(a, names), phrase(b, names)),
@@ -52,6 +54,7 @@ fn binop_phrase(op: Op, l: &str, r: &str) -> String {
         Op::Mul => format!("the product of {l} and {r}"),
         Op::Lt => format!("whether {l} is less than {r}"),
         Op::Eq => format!("whether {l} equals {r}"),
+        Op::Concat => format!("{l} followed by {r}"),
     }
 }
 
@@ -59,6 +62,7 @@ pub fn ty_phrase(ty: &Ty) -> String {
     match ty {
         Ty::Num => "a number".to_string(),
         Ty::Bool => "a yes-or-no value".to_string(),
+        Ty::Str => "a piece of text".to_string(),
         Ty::Hole => "an unknown type".to_string(),
         Ty::Arrow(a, b) => format!("a function from {} to {}", ty_phrase(a), ty_phrase(b)),
         Ty::Prod(a, b) => format!("a pair of {} and {}", ty_phrase(a), ty_phrase(b)),

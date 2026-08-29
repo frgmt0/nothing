@@ -1,0 +1,1 @@
+main : ? = λx0:Str. λx1:Bool. if x1 then "Good evening, " ++ x0 ++ "." else "hi " ++ x0 ++ "!"

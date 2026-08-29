@@ -88,6 +88,13 @@ impl Outcome {
         }
     }
 
+    pub fn str(&self) -> Option<&str> {
+        match self {
+            Outcome::Value(Dyn::Str(text)) => Some(text),
+            _ => None,
+        }
+    }
+
     pub fn to_exp(&self) -> Exp {
         crate::dynamic::to_exp(self.dyn_result())
     }
@@ -102,7 +109,7 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
     match d {
         Dyn::Var(id) => defs.get(id).cloned(),
 
-        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Lam(..) | Dyn::EmptyHole(..) => None,
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::EmptyHole(..) => None,
 
         Dyn::Ap(fun, arg) => {
             if let Some(fun) = step(fun) {
@@ -125,7 +132,9 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
                 return Some(Dyn::BinOp(*op, lhs.clone(), Box::new(rhs)));
             }
             match (lhs.as_ref(), rhs.as_ref()) {
-                (Dyn::Num(a), Dyn::Num(b)) => apply_op(*op, *a, *b),
+                (Dyn::Num(a), Dyn::Num(b)) => apply_num_op(*op, *a, *b),
+                (Dyn::Str(a), Dyn::Str(b)) => apply_str_op(*op, a, b),
+                (Dyn::Bool(a), Dyn::Bool(b)) => apply_bool_op(*op, *a, *b),
                 _ => None,
             }
         }
@@ -174,14 +183,30 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
     }
 }
 
-fn apply_op(op: Op, a: i64, b: i64) -> Option<Dyn> {
+fn apply_num_op(op: Op, a: i64, b: i64) -> Option<Dyn> {
     Some(match op {
         Op::Add => Dyn::Num(a.checked_add(b)?),
         Op::Sub => Dyn::Num(a.checked_sub(b)?),
         Op::Mul => Dyn::Num(a.checked_mul(b)?),
         Op::Lt => Dyn::Bool(a < b),
         Op::Eq => Dyn::Bool(a == b),
+        Op::Concat => return None,
     })
+}
+
+fn apply_str_op(op: Op, a: &str, b: &str) -> Option<Dyn> {
+    match op {
+        Op::Concat => Some(Dyn::Str(format!("{a}{b}"))),
+        Op::Eq => Some(Dyn::Bool(a == b)),
+        Op::Add | Op::Sub | Op::Mul | Op::Lt => None,
+    }
+}
+
+fn apply_bool_op(op: Op, a: bool, b: bool) -> Option<Dyn> {
+    match op {
+        Op::Eq => Some(Dyn::Bool(a == b)),
+        Op::Add | Op::Sub | Op::Mul | Op::Lt | Op::Concat => None,
+    }
 }
 
 pub fn defs_of(doc: &Doc) -> Defs {
@@ -271,7 +296,7 @@ fn collect(d: &Dyn, out: &mut Vec<Blocked>) {
         Dyn::If(cond, _, _) => collect(cond, out),
         Dyn::Proj(_, inner) => collect(inner, out),
 
-        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Lam(..) => {}
+        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) => {}
     }
 }
 
@@ -307,6 +332,41 @@ mod tests {
     fn literals_are_already_values() {
         assert_eq!(eval(&Exp::num(7)).num(), Some(7));
         assert_eq!(eval(&Exp::bool_(true)).bool(), Some(true));
+        assert_eq!(eval(&Exp::str_("hi")).str(), Some("hi"));
+    }
+
+    #[test]
+    fn concatenation_and_string_equality_reduce() {
+        let e = Exp::bin_op(
+            Op::Concat,
+            Exp::str_("hello, "),
+            Exp::bin_op(Op::Concat, Exp::str_("wor"), Exp::str_("ld")),
+        );
+        assert!(is_well_typed(&e));
+        assert_eq!(eval(&e).str(), Some("hello, world"));
+
+        assert_eq!(
+            eval(&Exp::bin_op(Op::Eq, Exp::str_("a"), Exp::str_("a"))).bool(),
+            Some(true)
+        );
+        assert_eq!(
+            eval(&Exp::bin_op(Op::Eq, Exp::str_("a"), Exp::str_("b"))).bool(),
+            Some(false)
+        );
+        assert_eq!(
+            eval(&Exp::bin_op(Op::Eq, Exp::bool_(true), Exp::bool_(true))).bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_string_around_a_hole_stops_at_the_hole() {
+        let e = Exp::bin_op(Op::Concat, Exp::str_("hi "), Exp::empty_hole(h(1)));
+        assert!(is_well_typed(&e));
+        let outcome = eval(&e);
+        assert!(outcome.is_indeterminate());
+        assert_eq!(outcome.blocked().len(), 1);
+        assert_eq!(render(outcome.dyn_result(), &names()), "\"hi \" ++ ⦇⦈");
     }
 
     #[test]

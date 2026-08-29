@@ -129,6 +129,7 @@ pub fn encode_op(op: Op) -> u8 {
         Op::Mul => 2,
         Op::Lt => 3,
         Op::Eq => 4,
+        Op::Concat => 5,
     }
 }
 
@@ -139,6 +140,7 @@ pub fn decode_op(tag: u8) -> Result<Op, DecodeError> {
         2 => Ok(Op::Mul),
         3 => Ok(Op::Lt),
         4 => Ok(Op::Eq),
+        5 => Ok(Op::Concat),
         other => Err(DecodeError::BadTag(other)),
     }
 }
@@ -173,6 +175,7 @@ pub fn encode_ty(buf: &mut Vec<u8>, ty: &Ty) {
             encode_ty(buf, b);
         }
         Ty::Hole => buf.push(4),
+        Ty::Str => buf.push(5),
     }
 }
 
@@ -191,6 +194,7 @@ pub fn decode_ty(bytes: &[u8], pos: &mut usize) -> Result<Ty, DecodeError> {
             Ok(Ty::Prod(Box::new(a), Box::new(b)))
         }
         4 => Ok(Ty::Hole),
+        5 => Ok(Ty::Str),
         other => Err(DecodeError::BadTag(other)),
     }
 }

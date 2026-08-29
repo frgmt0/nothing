@@ -76,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn the_version_two_reader_migrates_a_version_one_file() {
+    fn the_current_reader_migrates_a_version_one_file() {
         let exp = examples::square_and_compare();
         let migrated = decode_document(&v1_bytes(&exp)).expect("v1 files still open");
 
@@ -90,18 +90,18 @@ mod tests {
     }
 
     #[test]
-    fn migration_is_idempotent_and_re_encodes_as_version_two() {
+    fn migration_is_idempotent_and_re_encodes_as_the_current_version() {
         let exp = examples::pair_and_project();
         let once = decode_document(&v1_bytes(&exp)).expect("v1 opens");
         let twice = decode_document(&v1_bytes(&exp)).expect("v1 opens");
         assert_eq!(once, twice);
 
-        let v2 = encode_document(&once);
-        assert_eq!(v2[4], 2);
-        let reopened = decode_document(&v2).expect("v2 opens");
+        let current = encode_document(&once);
+        assert_eq!(current[4], crate::document::VERSION_MAJOR);
+        let reopened = decode_document(&current).expect("the current version opens");
         assert_eq!(reopened.doc, once.doc);
         assert_eq!(reopened.log, once.log);
-        assert_eq!(encode_document(&reopened), v2);
+        assert_eq!(encode_document(&reopened), current);
     }
 
     #[test]

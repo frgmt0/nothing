@@ -18,6 +18,10 @@ pub fn program_line(state: &AppState) -> String {
 fn slot_marked(state: &AppState) -> Option<String> {
     let names = state.names();
     let focus_text = match (state.focus(), state.slot) {
+        (Exp::Str(text), _) if state.escape_armed => format!(
+            "{CURSOR_OPEN}\"{}\\\"{CURSOR_CLOSE}",
+            nothing_core::render::escape_str(text)
+        ),
         (Exp::Lam(id, ty, body), Slot::BinderName) => format!(
             "λ{CURSOR_OPEN}{}{CURSOR_CLOSE}:{ty}. {}",
             render_id(*id, names),
@@ -255,6 +259,14 @@ pub fn status_line(state: &AppState) -> String {
         1 => line.push_str(" · 1 quarantined"),
         n => line.push_str(&format!(" · {n} quarantined")),
     }
+    if state.string_open {
+        line.push_str(" · string");
+        if state.escape_armed {
+            line.push_str(" · pending escape · \\\" or \\\\");
+        } else {
+            line.push_str(" · \" closes it");
+        }
+    }
     if let Some(entry) = entry_line(state) {
         line.push_str(" · ");
         line.push_str(&entry);
@@ -299,8 +311,8 @@ fn entry_line(state: &AppState) -> Option<String> {
 }
 
 pub fn key_line() -> &'static str {
-    "↑↓←→ move · Tab hole · 0-9 a-z literal · +-*<= op · space \\?;,[]! form · :. slot · \
-     Enter fit · C-↑↓ defs · C-n/d add/drop · C-l/t name/type · C-z undo · C-q quit"
+    "↑↓←→ move · Tab hole · 0-9a-z\" literal · +-*<=& op · space\\?;,[]! form · :. slot · \
+     Enter fit · C-↑↓ defs · C-n/d add/drop · C-l/t name/ty · C-z undo · C-q quit"
 }
 
 fn focus_label(exp: &Exp) -> &'static str {
@@ -310,6 +322,7 @@ fn focus_label(exp: &Exp) -> &'static str {
         Exp::Ap(..) => "application",
         Exp::Num(_) => "number",
         Exp::Bool(_) => "boolean",
+        Exp::Str(_) => "text",
         Exp::BinOp(..) => "operator",
         Exp::If(..) => "conditional",
         Exp::Let(..) => "let",

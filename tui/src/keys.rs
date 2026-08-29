@@ -24,8 +24,134 @@ pub fn handle_key(key: KeyEvent, state: AppState) -> AppState {
         return state.cycle_projection();
     }
 
+    if state.string_open && string_run_takes(key) {
+        let opened = state.open_keystroke();
+        return string_key(key, state).close_keystroke(opened);
+    }
+
+    let mut state = state;
+    state.string_open = false;
+    state.escape_armed = false;
+
     let opened = state.open_keystroke();
     dispatch(key, state).close_keystroke(opened)
+}
+
+fn string_run_takes(key: KeyEvent) -> bool {
+    if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+        return false;
+    }
+    matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace)
+}
+
+fn string_key(key: KeyEvent, state: AppState) -> AppState {
+    match key.code {
+        KeyCode::Backspace => string_backspace(state),
+        KeyCode::Char(c) if state.escape_armed => {
+            let mut next = state;
+            next.escape_armed = false;
+            match c {
+                '"' => string_append("\"", next),
+                '\\' => string_append("\\", next),
+                other => string_append(&format!("\\{other}"), next),
+            }
+        }
+        KeyCode::Char('"') => {
+            let mut next = state;
+            next.string_open = false;
+            next
+        }
+        KeyCode::Char('\\') => {
+            let mut next = state;
+            next.escape_armed = true;
+            next
+        }
+        KeyCode::Char(c) => string_append(&c.to_string(), state),
+        _ => state,
+    }
+}
+
+fn string_append(text: &str, state: AppState) -> AppState {
+    if matches!(state.focus(), Exp::NonEmptyHole(..)) {
+        return match state.apply_actions(&[Action::MoveChild(0)]) {
+            Some(mut inner) => {
+                inner.string_open = state.string_open;
+                inner.escape_armed = state.escape_armed;
+                string_append(text, inner)
+            }
+            None => state.with_hint("cannot look inside this hole"),
+        };
+    }
+    let mut written = focused_string(&state);
+    written.push_str(text);
+    let open = state.string_open;
+    let armed = state.escape_armed;
+    match state.apply_actions(&[Action::ConstructStr(written)]) {
+        Some(mut next) => {
+            next.string_open = open;
+            next.escape_armed = armed;
+            next
+        }
+        None => state.with_hint("a string does not fit here"),
+    }
+}
+
+fn string_backspace(state: AppState) -> AppState {
+    if state.escape_armed {
+        let mut next = state;
+        next.escape_armed = false;
+        return next;
+    }
+    if matches!(state.focus(), Exp::NonEmptyHole(..)) {
+        return match state.apply_actions(&[Action::MoveChild(0)]) {
+            Some(mut inner) => {
+                inner.string_open = state.string_open;
+                string_backspace(inner)
+            }
+            None => state.with_hint("cannot look inside this hole"),
+        };
+    }
+    let mut written = focused_string(&state);
+    if written.pop().is_none() {
+        let mut next = match state.apply_actions(&[Action::Delete]) {
+            Some(next) => next,
+            None => state,
+        };
+        next.clear_entry();
+        return next;
+    }
+    let open = state.string_open;
+    match state.apply_actions(&[Action::ConstructStr(written)]) {
+        Some(mut next) => {
+            next.string_open = open;
+            next
+        }
+        None => state.with_hint("a string does not fit here"),
+    }
+}
+
+fn focused_string(state: &AppState) -> String {
+    match state.focus() {
+        Exp::Str(text) => text.clone(),
+        _ => String::new(),
+    }
+}
+
+fn open_string(state: AppState) -> AppState {
+    if matches!(state.focus(), Exp::Str(_)) {
+        let mut next = state;
+        next.string_open = true;
+        next.escape_armed = false;
+        return next;
+    }
+    match state.apply_actions(&[Action::ConstructStr(String::new())]) {
+        Some(mut next) => {
+            next.string_open = true;
+            next.escape_armed = false;
+            next
+        }
+        None => state.with_hint("a string does not fit here"),
+    }
 }
 
 fn dispatch(key: KeyEvent, state: AppState) -> AppState {
@@ -217,6 +343,9 @@ fn node_key(c: char, state: AppState) -> AppState {
         '*' => operator(Op::Mul, state),
         '<' => operator(Op::Lt, state),
         '=' => operator(Op::Eq, state),
+        '&' => operator(Op::Concat, state),
+
+        '"' => open_string(state),
 
         ' ' => wrap(state, PREC_APP, Action::ConstructAp, "application"),
         '\\' => binder(state, Action::ConstructLam, pending, "λ"),
@@ -630,6 +759,105 @@ mod tests {
     }
 
     #[test]
+    fn a_string_run_takes_every_printable_key_as_text() {
+        assert_eq!(typed("\"hello\""), "\"hello\"");
+        assert_eq!(
+            typed("\"a b + 1; ? , [ ] ! ~ : .\""),
+            "\"a b + 1; ? , [ ] ! ~ : .\""
+        );
+        assert_eq!(typed("\"\""), "\"\"");
+
+        let state = type_chars("\"hi", AppState::empty());
+        assert!(
+            state.string_open,
+            "the run stays open until a closing quote"
+        );
+        assert_eq!(state.text(), "\"hi\"");
+        assert_eq!(state.keystrokes(), 3);
+    }
+
+    #[test]
+    fn the_only_two_escapes_are_the_quote_and_the_backslash() {
+        assert_eq!(typed("\"a\\\"b\""), "\"a\\\"b\"");
+        assert_eq!(typed("\"a\\\\b\""), "\"a\\\\b\"");
+        assert_eq!(typed("\"a\\nb\""), "\"a\\\\nb\"");
+
+        let armed = type_chars("\"a\\", AppState::empty());
+        assert!(armed.escape_armed);
+        assert_eq!(armed.text(), "\"a\"", "an armed escape has not landed yet");
+        let disarmed = handle_key(key(KeyCode::Backspace), armed);
+        assert!(!disarmed.escape_armed);
+        assert_eq!(disarmed.text(), "\"a\"");
+    }
+
+    #[test]
+    fn a_quote_reopens_a_finished_string_at_its_end() {
+        let state = type_chars("\"hi\"", AppState::empty());
+        assert!(!state.string_open);
+        let state = type_chars("\" there", state);
+        assert_eq!(state.text(), "\"hi there\"");
+    }
+
+    #[test]
+    fn backspace_un_types_one_character_and_then_the_literal() {
+        let state = type_chars("\"ab", AppState::empty());
+        let state = handle_key(key(KeyCode::Backspace), state);
+        assert_eq!(state.text(), "\"a\"");
+        let state = handle_key(key(KeyCode::Backspace), state);
+        assert_eq!(state.text(), "\"\"");
+        let state = handle_key(key(KeyCode::Backspace), state);
+        assert_eq!(state.text(), "⦇⦈");
+        assert!(!state.string_open);
+    }
+
+    #[test]
+    fn every_other_key_closes_the_run_and_is_reprocessed() {
+        let state = type_chars("\"a", AppState::empty());
+        let state = handle_key(key(KeyCode::Esc), state);
+        assert!(!state.string_open);
+        assert_eq!(state.text(), "\"a\"");
+
+        let state = type_chars("\"a", AppState::empty());
+        let state = handle_key(key(KeyCode::Enter), state);
+        assert!(!state.string_open);
+        assert_eq!(state.text(), "\"a\"");
+
+        let state = type_chars("\"a", AppState::empty());
+        let state = handle_key(key(KeyCode::Up), state);
+        assert!(!state.string_open);
+    }
+
+    #[test]
+    fn a_string_run_survives_the_descent_into_a_quarantine() {
+        let state = type_chars("1+", AppState::empty());
+        let state = type_chars("\"ab", state);
+        assert!(state.string_open);
+        assert_eq!(state.text(), "1 + ⦇\"ab\"⦈");
+    }
+
+    #[test]
+    fn joining_text_is_one_key_and_climbs_like_addition() {
+        assert_eq!(typed("\"a\"&\"b\""), "\"a\" ++ \"b\"");
+        assert_eq!(typed("\"a\"&\"b\"&\"c\""), "\"a\" ++ \"b\" ++ \"c\"");
+        assert_eq!(typed("1&"), "⦇1⦈ ++ ⦇⦈");
+    }
+
+    #[test]
+    fn a_string_annotation_is_one_key_in_the_annotation_slot() {
+        assert_eq!(typed("\\n:s."), "λn:Str. ⦇⦈");
+        assert_eq!(typed("\\n:str."), "λn:Str. ⦇⦈");
+        assert_eq!(typed("\\n:s>n."), "λn:Str -> Num. ⦇⦈");
+    }
+
+    #[test]
+    fn undo_takes_back_one_keystroke_of_a_string() {
+        let state = type_chars("\"abc", AppState::empty());
+        let state = handle_key(ctrl(KeyCode::Char('z')), state);
+        assert_eq!(state.text(), "\"ab\"");
+        assert!(state.string_open, "undo restores the run it was typed in");
+    }
+
+    #[test]
     fn one_plus_two_is_three_keystrokes() {
         let state = type_chars("1+2", AppState::empty());
         assert_eq!(state.text(), "1 + 2");
@@ -778,7 +1006,16 @@ mod tests {
         assert_eq!(typed("1+2*3"), "1 + 2 * 3");
         assert_eq!(typed("1+2+3"), "1 + 2 + 3");
 
-        assert_eq!(typed("1<2=3"), "⦇1 < 2⦈ == 3");
+        assert_eq!(typed("1<2=3"), "1 < 2 == ⦇3⦈");
+    }
+
+    #[test]
+    fn equality_compares_at_whichever_type_its_operands_have() {
+        assert_eq!(typed("1=2"), "1 == 2");
+        assert_eq!(typed("t=f"), "true == false");
+        assert_eq!(typed("\"a\"=\"b\""), "\"a\" == \"b\"");
+        assert_eq!(typed("1=t"), "1 == ⦇true⦈");
+        assert_eq!(typed("\"a\"=1"), "\"a\" == ⦇1⦈");
     }
 
     #[test]
@@ -1085,7 +1322,7 @@ mod tests {
 
     #[test]
     fn every_printable_key_leaves_a_well_typed_program() {
-        let alphabet: Vec<char> = "0123456789abnxtf_+-*<= \\?;,[]!~:.".chars().collect();
+        let alphabet: Vec<char> = "0123456789abnsxtf_+-*<=& \\?;,[]!~:.\"".chars().collect();
 
         for start in [
             AppState::empty(),
@@ -1105,7 +1342,9 @@ mod tests {
 
     #[test]
     fn no_key_ever_panics_on_any_example() {
-        let alphabet: Vec<char> = "0123456789abxz_+-*<= \\?;,[]!~:.()>{}@#".chars().collect();
+        let alphabet: Vec<char> = "0123456789abxz_+-*<=& \\?;,[]!~:.()>{}@#\""
+            .chars()
+            .collect();
         let mut state = AppState::factorial();
         for (i, c) in alphabet.iter().cycle().take(200).enumerate() {
             state = handle_key(key(KeyCode::Char(*c)), state);

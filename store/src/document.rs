@@ -10,9 +10,10 @@ use crate::names::{decode_names, encode_names};
 use crate::nodes::{NodeEntry, build_node_table, content_hash, decode_node_table};
 
 pub const MAGIC: [u8; 4] = *b"NTHG";
-pub const VERSION_MAJOR: u8 = 2;
+pub const VERSION_MAJOR: u8 = 3;
 pub const VERSION_MINOR: u8 = 0;
 pub const VERSION_MAJOR_V1: u8 = 1;
+pub const VERSION_MAJOR_V2: u8 = 2;
 pub const KIND_DOCUMENT: u8 = 1;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -120,26 +121,28 @@ pub(crate) fn read_header(bytes: &[u8], pos: &mut usize) -> Result<(u8, u8), Dec
     Ok((major, minor))
 }
 
+pub(crate) fn encode_defs(buf: &mut Vec<u8>, doc: &Document) {
+    write_varint(buf, doc.doc.len() as u64);
+    for def in doc.doc.defs() {
+        let mut body = Vec::new();
+        write_id(&mut body, def.id);
+        encode_ty(&mut body, &def.ann);
+        encode_body(&mut body, &def.body);
+        write_varint(buf, body.len() as u64);
+        buf.extend_from_slice(&body);
+    }
+
+    encode_names(buf, &doc.names);
+    encode_log(buf, &doc.log);
+}
+
 pub fn encode_document(doc: &Document) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&MAGIC);
     buf.push(VERSION_MAJOR);
     buf.push(VERSION_MINOR);
     buf.push(KIND_DOCUMENT);
-
-    write_varint(&mut buf, doc.doc.len() as u64);
-    for def in doc.doc.defs() {
-        let mut body = Vec::new();
-        write_id(&mut body, def.id);
-        encode_ty(&mut body, &def.ann);
-        encode_body(&mut body, &def.body);
-        write_varint(&mut buf, body.len() as u64);
-        buf.extend_from_slice(&body);
-    }
-
-    encode_names(&mut buf, &doc.names);
-    encode_log(&mut buf, &doc.log);
-
+    encode_defs(&mut buf, doc);
     buf
 }
 
@@ -148,32 +151,36 @@ pub fn decode_document(bytes: &[u8]) -> Result<Document, DecodeError> {
     let (major, minor) = read_header(bytes, &mut pos)?;
     match major {
         VERSION_MAJOR_V1 => return crate::v1::decode_document_v1(bytes),
-        VERSION_MAJOR => {}
+        VERSION_MAJOR_V2 | VERSION_MAJOR => {}
         _ => return Err(DecodeError::UnsupportedVersion(major, minor)),
     }
 
-    let def_count = read_varint(bytes, &mut pos)?;
+    decode_defs(bytes, &mut pos)
+}
+
+pub(crate) fn decode_defs(bytes: &[u8], pos: &mut usize) -> Result<Document, DecodeError> {
+    let def_count = read_varint(bytes, pos)?;
     if def_count == 0 {
         return Err(DecodeError::EmptyDocument);
     }
     let mut defs = Vec::with_capacity(def_count as usize);
     for _ in 0..def_count {
-        let def_len = read_varint(bytes, &mut pos)? as usize;
-        let start = pos;
-        let id = read_id(bytes, &mut pos)?;
-        let ann = decode_ty(bytes, &mut pos)?;
-        let body = decode_body(bytes, &mut pos)?;
-        if pos - start != def_len {
+        let def_len = read_varint(bytes, pos)? as usize;
+        let start = *pos;
+        let id = read_id(bytes, pos)?;
+        let ann = decode_ty(bytes, pos)?;
+        let body = decode_body(bytes, pos)?;
+        if *pos - start != def_len {
             return Err(DecodeError::TrailingBytes);
         }
         defs.push(Def::new(id, ann, body));
     }
     let doc = Doc::new(defs).ok_or(DecodeError::DuplicateDefinition)?;
 
-    let names = decode_names(bytes, &mut pos)?;
-    let log = decode_log(bytes, &mut pos)?;
+    let names = decode_names(bytes, pos)?;
+    let log = decode_log(bytes, pos)?;
 
-    if pos != bytes.len() {
+    if *pos != bytes.len() {
         return Err(DecodeError::TrailingBytes);
     }
 
