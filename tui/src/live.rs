@@ -1,6 +1,5 @@
-use std::cell::RefCell;
 use std::fmt;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use nothing_core::exp::Exp;
 use nothing_core::names::NameTable;
@@ -14,19 +13,25 @@ use crate::app::AppState;
 pub const LIVE_FUEL: usize = 4_000;
 
 #[derive(Clone)]
-pub struct EngineHandle(Rc<RefCell<IncrEngine>>);
+pub struct EngineHandle(Arc<Mutex<IncrEngine>>);
 
 impl EngineHandle {
     pub fn new() -> EngineHandle {
-        EngineHandle(Rc::new(RefCell::new(IncrEngine::new())))
+        EngineHandle(Arc::new(Mutex::new(IncrEngine::new())))
     }
 
     pub fn eval(&self, exp: &Exp, fuel: usize) -> Outcome {
-        self.0.borrow_mut().eval_with_fuel(exp, fuel)
+        self.0
+            .lock()
+            .expect("the live engine is not shared across threads")
+            .eval_with_fuel(exp, fuel)
     }
 
     pub fn node_evals(&self) -> usize {
-        self.0.borrow().node_evals
+        self.0
+            .lock()
+            .expect("the live engine is not shared across threads")
+            .node_evals
     }
 }
 

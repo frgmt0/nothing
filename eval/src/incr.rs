@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
+use nothing_core::stack::on_deep_stack;
 use nothing_core::ty::Ty;
 use nothing_store::nodes::{Digest, NodeEntry, build_node_table, content_hash};
 
@@ -39,21 +40,28 @@ pub enum Value {
 }
 
 fn is_fully_reduced(v: &Value) -> bool {
-    match v {
-        Value::Num(_)
-        | Value::Bool(_)
-        | Value::Str(_)
-        | Value::Closure(..)
-        | Value::Readline
-        | Value::Nil => true,
-        Value::Pair(a, b) | Value::Cons(a, b) => is_fully_reduced(a) && is_fully_reduced(b),
-        Value::Record(fields) => fields.iter().all(|(_, value)| is_fully_reduced(value)),
-        Value::Inj(_, payload) => is_fully_reduced(payload),
-        Value::Print(text) => is_fully_reduced(text),
-        Value::CmdPure(value) => is_fully_reduced(value),
-        Value::CmdBind(command, _, _, _) => is_fully_reduced(command),
-        _ => false,
+    let mut pending = vec![v];
+    while let Some(cur) = pending.pop() {
+        match cur {
+            Value::Num(_)
+            | Value::Bool(_)
+            | Value::Str(_)
+            | Value::Closure(..)
+            | Value::Readline
+            | Value::Nil => {}
+            Value::Pair(a, b) | Value::Cons(a, b) => {
+                pending.push(a);
+                pending.push(b);
+            }
+            Value::Record(fields) => pending.extend(fields.iter().map(|(_, value)| value)),
+            Value::Inj(_, payload) => pending.push(payload),
+            Value::Print(text) => pending.push(text),
+            Value::CmdPure(value) => pending.push(value),
+            Value::CmdBind(command, _, _, _) => pending.push(command),
+            _ => return false,
+        }
     }
+    true
 }
 
 fn env_to_dyn_env(env: &IncrEnv) -> Env {
@@ -119,49 +127,52 @@ pub fn value_to_dyn(v: &Value) -> Dyn {
 }
 
 fn collect_blocked(v: &Value, out: &mut Vec<Blocked>) {
-    match v {
-        Value::EmptyHole(h, env) => out.push(Blocked {
-            hole: *h,
-            kind: HoleKind::Empty,
-            env: env_to_dyn_env(env),
-        }),
-        Value::NonEmptyHole(h, env, inner) => {
-            out.push(Blocked {
+    let mut pending = vec![v];
+    while let Some(cur) = pending.pop() {
+        match cur {
+            Value::EmptyHole(h, env) => out.push(Blocked {
                 hole: *h,
-                kind: HoleKind::NonEmpty,
+                kind: HoleKind::Empty,
                 env: env_to_dyn_env(env),
-            });
-            collect_blocked(inner, out);
-        }
-        Value::Ap(a, b) | Value::BinOp(_, a, b) | Value::Pair(a, b) | Value::Cons(a, b) => {
-            collect_blocked(a, out);
-            collect_blocked(b, out);
-        }
-        Value::If(c, _, _) => collect_blocked(c, out),
-        Value::Fold(list, init, step) => {
-            collect_blocked(list, out);
-            collect_blocked(init, out);
-            collect_blocked(step, out);
-        }
-        Value::Proj(_, inner)
-        | Value::Field(inner, _)
-        | Value::Inj(_, inner)
-        | Value::Print(inner)
-        | Value::CmdPure(inner) => collect_blocked(inner, out),
-        Value::CmdBind(command, _, _, _) => collect_blocked(command, out),
-        Value::Match(scrutinee, _) => collect_blocked(scrutinee, out),
-        Value::Record(fields) => {
-            for (_, value) in fields {
-                collect_blocked(value, out);
+            }),
+            Value::NonEmptyHole(h, env, inner) => {
+                out.push(Blocked {
+                    hole: *h,
+                    kind: HoleKind::NonEmpty,
+                    env: env_to_dyn_env(env),
+                });
+                pending.push(inner);
             }
+            Value::Ap(a, b) | Value::BinOp(_, a, b) | Value::Pair(a, b) | Value::Cons(a, b) => {
+                pending.push(b);
+                pending.push(a);
+            }
+            Value::If(c, _, _) => pending.push(c),
+            Value::Fold(list, init, step) => {
+                pending.push(step);
+                pending.push(init);
+                pending.push(list);
+            }
+            Value::Proj(_, inner)
+            | Value::Field(inner, _)
+            | Value::Inj(_, inner)
+            | Value::Print(inner)
+            | Value::CmdPure(inner) => pending.push(inner),
+            Value::CmdBind(command, _, _, _) => pending.push(command),
+            Value::Match(scrutinee, _) => pending.push(scrutinee),
+            Value::Record(fields) => {
+                for (_, value) in fields.iter().rev() {
+                    pending.push(value);
+                }
+            }
+            Value::Var(_)
+            | Value::Num(_)
+            | Value::Bool(_)
+            | Value::Str(_)
+            | Value::Nil
+            | Value::Readline
+            | Value::Closure(..) => {}
         }
-        Value::Var(_)
-        | Value::Num(_)
-        | Value::Bool(_)
-        | Value::Str(_)
-        | Value::Nil
-        | Value::Readline
-        | Value::Closure(..) => {}
     }
 }
 
@@ -417,30 +428,25 @@ impl IncrEngine {
         self.fuel_budget = fuel;
         self.exhausted = false;
         self.unfolding.clear();
-        let value = std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .stack_size(64 * 1024 * 1024)
-                .spawn_scoped(scope, || self.eval_node(exp, env).0)
-                .expect("failed to spawn the incremental evaluator thread")
-                .join()
-                .expect("the incremental evaluator thread panicked")
-        });
-        if self.exhausted {
-            return Outcome::OutOfFuel {
-                partial: value_to_dyn(&value),
-                steps: self.fuel_budget,
-            };
-        }
-        if is_fully_reduced(&value) {
-            Outcome::Value(value_to_dyn(&value))
-        } else {
-            let mut blocked = Vec::new();
-            collect_blocked(&value, &mut blocked);
-            Outcome::Indeterminate {
-                result: value_to_dyn(&value),
-                blocked,
+        on_deep_stack(|| {
+            let value = self.eval_node(exp, env).0;
+            if self.exhausted {
+                return Outcome::OutOfFuel {
+                    partial: value_to_dyn(&value),
+                    steps: self.fuel_budget,
+                };
             }
-        }
+            if is_fully_reduced(&value) {
+                Outcome::Value(value_to_dyn(&value))
+            } else {
+                let mut blocked = Vec::new();
+                collect_blocked(&value, &mut blocked);
+                Outcome::Indeterminate {
+                    result: value_to_dyn(&value),
+                    blocked,
+                }
+            }
+        })
     }
 
     fn eval_node(&mut self, exp: &Exp, env: &IncrEnv) -> (Value, Digest) {

@@ -2,6 +2,7 @@ use std::fmt::Write as _;
 
 use crate::exp::{Exp, Id, Op, Side};
 use crate::names::NameTable;
+use crate::stack::on_deep_stack;
 use crate::ty::Ty;
 
 pub type Prec = u8;
@@ -148,15 +149,15 @@ fn fmt_ty(ty: &Ty, min_prec: u8, names: &NameTable, out: &mut String) {
 }
 
 pub fn render(exp: &Exp, names: &NameTable) -> String {
-    let mut out = String::new();
-    fmt_prec(exp, PREC_BINDER, names, &mut out);
-    out
+    render_prec(exp, PREC_BINDER, names)
 }
 
 pub fn render_prec(exp: &Exp, min_prec: Prec, names: &NameTable) -> String {
-    let mut out = String::new();
-    fmt_prec(exp, min_prec, names, &mut out);
-    out
+    on_deep_stack(|| {
+        let mut out = String::new();
+        fmt_prec(exp, min_prec, names, &mut out);
+        out
+    })
 }
 
 fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {

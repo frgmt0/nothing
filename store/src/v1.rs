@@ -13,6 +13,10 @@ use crate::names::{decode_names, encode_names};
 pub const VERSION_MINOR_V1: u8 = 0;
 
 pub fn encode_document_v1(exp: &Exp, names: &NameTable, log: &ActionLog) -> Vec<u8> {
+    nothing_core::stack::on_deep_stack(|| encode_document_v1_walk(exp, names, log))
+}
+
+fn encode_document_v1_walk(exp: &Exp, names: &NameTable, log: &ActionLog) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&MAGIC);
     buf.push(VERSION_MAJOR_V1);
@@ -27,6 +31,10 @@ pub fn encode_document_v1(exp: &Exp, names: &NameTable, log: &ActionLog) -> Vec<
 }
 
 pub fn decode_document_v1(bytes: &[u8]) -> Result<Document, DecodeError> {
+    nothing_core::stack::on_deep_stack(|| decode_document_v1_walk(bytes))
+}
+
+fn decode_document_v1_walk(bytes: &[u8]) -> Result<Document, DecodeError> {
     let mut pos = 0usize;
     let (major, minor) = read_header(bytes, &mut pos)?;
     if major != VERSION_MAJOR_V1 {

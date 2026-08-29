@@ -2112,3 +2112,81 @@ the phase actually bought is that `map`, `filter`, `fold`-derived helpers,
 program must first define — which the friction session demonstrates by
 building a seven-definition program that calls thirteen of them and defines
 none of them.
+
+### 2026-08-29 — Deep terms: which layers walk spines, which run on a deep stack
+
+CI (Linux, 2 MB test-thread stacks) aborted in
+`step::tests::folding_a_long_enough_list_runs_out_of_fuel_rather_than_hanging`
+with a stack overflow that macOS never showed, because a macOS test thread
+happens to survive roughly twice the depth. The test was right and the
+evaluator was wrong: every walker in `eval` recursed once per cons cell, so
+depth was proportional to *term size*, not to nesting the programmer wrote.
+Measured on this machine at a 2 MB stack, the pre-fix code aborted at a
+400-cell fold (the CI case) and at a 2,000-cell list in `elaborate`,
+`step_in`, `subst` and `to_exp` — a latent abort in `nothing run` and in the
+TUI live pane for any long-enough list, bind chain or arithmetic spine.
+
+Two disciplines are now in force, and every layer sits in exactly one of them.
+
+**Spine-iterative.** A walker that recurses once per list cell is a bug, not
+a style. `dynamic::is_value`, `dynamic::size`, `step::collect`,
+`incr::is_fully_reduced` and `incr::collect_blocked` are explicit worklists
+with no recursion at all. `dynamic::elaborate_in`, `dynamic::subst`,
+`dynamic::to_exp` and `step::step_in` descend their *last* child in a loop
+over an explicit frame stack — cons tails, `let` and `bind` bodies,
+application arguments, binary-operator right-hand sides — and recurse only
+into earlier children, so depth is bounded by how deeply a program nests to
+the *left*, which is what a human writes, not by how many elements a list
+has. `step_in` keeps its exact reduction order: earlier children are tried on
+the way down, each node's own redex on the way back up. `store::nodes` walks
+cons spines iteratively in both directions, and the node table it emits is
+byte-identical to the recursive one because the flattening reproduces the
+same post-order.
+
+**Deep-stack-guarded.** Everything else recurses per *node* and is bounded by
+`nothing_core::stack::on_deep_stack`, which runs the work on a scoped 256 MB
+thread and is a no-op (one thread-local read) when the caller is already on
+one — so nested guards never spawn a second worker and a run loop never
+spawns per step. Guarded entry points: `eval`/`eval_doc*`/`run*`/`step*`,
+`perform_doc`/`perform_in` (its `Io` is now `dyn Io + Send`),
+`IncrEngine::eval_in_with_fuel` (which replaces its own bespoke 64 MB thread,
+and now covers the result projection that previously ran on the caller's
+stack), `elaborate`/`subst`/`to_exp`, `core::render`/`core::typing`,
+`store`'s encode/decode/hash entry points, `merge`'s diff/apply/merge/repair
+entry points, `EditState::apply` in `action`, `nothing`'s `main`, and the TUI
+event loop — so in the shipped binaries every term is built, walked and
+dropped on the deep stack. (The TUI's `EngineHandle` moved from
+`Rc<RefCell<_>>` to `Arc<Mutex<_>>` so the editor state can cross onto that
+thread; nothing else about it changed.) A guard
+must wrap a *non-recursive* entry that delegates to an unguarded inner
+walker; wrapping a recursive function directly adds the wrapper's frame at
+every level, which is how `nothing check` on a 50,000-cell list briefly got
+*worse* mid-fix.
+
+**What is still bounded by the language, not by us.** `Exp` and `Dyn` derive
+`Clone`, `PartialEq` and drop glue, all of which recurse per cell. At 2 MB
+those abort at roughly 2,000, 3,000 and 15,000 cells; at 256 MB they are two
+orders of magnitude further out. Manual iterative impls were considered and
+rejected for now: `Drop` would forbid the by-value destructuring the
+evaluator and `perform` rely on, and a hand-written `Clone` sits on the
+hottest path in `step`. The consequence is a rule for callers, not a hidden
+hazard: a deep term should be created, transformed and dropped inside the
+deep-stack region — which is what `main`, the TUI loop and every library
+entry point above already do. The regression tests state this rule by
+obeying it.
+
+**Regression tests pin the CI condition, not the local one.** Every test in
+`eval/tests/deep_programs.rs`, `store/tests/deep_documents.rs`,
+`merge/tests/deep_versions.rs` and `cli/tests/deep_programs.rs` runs its body
+on an explicit 2 MB thread, so a
+macOS pass cannot mask a Linux abort; two CLI tests additionally run the real
+binary under `ulimit -s 2048` to prove the guard survives a small *main*
+stack. Sizes are 50,000 cells wherever the term stays inside the deep-stack
+region, and 2,000–5,000 where it crosses back to the 2 MB caller.
+
+**Found, not fixed: type-checking a list is quadratic.** `syn_cons`
+synthesises the tail and then re-analyses it, and `ana` has no `Cons` case,
+so it falls through to `syn` — `is_well_typed` on a list costs O(n²) and
+takes two minutes on 40,000 cells. That is why the CLI deep tests use 5,000
+cells and not 50,000: the ceiling there is the type-checker's complexity, not
+the stack. It is a real defect and it is untouched by this change.

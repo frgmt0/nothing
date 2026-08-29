@@ -39,6 +39,10 @@ pub fn repair(exp: &Exp, names: &NameTable) -> Repaired {
 }
 
 pub fn repair_in(base: &Ctx, exp: &Exp, names: &NameTable) -> Repaired {
+    nothing_core::stack::on_deep_stack(|| repair_in_walk(base, exp, names))
+}
+
+fn repair_in_walk(base: &Ctx, exp: &Exp, names: &NameTable) -> Repaired {
     if is_well_typed_in(base, exp) {
         return Repaired {
             exp: exp.clone(),

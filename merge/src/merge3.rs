@@ -151,6 +151,10 @@ pub fn merge(base: &Version, ours: &Version, theirs: &Version) -> MergeOutcome {
 }
 
 pub fn merge_in(ctx: &Ctx, base: &Version, ours: &Version, theirs: &Version) -> MergeOutcome {
+    nothing_core::stack::on_deep_stack(|| merge_in_walk(ctx, base, ours, theirs))
+}
+
+fn merge_in_walk(ctx: &Ctx, base: &Version, ours: &Version, theirs: &Version) -> MergeOutcome {
     let ours_ops = diff(base, ours);
     let theirs_ops = diff(base, theirs);
 

@@ -13,7 +13,7 @@ use crate::render::draw;
 pub fn run(state: AppState) -> io::Result<AppState> {
     install_panic_hook();
     let mut terminal = ratatui::try_init()?;
-    let result = event_loop(&mut terminal, state);
+    let result = nothing_core::stack::on_deep_stack(|| event_loop(&mut terminal, state));
 
     restore();
     result

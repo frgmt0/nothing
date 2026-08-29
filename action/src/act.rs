@@ -1504,6 +1504,10 @@ impl EditState {
     }
 
     pub fn apply(&self, action: Action) -> Option<EditState> {
+        nothing_core::stack::on_deep_stack(|| self.apply_here(action))
+    }
+
+    fn apply_here(&self, action: Action) -> Option<EditState> {
         match action {
             Action::RemoveField => self.remove_field_everywhere(),
             Action::AddArm => self.add_arm_everywhere(),

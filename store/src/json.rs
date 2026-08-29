@@ -366,6 +366,10 @@ fn defs_json(doc: &nothing_core::doc::Doc) -> String {
 }
 
 pub fn to_debug_json(doc: &Document) -> String {
+    nothing_core::stack::on_deep_stack(|| to_debug_json_walk(doc))
+}
+
+fn to_debug_json_walk(doc: &Document) -> String {
     format!(
         "{{\"defs\":{},\"names\":{},\"docs\":{},\"log\":{}}}",
         defs_json(&doc.doc),

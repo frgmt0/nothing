@@ -6,5 +6,6 @@ pub mod exp;
 pub mod names;
 pub mod prelude;
 pub mod render;
+pub mod stack;
 pub mod ty;
 pub mod typing;

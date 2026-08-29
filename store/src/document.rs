@@ -174,6 +174,10 @@ pub(crate) fn encode_defs_v8(buf: &mut Vec<u8>, doc: &Document) {
 }
 
 pub fn encode_document(doc: &Document) -> Vec<u8> {
+    nothing_core::stack::on_deep_stack(|| encode_document_walk(doc))
+}
+
+fn encode_document_walk(doc: &Document) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&MAGIC);
     buf.push(VERSION_MAJOR);
@@ -184,6 +188,10 @@ pub fn encode_document(doc: &Document) -> Vec<u8> {
 }
 
 pub fn decode_document(bytes: &[u8]) -> Result<Document, DecodeError> {
+    nothing_core::stack::on_deep_stack(|| decode_document_walk(bytes))
+}
+
+fn decode_document_walk(bytes: &[u8]) -> Result<Document, DecodeError> {
     let mut pos = 0usize;
     let (major, minor) = read_header(bytes, &mut pos)?;
     match major {

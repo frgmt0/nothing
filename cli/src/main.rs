@@ -32,7 +32,8 @@ Run `nothing <command> --help` for command-specific help.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    ExitCode::from(dispatch(&args) as u8)
+    let status = nothing_core::stack::on_deep_stack(|| dispatch(&args));
+    ExitCode::from(status as u8)
 }
 
 fn wants_help(args: &[String]) -> bool {

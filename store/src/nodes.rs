@@ -1,4 +1,5 @@
 use nothing_core::exp::{Exp, Id};
+use nothing_core::stack::on_deep_stack;
 
 use crate::codec::{
     decode_op, decode_side, decode_ty, encode_op, encode_side, encode_ty, read_hole_id, read_i64,
@@ -52,6 +53,23 @@ fn push_entry(
 }
 
 fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32, Digest) {
+    let mut heads: Vec<(u32, Digest)> = Vec::new();
+    let mut cur = exp;
+    while let Exp::Cons(head, tail) = cur {
+        heads.push(build_rec(head, stack, table));
+        cur = tail;
+    }
+    let mut built = build_node(cur, stack, table);
+    while let Some((head_idx, head_hash)) = heads.pop() {
+        let (tail_idx, tail_hash) = built;
+        let hash = hash_node(14, &[], &[head_hash, tail_hash]);
+        let idx = push_entry(table, hash, 14, vec![], vec![head_idx, tail_idx]);
+        built = (idx, hash);
+    }
+    built
+}
+
+fn build_node(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32, Digest) {
     match exp {
         Exp::Var(id) => {
             let mut canon = Vec::new();
@@ -157,13 +175,7 @@ fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32
             let idx = push_entry(table, hash, 13, vec![], vec![]);
             (idx, hash)
         }
-        Exp::Cons(head, tail) => {
-            let (head_idx, head_hash) = build_rec(head, stack, table);
-            let (tail_idx, tail_hash) = build_rec(tail, stack, table);
-            let hash = hash_node(14, &[], &[head_hash, tail_hash]);
-            let idx = push_entry(table, hash, 14, vec![], vec![head_idx, tail_idx]);
-            (idx, hash)
-        }
+        Exp::Cons(..) => build_rec(exp, stack, table),
         Exp::Fold(list, init, step) => {
             let (list_idx, list_hash) = build_rec(list, stack, table);
             let (init_idx, init_hash) = build_rec(init, stack, table);
@@ -276,10 +288,12 @@ fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32
 }
 
 pub fn build_node_table(exp: &Exp) -> Vec<NodeEntry> {
-    let mut table = Vec::new();
-    let mut stack = Vec::new();
-    build_rec(exp, &mut stack, &mut table);
-    table
+    on_deep_stack(|| {
+        let mut table = Vec::new();
+        let mut stack = Vec::new();
+        build_rec(exp, &mut stack, &mut table);
+        table
+    })
 }
 
 pub fn content_hash(exp: &Exp) -> Digest {
@@ -300,6 +314,26 @@ fn decode_child(
 }
 
 fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
+    let mut heads: Vec<Exp> = Vec::new();
+    let mut cursor = idx;
+    loop {
+        let entry = entries
+            .get(cursor)
+            .ok_or(DecodeError::BadNodeRef(cursor as u32))?;
+        if entry.tag != 14 {
+            break;
+        }
+        heads.push(decode_child(entries, entry, 0)?);
+        cursor = *entry.children.get(1).ok_or(DecodeError::MissingChild)? as usize;
+    }
+    let mut built = decode_node(entries, cursor)?;
+    while let Some(head) = heads.pop() {
+        built = Exp::cons(head, built);
+    }
+    Ok(built)
+}
+
+fn decode_node(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
     let entry = entries
         .get(idx)
         .ok_or(DecodeError::BadNodeRef(idx as u32))?;
@@ -365,11 +399,7 @@ fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
             Ok(Exp::proj(side, e))
         }
         13 => Ok(Exp::nil()),
-        14 => {
-            let head = decode_child(entries, entry, 0)?;
-            let tail = decode_child(entries, entry, 1)?;
-            Ok(Exp::cons(head, tail))
-        }
+        14 => decode_at(entries, idx),
         15 => {
             let list = decode_child(entries, entry, 0)?;
             let init = decode_child(entries, entry, 1)?;
@@ -441,7 +471,7 @@ pub fn decode_node_table(entries: &[NodeEntry]) -> Result<Exp, DecodeError> {
     if entries.is_empty() {
         return Err(DecodeError::EmptyNodeTable);
     }
-    decode_at(entries, entries.len() - 1)
+    on_deep_stack(|| decode_at(entries, entries.len() - 1))
 }
 
 #[cfg(test)]

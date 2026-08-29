@@ -13,6 +13,10 @@ pub struct Applied {
 }
 
 pub fn apply_all(base: &Version, ops: &[Operation]) -> Applied {
+    nothing_core::stack::on_deep_stack(|| apply_all_walk(base, ops))
+}
+
+fn apply_all_walk(base: &Version, ops: &[Operation]) -> Applied {
     let mut names = base.names.clone();
     for op in ops {
         if let Operation::Rename { id, to, .. } = op {
@@ -60,6 +64,10 @@ pub fn apply_all(base: &Version, ops: &[Operation]) -> Applied {
 }
 
 pub fn apply_one(exp: &Exp, op: &Operation) -> Option<Exp> {
+    nothing_core::stack::on_deep_stack(|| apply_one_walk(exp, op))
+}
+
+fn apply_one_walk(exp: &Exp, op: &Operation) -> Option<Exp> {
     match op {
         Operation::Rename { .. } => Some(exp.clone()),
         Operation::Fill { path, node, .. } => replace_at(exp, path, node.clone()),

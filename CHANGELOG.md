@@ -247,6 +247,31 @@ Only `nothing run` performs one.
   with their existing `repl` and `protocol` binaries reduced to thin shims
   so the `cli` crate can reuse the same logic without duplicating it.
 
+### Fixed
+
+- **A long-enough list no longer aborts the process.** Every walker in the
+  small-step evaluator recursed once per cons cell, so a 400-element fold
+  overflowed a 2 MB Linux CI stack and a longer list would have aborted
+  `nothing run` or the TUI live pane on a user's machine. `is_value`,
+  `size`, the blocked-hole collector and the incremental engine's value
+  walkers are now explicit worklists; `elaborate`, `subst`, `to_exp`,
+  `step` and the `store` node-table builder and decoder walk cons spines,
+  `let`/`bind` chains and operator spines iteratively; and every public
+  entry point in `eval`, `core`, `store`, `merge` and `action`, plus
+  `nothing`'s `main` and the TUI event loop, runs on a 256 MB worker thread
+  via the new
+  `nothing_core::stack::on_deep_stack` (re-entrant, so nested calls and run
+  loops never spawn a second one). A 50,000-element list now evaluates,
+  serialises and round-trips; `nothing run` survives even with a 2 MB main
+  stack. New regression tests (`eval/tests/deep_programs.rs`,
+  `store/tests/deep_documents.rs`, `merge/tests/deep_versions.rs`,
+  `cli/tests/deep_programs.rs`) run their bodies on an explicit 2 MB thread
+  so a macOS pass cannot mask a Linux abort. See `DECISIONS.md`,
+  2026-08-29.
+- `nothing_eval::perform_doc` / `perform_in` take `&mut (dyn Io + Send)`,
+  and `nothing_tui::live::EngineHandle` holds an `Arc<Mutex<_>>` rather than
+  an `Rc<RefCell<_>>`, since both now run on the deep-stack worker.
+
 ## Phase B4 — the standard library
 
 ### Added

@@ -1,5 +1,6 @@
 use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
+use nothing_core::stack::on_deep_stack;
 
 use crate::dynamic::{Dyn, Env, elaborate, is_value, subst};
 
@@ -105,142 +106,168 @@ pub fn step(d: &Dyn) -> Option<Dyn> {
 }
 
 pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
+    on_deep_stack(|| step_walk(defs, d))
+}
+
+fn step_walk(defs: &Defs, d: &Dyn) -> Option<Dyn> {
+    let mut parents: Vec<&Dyn> = Vec::new();
+    let mut cur = d;
+    loop {
+        match cur {
+            Dyn::Ap(fun, arg) => {
+                if let Some(stepped) = step_walk(defs, fun) {
+                    let node = Dyn::Ap(Box::new(stepped), arg.clone());
+                    return Some(rebuild(node, &parents));
+                }
+                parents.push(cur);
+                cur = arg;
+            }
+            Dyn::BinOp(op, lhs, rhs) => {
+                if let Some(stepped) = step_walk(defs, lhs) {
+                    let node = Dyn::BinOp(*op, Box::new(stepped), rhs.clone());
+                    return Some(rebuild(node, &parents));
+                }
+                parents.push(cur);
+                cur = rhs;
+            }
+            Dyn::Pair(fst, snd) => {
+                if let Some(stepped) = step_walk(defs, fst) {
+                    let node = Dyn::Pair(Box::new(stepped), snd.clone());
+                    return Some(rebuild(node, &parents));
+                }
+                parents.push(cur);
+                cur = snd;
+            }
+            Dyn::Cons(head, tail) => {
+                if let Some(stepped) = step_walk(defs, head) {
+                    let node = Dyn::Cons(Box::new(stepped), tail.clone());
+                    return Some(rebuild(node, &parents));
+                }
+                parents.push(cur);
+                cur = tail;
+            }
+            Dyn::Let(_, bound, _) => {
+                parents.push(cur);
+                cur = bound;
+            }
+            Dyn::CmdBind(command, _, _) => {
+                parents.push(cur);
+                cur = command;
+            }
+            Dyn::If(cond, _, _) => {
+                parents.push(cur);
+                cur = cond;
+            }
+            Dyn::Match(scrutinee, _) => {
+                parents.push(cur);
+                cur = scrutinee;
+            }
+            Dyn::Fold(list, _, _) => {
+                parents.push(cur);
+                cur = list;
+            }
+            Dyn::Proj(_, inner)
+            | Dyn::Field(inner, _)
+            | Dyn::Inj(_, inner)
+            | Dyn::Print(inner)
+            | Dyn::CmdPure(inner)
+            | Dyn::NonEmptyHole(_, _, inner) => {
+                parents.push(cur);
+                cur = inner;
+            }
+            Dyn::Var(_)
+            | Dyn::Num(_)
+            | Dyn::Bool(_)
+            | Dyn::Str(_)
+            | Dyn::Lam(..)
+            | Dyn::Nil
+            | Dyn::Readline
+            | Dyn::EmptyHole(..)
+            | Dyn::Record(_) => break,
+        }
+    }
+
+    if let Some(node) = step_leaf(defs, cur) {
+        return Some(rebuild(node, &parents));
+    }
+
+    while let Some(parent) = parents.pop() {
+        if let Some(node) = reduce_here(defs, parent) {
+            return Some(rebuild(node, &parents));
+        }
+    }
+    None
+}
+
+fn step_leaf(defs: &Defs, d: &Dyn) -> Option<Dyn> {
     match d {
         Dyn::Var(id) => defs.get(id).cloned(),
-
-        Dyn::Num(_)
-        | Dyn::Bool(_)
-        | Dyn::Str(_)
-        | Dyn::Lam(..)
-        | Dyn::Nil
-        | Dyn::Readline
-        | Dyn::EmptyHole(..) => None,
-
-        Dyn::Ap(fun, arg) => step_ap(defs, fun, arg),
-
-        Dyn::BinOp(op, lhs, rhs) => step_bin_op(defs, *op, lhs, rhs),
-
-        Dyn::If(cond, then, else_) => step_if(defs, cond, then, else_),
-
-        Dyn::Let(id, bound, body) => step_let(defs, *id, bound, body),
-
-        Dyn::Pair(fst, snd) => step_pair(defs, fst, snd),
-
-        Dyn::Proj(side, inner) => step_proj(defs, *side, inner),
-
-        Dyn::Cons(head, tail) => step_cons(defs, head, tail),
-
-        Dyn::Fold(list, init, folder) => step_fold(defs, list, init, folder),
-
-        Dyn::Record(fields) => step_record(defs, fields),
-
-        Dyn::Field(subject, id) => step_field(defs, subject, *id),
-
-        Dyn::Inj(ctor, payload) => step_inj(defs, *ctor, payload),
-
-        Dyn::Match(scrutinee, arms) => step_match(defs, scrutinee, arms),
-
-        Dyn::Print(text) => step_in(defs, text).map(|stepped| Dyn::Print(Box::new(stepped))),
-
-        Dyn::CmdPure(value) => step_in(defs, value).map(|stepped| Dyn::CmdPure(Box::new(stepped))),
-
-        Dyn::CmdBind(command, id, body) => {
-            step_in(defs, command).map(|stepped| Dyn::CmdBind(Box::new(stepped), *id, body.clone()))
+        Dyn::Record(fields) => {
+            for (index, (_, value)) in fields.iter().enumerate() {
+                if let Some(value) = step_walk(defs, value) {
+                    let mut next = fields.to_vec();
+                    next[index].1 = value;
+                    return Some(Dyn::Record(next));
+                }
+            }
+            None
         }
-
-        Dyn::NonEmptyHole(h, env, inner) => step_hole(defs, *h, env, inner),
-    }
-}
-
-fn step_ap(defs: &Defs, fun: &Dyn, arg: &Dyn) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, fun) {
-        return Some(Dyn::Ap(Box::new(stepped), Box::new(arg.clone())));
-    }
-    if let Some(stepped) = step_in(defs, arg) {
-        return Some(Dyn::Ap(Box::new(fun.clone()), Box::new(stepped)));
-    }
-    match fun {
-        Dyn::Lam(id, _, body) => Some(subst(*id, arg, body)),
         _ => None,
     }
 }
 
-fn step_bin_op(defs: &Defs, op: Op, lhs: &Dyn, rhs: &Dyn) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, lhs) {
-        return Some(Dyn::BinOp(op, Box::new(stepped), Box::new(rhs.clone())));
-    }
-    if let Some(stepped) = step_in(defs, rhs) {
-        return Some(Dyn::BinOp(op, Box::new(lhs.clone()), Box::new(stepped)));
-    }
-    match (lhs, rhs) {
-        (Dyn::Num(a), Dyn::Num(b)) => apply_num_op(op, *a, *b),
-        (Dyn::Str(a), Dyn::Str(b)) => apply_str_op(op, a, b),
-        (Dyn::Bool(a), Dyn::Bool(b)) => apply_bool_op(op, *a, *b),
+fn reduce_here(defs: &Defs, parent: &Dyn) -> Option<Dyn> {
+    match parent {
+        Dyn::Ap(fun, arg) => match fun.as_ref() {
+            Dyn::Lam(id, _, body) => Some(subst(*id, arg, body)),
+            _ => None,
+        },
+        Dyn::BinOp(op, lhs, rhs) => match (lhs.as_ref(), rhs.as_ref()) {
+            (Dyn::Num(a), Dyn::Num(b)) => apply_num_op(*op, *a, *b),
+            (Dyn::Str(a), Dyn::Str(b)) => apply_str_op(*op, a, b),
+            (Dyn::Bool(a), Dyn::Bool(b)) => apply_bool_op(*op, *a, *b),
+            _ => None,
+        },
+        Dyn::Let(id, bound, body) => Some(subst(*id, bound, body)),
+        Dyn::If(cond, then, else_) => match cond.as_ref() {
+            Dyn::Bool(true) => Some(then.as_ref().clone()),
+            Dyn::Bool(false) => Some(else_.as_ref().clone()),
+            _ => None,
+        },
+        Dyn::Match(scrutinee, arms) => match scrutinee.as_ref() {
+            Dyn::Inj(ctor, payload) => arms
+                .iter()
+                .find(|(id, _, _)| id == ctor)
+                .map(|(_, binder, body)| subst(*binder, payload, body)),
+            _ => None,
+        },
+        Dyn::Proj(side, inner) => match inner.as_ref() {
+            Dyn::Pair(fst, snd) => Some(match side {
+                Side::L => fst.as_ref().clone(),
+                Side::R => snd.as_ref().clone(),
+            }),
+            _ => None,
+        },
+        Dyn::Field(subject, field) => match subject.as_ref() {
+            Dyn::Record(fields) => fields
+                .iter()
+                .find(|(id, _)| id == field)
+                .map(|(_, value)| value.clone()),
+            _ => None,
+        },
+        Dyn::Fold(list, init, folder) => reduce_fold(defs, list, init, folder),
+        Dyn::Pair(..)
+        | Dyn::Cons(..)
+        | Dyn::Inj(..)
+        | Dyn::Print(_)
+        | Dyn::CmdPure(_)
+        | Dyn::CmdBind(..)
+        | Dyn::NonEmptyHole(..) => None,
         _ => None,
     }
 }
 
-fn step_if(defs: &Defs, cond: &Dyn, then: &Dyn, else_: &Dyn) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, cond) {
-        return Some(Dyn::If(
-            Box::new(stepped),
-            Box::new(then.clone()),
-            Box::new(else_.clone()),
-        ));
-    }
-    match cond {
-        Dyn::Bool(true) => Some(then.clone()),
-        Dyn::Bool(false) => Some(else_.clone()),
-        _ => None,
-    }
-}
-
-fn step_let(defs: &Defs, id: Id, bound: &Dyn, body: &Dyn) -> Option<Dyn> {
-    match step_in(defs, bound) {
-        Some(stepped) => Some(Dyn::Let(id, Box::new(stepped), Box::new(body.clone()))),
-        None => Some(subst(id, bound, body)),
-    }
-}
-
-fn step_pair(defs: &Defs, fst: &Dyn, snd: &Dyn) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, fst) {
-        return Some(Dyn::Pair(Box::new(stepped), Box::new(snd.clone())));
-    }
-    step_in(defs, snd).map(|snd| Dyn::Pair(Box::new(fst.clone()), Box::new(snd)))
-}
-
-fn step_proj(defs: &Defs, side: Side, inner: &Dyn) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, inner) {
-        return Some(Dyn::Proj(side, Box::new(stepped)));
-    }
-    match inner {
-        Dyn::Pair(fst, snd) => Some(match side {
-            Side::L => fst.as_ref().clone(),
-            Side::R => snd.as_ref().clone(),
-        }),
-        _ => None,
-    }
-}
-
-fn step_cons(defs: &Defs, head: &Dyn, tail: &Dyn) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, head) {
-        return Some(Dyn::Cons(Box::new(stepped), Box::new(tail.clone())));
-    }
-    step_in(defs, tail).map(|tail| Dyn::Cons(Box::new(head.clone()), Box::new(tail)))
-}
-
-fn step_hole(defs: &Defs, h: HoleId, env: &Env, inner: &Dyn) -> Option<Dyn> {
-    step_in(defs, inner).map(|inner| Dyn::NonEmptyHole(h, env.clone(), Box::new(inner)))
-}
-
-fn step_fold(defs: &Defs, list: &Dyn, init: &Dyn, folder: &Dyn) -> Option<Dyn> {
-    if let Some(list) = step_in(defs, list) {
-        return Some(Dyn::Fold(
-            Box::new(list),
-            Box::new(init.clone()),
-            Box::new(folder.clone()),
-        ));
-    }
+fn reduce_fold(defs: &Defs, list: &Dyn, init: &Dyn, folder: &Dyn) -> Option<Dyn> {
     match list {
         Dyn::Nil => Some(init.clone()),
         Dyn::Cons(head, tail) => Some(Dyn::Ap(
@@ -252,14 +279,14 @@ fn step_fold(defs: &Defs, list: &Dyn, init: &Dyn, folder: &Dyn) -> Option<Dyn> {
             )),
         )),
         _ => {
-            if let Some(init) = step_in(defs, init) {
+            if let Some(init) = step_walk(defs, init) {
                 return Some(Dyn::Fold(
                     Box::new(list.clone()),
                     Box::new(init),
                     Box::new(folder.clone()),
                 ));
             }
-            step_in(defs, folder).map(|folder| {
+            step_walk(defs, folder).map(|folder| {
                 Dyn::Fold(
                     Box::new(list.clone()),
                     Box::new(init.clone()),
@@ -270,45 +297,32 @@ fn step_fold(defs: &Defs, list: &Dyn, init: &Dyn, folder: &Dyn) -> Option<Dyn> {
     }
 }
 
-fn step_field(defs: &Defs, subject: &Dyn, field: Id) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, subject) {
-        return Some(Dyn::Field(Box::new(stepped), field));
+fn rebuild(mut node: Dyn, parents: &[&Dyn]) -> Dyn {
+    for parent in parents.iter().rev() {
+        node = rebuild_one(parent, node);
     }
-    match subject {
-        Dyn::Record(fields) => fields
-            .iter()
-            .find(|(id, _)| *id == field)
-            .map(|(_, value)| value.clone()),
-        _ => None,
-    }
+    node
 }
 
-fn step_inj(defs: &Defs, ctor: Id, payload: &Dyn) -> Option<Dyn> {
-    step_in(defs, payload).map(|payload| Dyn::Inj(ctor, Box::new(payload)))
-}
-
-fn step_match(defs: &Defs, scrutinee: &Dyn, arms: &[(Id, Id, Dyn)]) -> Option<Dyn> {
-    if let Some(stepped) = step_in(defs, scrutinee) {
-        return Some(Dyn::Match(Box::new(stepped), arms.to_vec()));
+fn rebuild_one(parent: &Dyn, child: Dyn) -> Dyn {
+    match parent {
+        Dyn::Ap(fun, _) => Dyn::Ap(fun.clone(), Box::new(child)),
+        Dyn::BinOp(op, lhs, _) => Dyn::BinOp(*op, lhs.clone(), Box::new(child)),
+        Dyn::Pair(fst, _) => Dyn::Pair(fst.clone(), Box::new(child)),
+        Dyn::Cons(head, _) => Dyn::Cons(head.clone(), Box::new(child)),
+        Dyn::Let(id, _, body) => Dyn::Let(*id, Box::new(child), body.clone()),
+        Dyn::CmdBind(_, id, body) => Dyn::CmdBind(Box::new(child), *id, body.clone()),
+        Dyn::If(_, then, else_) => Dyn::If(Box::new(child), then.clone(), else_.clone()),
+        Dyn::Match(_, arms) => Dyn::Match(Box::new(child), arms.clone()),
+        Dyn::Fold(_, init, folder) => Dyn::Fold(Box::new(child), init.clone(), folder.clone()),
+        Dyn::Proj(side, _) => Dyn::Proj(*side, Box::new(child)),
+        Dyn::Field(_, id) => Dyn::Field(Box::new(child), *id),
+        Dyn::Inj(ctor, _) => Dyn::Inj(*ctor, Box::new(child)),
+        Dyn::Print(_) => Dyn::Print(Box::new(child)),
+        Dyn::CmdPure(_) => Dyn::CmdPure(Box::new(child)),
+        Dyn::NonEmptyHole(h, env, _) => Dyn::NonEmptyHole(*h, env.clone(), Box::new(child)),
+        other => other.clone(),
     }
-    match scrutinee {
-        Dyn::Inj(ctor, payload) => arms
-            .iter()
-            .find(|(id, _, _)| id == ctor)
-            .map(|(_, binder, body)| subst(*binder, payload, body)),
-        _ => None,
-    }
-}
-
-fn step_record(defs: &Defs, fields: &[(Id, Dyn)]) -> Option<Dyn> {
-    for (index, (_, value)) in fields.iter().enumerate() {
-        if let Some(value) = step_in(defs, value) {
-            let mut next = fields.to_vec();
-            next[index].1 = value;
-            return Some(Dyn::Record(next));
-        }
-    }
-    None
 }
 
 fn apply_num_op(op: Op, a: i64, b: i64) -> Option<Dyn> {
@@ -349,7 +363,7 @@ pub fn eval(exp: &Exp) -> Outcome {
 }
 
 pub fn eval_with_fuel(exp: &Exp, fuel: usize) -> Outcome {
-    run(elaborate(exp), fuel)
+    on_deep_stack(|| run(elaborate(exp), fuel))
 }
 
 pub fn eval_doc(doc: &Doc, main: Id) -> Outcome {
@@ -357,12 +371,14 @@ pub fn eval_doc(doc: &Doc, main: Id) -> Outcome {
 }
 
 pub fn eval_doc_with_fuel(doc: &Doc, main: Id, fuel: usize) -> Outcome {
-    let defs = defs_of(doc);
-    let start = match doc.get(main) {
-        Some(def) => elaborate(&def.body),
-        None => Dyn::Var(main),
-    };
-    run_in(&defs, start, fuel)
+    on_deep_stack(|| {
+        let defs = defs_of(doc);
+        let start = match doc.get(main) {
+            Some(def) => elaborate(&def.body),
+            None => Dyn::Var(main),
+        };
+        run_in(&defs, start, fuel)
+    })
 }
 
 pub fn run(start: Dyn, fuel: usize) -> Outcome {
@@ -374,10 +390,14 @@ pub fn run_in(defs: &Defs, start: Dyn, fuel: usize) -> Outcome {
 }
 
 pub fn run_in_counted(defs: &Defs, start: Dyn, fuel: usize) -> (Outcome, usize) {
+    on_deep_stack(|| run_counted(defs, start, fuel))
+}
+
+pub(crate) fn run_counted(defs: &Defs, start: Dyn, fuel: usize) -> (Outcome, usize) {
     let mut d = start;
     let mut steps = 0;
     while steps < fuel {
-        match step_in(defs, &d) {
+        match step_walk(defs, &d) {
             None => return (settle(d), steps),
             Some(next) => {
                 d = next;
@@ -385,7 +405,7 @@ pub fn run_in_counted(defs: &Defs, start: Dyn, fuel: usize) -> (Outcome, usize) 
             }
         }
     }
-    match step_in(defs, &d) {
+    match step_walk(defs, &d) {
         None => (settle(d), steps),
         Some(_) => (Outcome::OutOfFuel { partial: d, steps }, steps),
     }
@@ -406,51 +426,54 @@ pub fn blocked_holes(d: &Dyn) -> Vec<Blocked> {
 }
 
 fn collect(d: &Dyn, out: &mut Vec<Blocked>) {
-    match d {
-        Dyn::EmptyHole(h, env) => out.push(Blocked {
-            hole: *h,
-            kind: HoleKind::Empty,
-            env: env.clone(),
-        }),
-        Dyn::NonEmptyHole(h, env, inner) => {
-            out.push(Blocked {
+    let mut pending = vec![d];
+    while let Some(cur) = pending.pop() {
+        match cur {
+            Dyn::EmptyHole(h, env) => out.push(Blocked {
                 hole: *h,
-                kind: HoleKind::NonEmpty,
+                kind: HoleKind::Empty,
                 env: env.clone(),
-            });
-            collect(inner, out);
-        }
-        Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Pair(a, b) | Dyn::Cons(a, b) => {
-            collect(a, out);
-            collect(b, out);
-        }
-        Dyn::Let(_, bound, _) => collect(bound, out),
-        Dyn::If(cond, _, _) => collect(cond, out),
-        Dyn::Fold(list, init, folder) => {
-            collect(list, out);
-            collect(init, out);
-            collect(folder, out);
-        }
-        Dyn::Proj(_, inner)
-        | Dyn::Field(inner, _)
-        | Dyn::Inj(_, inner)
-        | Dyn::Print(inner)
-        | Dyn::CmdPure(inner) => collect(inner, out),
-        Dyn::CmdBind(command, _, _) => collect(command, out),
-        Dyn::Match(scrutinee, _) => collect(scrutinee, out),
-        Dyn::Record(fields) => {
-            for (_, value) in fields {
-                collect(value, out);
+            }),
+            Dyn::NonEmptyHole(h, env, inner) => {
+                out.push(Blocked {
+                    hole: *h,
+                    kind: HoleKind::NonEmpty,
+                    env: env.clone(),
+                });
+                pending.push(inner);
             }
-        }
+            Dyn::Ap(a, b) | Dyn::BinOp(_, a, b) | Dyn::Pair(a, b) | Dyn::Cons(a, b) => {
+                pending.push(b);
+                pending.push(a);
+            }
+            Dyn::Let(_, bound, _) => pending.push(bound),
+            Dyn::If(cond, _, _) => pending.push(cond),
+            Dyn::Fold(list, init, folder) => {
+                pending.push(folder);
+                pending.push(init);
+                pending.push(list);
+            }
+            Dyn::Proj(_, inner)
+            | Dyn::Field(inner, _)
+            | Dyn::Inj(_, inner)
+            | Dyn::Print(inner)
+            | Dyn::CmdPure(inner) => pending.push(inner),
+            Dyn::CmdBind(command, _, _) => pending.push(command),
+            Dyn::Match(scrutinee, _) => pending.push(scrutinee),
+            Dyn::Record(fields) => {
+                for (_, value) in fields.iter().rev() {
+                    pending.push(value);
+                }
+            }
 
-        Dyn::Var(_)
-        | Dyn::Num(_)
-        | Dyn::Bool(_)
-        | Dyn::Str(_)
-        | Dyn::Nil
-        | Dyn::Readline
-        | Dyn::Lam(..) => {}
+            Dyn::Var(_)
+            | Dyn::Num(_)
+            | Dyn::Bool(_)
+            | Dyn::Str(_)
+            | Dyn::Nil
+            | Dyn::Readline
+            | Dyn::Lam(..) => {}
+        }
     }
 }
 

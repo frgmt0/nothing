@@ -1,5 +1,6 @@
 use crate::ctx::Ctx;
 use crate::exp::{Exp, Id, Op, Side};
+use crate::stack::on_deep_stack;
 use crate::ty::{
     Ty, is_consistent, matched_arrow, matched_cmd, matched_list, matched_prod, matched_record,
     matched_record_fields, matched_variant, unit, variant_constructors,
@@ -111,11 +112,11 @@ pub fn step_ty(elem: &Ty, acc: &Ty) -> Ty {
 }
 
 fn syn_cons(ctx: &Ctx, head: &Exp, tail: &Exp) -> Option<Ty> {
-    let tail_ty = syn(ctx, tail)?;
+    let tail_ty = syn_node(ctx, tail)?;
     let from_tail = matched_list(&tail_ty)?;
-    let head_ty = syn(ctx, head)?;
+    let head_ty = syn_node(ctx, head)?;
     let elem = join(&head_ty, &from_tail)?;
-    if ana(ctx, tail, &Ty::List(Box::new(elem.clone()))) {
+    if ana_node(ctx, tail, &Ty::List(Box::new(elem.clone()))) {
         Some(Ty::List(Box::new(elem)))
     } else {
         None
@@ -123,10 +124,10 @@ fn syn_cons(ctx: &Ctx, head: &Exp, tail: &Exp) -> Option<Ty> {
 }
 
 fn syn_fold(ctx: &Ctx, list: &Exp, init: &Exp, step: &Exp) -> Option<Ty> {
-    let list_ty = syn(ctx, list)?;
+    let list_ty = syn_node(ctx, list)?;
     let elem = matched_list(&list_ty)?;
-    let acc = syn(ctx, init)?;
-    if ana(ctx, step, &step_ty(&elem, &acc)) {
+    let acc = syn_node(ctx, init)?;
+    if ana_node(ctx, step, &step_ty(&elem, &acc)) {
         Some(acc)
     } else {
         None
@@ -140,29 +141,29 @@ fn syn_record(ctx: &Ctx, fields: &[(Id, Exp)]) -> Option<Ty> {
     }
     let mut tys = Vec::with_capacity(fields.len());
     for (id, e) in fields {
-        tys.push((*id, syn(ctx, e)?));
+        tys.push((*id, syn_node(ctx, e)?));
     }
     Some(Ty::Record(tys))
 }
 
 fn syn_match(ctx: &Ctx, scrutinee: &Exp, arms: &[(Id, Id, Exp)]) -> Option<Ty> {
-    let scrutinee_ty = syn(ctx, scrutinee)?;
+    let scrutinee_ty = syn_node(ctx, scrutinee)?;
     if !arms_cover(&scrutinee_ty, arms) {
         return None;
     }
     let mut result = Ty::Hole;
     for (ctor, binder, body) in arms {
         let payload = arm_payload_ty(&scrutinee_ty, *ctor);
-        let body_ty = syn(&ctx.extend(*binder, payload), body)?;
+        let body_ty = syn_node(&ctx.extend(*binder, payload), body)?;
         result = join(&result, &body_ty)?;
     }
     Some(result)
 }
 
 fn syn_cmd_bind(ctx: &Ctx, command: &Exp, id: Id, body: &Exp) -> Option<Ty> {
-    let command_ty = syn(ctx, command)?;
+    let command_ty = syn_node(ctx, command)?;
     let yielded = matched_cmd(&command_ty)?;
-    let body_ty = syn(&ctx.extend(id, yielded), body)?;
+    let body_ty = syn_node(&ctx.extend(id, yielded), body)?;
     let result = matched_cmd(&body_ty)?;
     Some(Ty::Cmd(Box::new(result)))
 }
@@ -171,28 +172,32 @@ fn ana_cmd_bind(ctx: &Ctx, command: &Exp, id: Id, body: &Exp, ty: &Ty) -> bool {
     if matched_cmd(ty).is_none() {
         return false;
     }
-    let Some(command_ty) = syn(ctx, command) else {
+    let Some(command_ty) = syn_node(ctx, command) else {
         return false;
     };
     let Some(yielded) = matched_cmd(&command_ty) else {
         return false;
     };
-    ana(&ctx.extend(id, yielded), body, ty)
+    ana_node(&ctx.extend(id, yielded), body, ty)
 }
 
 pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
+    on_deep_stack(|| syn_node(ctx, exp))
+}
+
+fn syn_node(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
     match exp {
         Exp::Var(id) => ctx.lookup(id),
 
         Exp::Lam(id, ann, body) => {
-            let body_ty = syn(&ctx.extend(*id, ann.clone()), body)?;
+            let body_ty = syn_node(&ctx.extend(*id, ann.clone()), body)?;
             Some(Ty::Arrow(Box::new(ann.clone()), Box::new(body_ty)))
         }
 
         Exp::Ap(fun, arg) => {
-            let fun_ty = syn(ctx, fun)?;
+            let fun_ty = syn_node(ctx, fun)?;
             let (in_ty, out_ty) = matched_arrow(&fun_ty)?;
-            if ana(ctx, arg, &in_ty) {
+            if ana_node(ctx, arg, &in_ty) {
                 Some(out_ty)
             } else {
                 None
@@ -205,7 +210,7 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
 
         Exp::BinOp(op, lhs, rhs) => {
             let operand = operand_ty(ctx, *op, lhs, rhs)?;
-            if ana(ctx, lhs, &operand) && ana(ctx, rhs, &operand) {
+            if ana_node(ctx, lhs, &operand) && ana_node(ctx, rhs, &operand) {
                 Some(result_ty(*op))
             } else {
                 None
@@ -213,27 +218,27 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
         }
 
         Exp::If(cond, then, else_) => {
-            if !ana(ctx, cond, &Ty::Bool) {
+            if !ana_node(ctx, cond, &Ty::Bool) {
                 return None;
             }
-            let then_ty = syn(ctx, then)?;
-            let else_ty = syn(ctx, else_)?;
+            let then_ty = syn_node(ctx, then)?;
+            let else_ty = syn_node(ctx, else_)?;
             join(&then_ty, &else_ty)
         }
 
         Exp::Let(id, bound, body) => {
-            let bound_ty = syn(ctx, bound)?;
-            syn(&ctx.extend(*id, bound_ty), body)
+            let bound_ty = syn_node(ctx, bound)?;
+            syn_node(&ctx.extend(*id, bound_ty), body)
         }
 
         Exp::Pair(fst, snd) => {
-            let fst_ty = syn(ctx, fst)?;
-            let snd_ty = syn(ctx, snd)?;
+            let fst_ty = syn_node(ctx, fst)?;
+            let snd_ty = syn_node(ctx, snd)?;
             Some(Ty::Prod(Box::new(fst_ty), Box::new(snd_ty)))
         }
 
         Exp::Proj(side, e) => {
-            let e_ty = syn(ctx, e)?;
+            let e_ty = syn_node(ctx, e)?;
             let (l, r) = matched_prod(&e_ty)?;
             Some(match side {
                 Side::L => l,
@@ -250,19 +255,19 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
         Exp::Record(fields) => syn_record(ctx, fields),
 
         Exp::Field(subject, field) => {
-            let subject_ty = syn(ctx, subject)?;
+            let subject_ty = syn_node(ctx, subject)?;
             matched_record(&subject_ty, *field)
         }
 
         Exp::Inj(ctor, payload) => {
-            let payload_ty = syn(ctx, payload)?;
+            let payload_ty = syn_node(ctx, payload)?;
             Some(Ty::Variant(vec![(*ctor, payload_ty)]))
         }
 
         Exp::Match(scrutinee, arms) => syn_match(ctx, scrutinee, arms),
 
         Exp::Print(text) => {
-            if ana(ctx, text, &Ty::Str) {
+            if ana_node(ctx, text, &Ty::Str) {
                 Some(Ty::Cmd(Box::new(unit())))
             } else {
                 None
@@ -272,7 +277,7 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
         Exp::Readline => Some(Ty::Cmd(Box::new(Ty::Str))),
 
         Exp::CmdPure(value) => {
-            let value_ty = syn(ctx, value)?;
+            let value_ty = syn_node(ctx, value)?;
             Some(Ty::Cmd(Box::new(value_ty)))
         }
 
@@ -281,57 +286,61 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
         Exp::EmptyHole(_) => Some(Ty::Hole),
 
         Exp::NonEmptyHole(_, inner) => {
-            syn(ctx, inner)?;
+            syn_node(ctx, inner)?;
             Some(Ty::Hole)
         }
     }
 }
 
 pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
+    on_deep_stack(|| ana_node(ctx, exp, ty))
+}
+
+fn ana_node(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
     match exp {
         Exp::Lam(id, ann, body) => match matched_arrow(ty) {
             Some((in_ty, out_ty)) => {
-                is_consistent(ann, &in_ty) && ana(&ctx.extend(*id, ann.clone()), body, &out_ty)
+                is_consistent(ann, &in_ty) && ana_node(&ctx.extend(*id, ann.clone()), body, &out_ty)
             }
             None => false,
         },
 
         Exp::If(cond, then, else_) => {
-            ana(ctx, cond, &Ty::Bool) && ana(ctx, then, ty) && ana(ctx, else_, ty)
+            ana_node(ctx, cond, &Ty::Bool) && ana_node(ctx, then, ty) && ana_node(ctx, else_, ty)
         }
 
-        Exp::Let(id, bound, body) => match syn(ctx, bound) {
-            Some(bound_ty) => ana(&ctx.extend(*id, bound_ty), body, ty),
+        Exp::Let(id, bound, body) => match syn_node(ctx, bound) {
+            Some(bound_ty) => ana_node(&ctx.extend(*id, bound_ty), body, ty),
             None => false,
         },
 
         Exp::Pair(fst, snd) => match matched_prod(ty) {
-            Some((l, r)) => ana(ctx, fst, &l) && ana(ctx, snd, &r),
+            Some((l, r)) => ana_node(ctx, fst, &l) && ana_node(ctx, snd, &r),
             None => false,
         },
 
         Exp::Cons(head, tail) => match matched_list(ty) {
             Some(elem) => {
-                let refined = match syn(ctx, head) {
+                let refined = match syn_node(ctx, head) {
                     Some(head_ty) => match join(&head_ty, &elem) {
                         Some(joined) => joined,
                         None => return false,
                     },
                     None => return false,
                 };
-                ana(ctx, head, &refined) && ana(ctx, tail, &Ty::List(Box::new(refined)))
+                ana_node(ctx, head, &refined) && ana_node(ctx, tail, &Ty::List(Box::new(refined)))
             }
             None => false,
         },
 
         Exp::Fold(list, init, step) => {
-            let Some(list_ty) = syn(ctx, list) else {
+            let Some(list_ty) = syn_node(ctx, list) else {
                 return false;
             };
             let Some(elem) = matched_list(&list_ty) else {
                 return false;
             };
-            ana(ctx, init, ty) && ana(ctx, step, &step_ty(&elem, ty))
+            ana_node(ctx, init, ty) && ana_node(ctx, step, &step_ty(&elem, ty))
         }
 
         Exp::Record(fields) => {
@@ -343,22 +352,22 @@ pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
                 Some(expected) => fields
                     .iter()
                     .zip(expected.iter())
-                    .all(|((_, e), want)| ana(ctx, e, want)),
+                    .all(|((_, e), want)| ana_node(ctx, e, want)),
                 None => false,
             }
         }
 
         Exp::Inj(ctor, payload) => match ty {
-            Ty::Hole => syn(ctx, payload).is_some(),
+            Ty::Hole => syn_node(ctx, payload).is_some(),
             Ty::Variant(ctors) => match ctors.iter().find(|(id, _)| id == ctor) {
-                Some((_, want)) => ana(ctx, payload, want),
-                None => syn(ctx, payload).is_some(),
+                Some((_, want)) => ana_node(ctx, payload, want),
+                None => syn_node(ctx, payload).is_some(),
             },
             _ => false,
         },
 
         Exp::Match(scrutinee, arms) => {
-            let Some(scrutinee_ty) = syn(ctx, scrutinee) else {
+            let Some(scrutinee_ty) = syn_node(ctx, scrutinee) else {
                 return false;
             };
             if !arms_cover(&scrutinee_ty, arms) {
@@ -366,18 +375,18 @@ pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
             }
             arms.iter().all(|(ctor, binder, body)| {
                 let payload = arm_payload_ty(&scrutinee_ty, *ctor);
-                ana(&ctx.extend(*binder, payload), body, ty)
+                ana_node(&ctx.extend(*binder, payload), body, ty)
             })
         }
 
         Exp::CmdPure(value) => match matched_cmd(ty) {
-            Some(yielded) => ana(ctx, value, &yielded),
+            Some(yielded) => ana_node(ctx, value, &yielded),
             None => false,
         },
 
         Exp::CmdBind(command, id, body) => ana_cmd_bind(ctx, command, *id, body, ty),
 
-        _ => match syn(ctx, exp) {
+        _ => match syn_node(ctx, exp) {
             Some(syn_ty) => is_consistent(&syn_ty, ty),
             None => false,
         },

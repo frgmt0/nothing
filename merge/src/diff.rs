@@ -11,72 +11,90 @@ use crate::version::Version;
 pub const MIN_MOVE_SIZE: usize = 3;
 
 pub fn size(exp: &Exp) -> usize {
-    let mut total = 1;
-    for n in 0..arity(exp) {
-        if let Some(c) = child(exp, n) {
-            total += size(c);
+    nothing_core::stack::on_deep_stack(|| size_walk(exp))
+}
+
+fn size_walk(exp: &Exp) -> usize {
+    let mut total = 0;
+    let mut pending = vec![exp];
+    while let Some(cur) = pending.pop() {
+        total += 1;
+        for n in 0..arity(cur) {
+            if let Some(c) = child(cur, n) {
+                pending.push(c);
+            }
         }
     }
     total
 }
 
 pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
+    nothing_core::stack::on_deep_stack(|| structurally_equal_walk(a, b))
+}
+
+fn structurally_equal_walk(a: &Exp, b: &Exp) -> bool {
     match (a, b) {
         (Exp::EmptyHole(_), Exp::EmptyHole(_)) => true,
-        (Exp::NonEmptyHole(_, x), Exp::NonEmptyHole(_, y)) => structurally_equal(x, y),
+        (Exp::NonEmptyHole(_, x), Exp::NonEmptyHole(_, y)) => structurally_equal_walk(x, y),
         (Exp::Var(x), Exp::Var(y)) => x == y,
         (Exp::Num(x), Exp::Num(y)) => x == y,
         (Exp::Bool(x), Exp::Bool(y)) => x == y,
         (Exp::Str(x), Exp::Str(y)) => x == y,
         (Exp::Lam(x, tx, bx), Exp::Lam(y, ty, by)) => {
-            x == y && tx == ty && structurally_equal(bx, by)
+            x == y && tx == ty && structurally_equal_walk(bx, by)
         }
         (Exp::Ap(f1, a1), Exp::Ap(f2, a2)) => {
-            structurally_equal(f1, f2) && structurally_equal(a1, a2)
+            structurally_equal_walk(f1, f2) && structurally_equal_walk(a1, a2)
         }
         (Exp::BinOp(o1, l1, r1), Exp::BinOp(o2, l2, r2)) => {
-            o1 == o2 && structurally_equal(l1, l2) && structurally_equal(r1, r2)
+            o1 == o2 && structurally_equal_walk(l1, l2) && structurally_equal_walk(r1, r2)
         }
         (Exp::If(c1, t1, e1), Exp::If(c2, t2, e2)) => {
-            structurally_equal(c1, c2) && structurally_equal(t1, t2) && structurally_equal(e1, e2)
+            structurally_equal_walk(c1, c2)
+                && structurally_equal_walk(t1, t2)
+                && structurally_equal_walk(e1, e2)
         }
         (Exp::Let(x, bound1, body1), Exp::Let(y, bound2, body2)) => {
-            x == y && structurally_equal(bound1, bound2) && structurally_equal(body1, body2)
+            x == y
+                && structurally_equal_walk(bound1, bound2)
+                && structurally_equal_walk(body1, body2)
         }
         (Exp::Pair(l1, r1), Exp::Pair(l2, r2)) => {
-            structurally_equal(l1, l2) && structurally_equal(r1, r2)
+            structurally_equal_walk(l1, l2) && structurally_equal_walk(r1, r2)
         }
-        (Exp::Proj(s1, e1), Exp::Proj(s2, e2)) => s1 == s2 && structurally_equal(e1, e2),
+        (Exp::Proj(s1, e1), Exp::Proj(s2, e2)) => s1 == s2 && structurally_equal_walk(e1, e2),
         (Exp::Nil, Exp::Nil) => true,
         (Exp::Cons(h1, t1), Exp::Cons(h2, t2)) => {
-            structurally_equal(h1, h2) && structurally_equal(t1, t2)
+            structurally_equal_walk(h1, h2) && structurally_equal_walk(t1, t2)
         }
         (Exp::Fold(l1, i1, s1), Exp::Fold(l2, i2, s2)) => {
-            structurally_equal(l1, l2) && structurally_equal(i1, i2) && structurally_equal(s1, s2)
+            structurally_equal_walk(l1, l2)
+                && structurally_equal_walk(i1, i2)
+                && structurally_equal_walk(s1, s2)
         }
         (Exp::Record(f1), Exp::Record(f2)) => {
             f1.len() == f2.len()
                 && f1
                     .iter()
                     .zip(f2.iter())
-                    .all(|((id1, v1), (id2, v2))| id1 == id2 && structurally_equal(v1, v2))
+                    .all(|((id1, v1), (id2, v2))| id1 == id2 && structurally_equal_walk(v1, v2))
         }
-        (Exp::Field(s1, f1), Exp::Field(s2, f2)) => f1 == f2 && structurally_equal(s1, s2),
-        (Exp::Inj(c1, p1), Exp::Inj(c2, p2)) => c1 == c2 && structurally_equal(p1, p2),
-        (Exp::Print(t1), Exp::Print(t2)) => structurally_equal(t1, t2),
+        (Exp::Field(s1, f1), Exp::Field(s2, f2)) => f1 == f2 && structurally_equal_walk(s1, s2),
+        (Exp::Inj(c1, p1), Exp::Inj(c2, p2)) => c1 == c2 && structurally_equal_walk(p1, p2),
+        (Exp::Print(t1), Exp::Print(t2)) => structurally_equal_walk(t1, t2),
         (Exp::Readline, Exp::Readline) => true,
-        (Exp::CmdPure(v1), Exp::CmdPure(v2)) => structurally_equal(v1, v2),
+        (Exp::CmdPure(v1), Exp::CmdPure(v2)) => structurally_equal_walk(v1, v2),
         (Exp::CmdBind(c1, x, body1), Exp::CmdBind(c2, y, body2)) => {
-            x == y && structurally_equal(c1, c2) && structurally_equal(body1, body2)
+            x == y && structurally_equal_walk(c1, c2) && structurally_equal_walk(body1, body2)
         }
         (Exp::Match(s1, arms1), Exp::Match(s2, arms2)) => {
-            structurally_equal(s1, s2)
+            structurally_equal_walk(s1, s2)
                 && arms1.len() == arms2.len()
                 && arms1
                     .iter()
                     .zip(arms2.iter())
                     .all(|((c1, b1, body1), (c2, b2, body2))| {
-                        c1 == c2 && b1 == b2 && structurally_equal(body1, body2)
+                        c1 == c2 && b1 == b2 && structurally_equal_walk(body1, body2)
                     })
         }
         _ => false,
@@ -84,6 +102,10 @@ pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
 }
 
 pub fn diff(base: &Version, other: &Version) -> Vec<Operation> {
+    nothing_core::stack::on_deep_stack(|| diff_walk(base, other))
+}
+
+fn diff_walk(base: &Version, other: &Version) -> Vec<Operation> {
     let mut ops = diff_names(base, other);
     let mut structure = Vec::new();
     diff_exp(&base.exp, &other.exp, &[], &mut structure);

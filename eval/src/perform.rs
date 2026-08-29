@@ -2,11 +2,12 @@ use std::collections::VecDeque;
 
 use nothing_core::doc::Doc;
 use nothing_core::exp::Id;
+use nothing_core::stack::on_deep_stack;
 use nothing_core::ty::Ty;
 use nothing_core::typing::{join, syn};
 
 use crate::dynamic::{Dyn, elaborate, subst};
-use crate::step::{Defs, Outcome, blocked_holes, defs_of, run_in_counted};
+use crate::step::{Defs, Outcome, blocked_holes, defs_of, run_counted};
 
 pub trait Io {
     fn write_line(&mut self, text: &str);
@@ -61,16 +62,22 @@ pub fn runs_as_a_command(doc: &Doc, main: Id) -> bool {
     is_command_type(&main_type(doc, main))
 }
 
-pub fn perform_doc(doc: &Doc, main: Id, fuel: usize, io: &mut dyn Io) -> Performance {
-    let defs = defs_of(doc);
-    let start = match doc.get(main) {
-        Some(def) => elaborate(&def.body),
-        None => Dyn::Var(main),
-    };
-    perform_in(&defs, start, fuel, io)
+pub fn perform_doc(doc: &Doc, main: Id, fuel: usize, io: &mut (dyn Io + Send)) -> Performance {
+    on_deep_stack(|| {
+        let defs = defs_of(doc);
+        let start = match doc.get(main) {
+            Some(def) => elaborate(&def.body),
+            None => Dyn::Var(main),
+        };
+        perform_in(&defs, start, fuel, io)
+    })
 }
 
-pub fn perform_in(defs: &Defs, start: Dyn, fuel: usize, io: &mut dyn Io) -> Performance {
+pub fn perform_in(defs: &Defs, start: Dyn, fuel: usize, io: &mut (dyn Io + Send)) -> Performance {
+    on_deep_stack(|| perform_walk(defs, start, fuel, io))
+}
+
+fn perform_walk(defs: &Defs, start: Dyn, fuel: usize, io: &mut (dyn Io + Send)) -> Performance {
     let mut pending: Vec<(Id, Dyn)> = Vec::new();
     let mut current = start;
     let mut left = fuel;
@@ -78,7 +85,7 @@ pub fn perform_in(defs: &Defs, start: Dyn, fuel: usize, io: &mut dyn Io) -> Perf
     let mut commands = 0usize;
 
     loop {
-        let (outcome, used) = run_in_counted(defs, current, left);
+        let (outcome, used) = run_counted(defs, current, left);
         left -= used;
         steps += used;
 
@@ -201,7 +208,7 @@ mod tests {
         HoleId::from_u128(n)
     }
 
-    fn perform(exp: Exp, io: &mut dyn Io) -> Performance {
+    fn perform(exp: Exp, io: &mut (dyn Io + Send)) -> Performance {
         perform_in(&Defs::new(), elaborate(&exp), DEFAULT_FUEL, io)
     }
 

@@ -130,11 +130,15 @@ pub fn at<'a>(exp: &'a Exp, path: &[usize]) -> Option<&'a Exp> {
 }
 
 pub fn replace_at(exp: &Exp, path: &[usize], new: Exp) -> Option<Exp> {
+    nothing_core::stack::on_deep_stack(|| replace_at_walk(exp, path, new))
+}
+
+fn replace_at_walk(exp: &Exp, path: &[usize], new: Exp) -> Option<Exp> {
     match path.split_first() {
         None => Some(new),
         Some((step, rest)) => {
             let old_child = child(exp, *step)?;
-            let rebuilt = replace_at(old_child, rest, new)?;
+            let rebuilt = replace_at_walk(old_child, rest, new)?;
             with_child(exp, *step, rebuilt)
         }
     }
