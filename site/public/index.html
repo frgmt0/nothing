@@ -4,425 +4,194 @@
 <meta charset="utf-8">
 <title>nothing</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="nothing is a projectional programming language. The syntax tree is the program, and holes are first-class values.">
+<meta name="description" content="nothing is a projectional programming language. The syntax tree is the program, holes are first-class values, and every edit keeps the program well-typed.">
 <meta name="color-scheme" content="dark">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a0806'/%3E%3Cg fill='%23ffb642'%3E%3Crect x='3' y='2' width='2' height='2'/%3E%3Crect x='5' y='2' width='2' height='2'/%3E%3Crect x='2' y='4' width='2' height='8'/%3E%3Crect x='3' y='12' width='2' height='2'/%3E%3Crect x='5' y='12' width='2' height='2'/%3E%3Crect x='9' y='2' width='2' height='2'/%3E%3Crect x='11' y='2' width='2' height='2'/%3E%3Crect x='12' y='4' width='2' height='8'/%3E%3Crect x='9' y='12' width='2' height='2'/%3E%3Crect x='11' y='12' width='2' height='2'/%3E%3C/g%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Ubuntu+Mono&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --void:   #0a0806;
-    --ink:    #ffb642;
-    --dim:    rgba(255, 182, 66, 0.60);
-    --faint:  rgba(255, 182, 66, 0.38);
-    --hot:    #ffeccd;
-    --rule:   rgba(255, 182, 66, 0.24);
-    --soft:   rgba(255, 182, 66, 0.11);
-    --mono:   "Ubuntu Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
-    --pixel:  "Silkscreen", "Ubuntu Mono", ui-monospace, monospace;
-  }
-
-  * { box-sizing: border-box; }
-
-  html { background: var(--void); }
-
-  body {
-    margin: 0;
-    min-height: 100vh;
-    background:
-      radial-gradient(ellipse 120% 85% at 50% 38%, rgba(255, 182, 66, 0.05), transparent 68%),
-      var(--void);
-    color: var(--dim);
-    font-family: var(--mono);
-    font-size: 15px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-
-  /* ---- CRT overlays ------------------------------------------------ */
-
-  .scan,
-  .vignette,
-  .bezel {
-    position: fixed;
-    pointer-events: none;
-  }
-
-  .scan {
-    inset: 0;
-    z-index: 8;
-    background: repeating-linear-gradient(
-      to bottom,
-      rgba(0, 0, 0, 0) 0 2px,
-      rgba(0, 0, 0, 0.26) 2px 3px
-    );
-  }
-
-  .vignette {
-    inset: 0;
-    z-index: 7;
-    background: radial-gradient(ellipse 90% 80% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.62) 100%);
-  }
-
-  .bezel {
-    inset: clamp(0.7rem, 1.8vw, 1.4rem);
-    z-index: 6;
-    border: 1px solid var(--soft);
-  }
-
-  .bezel b {
-    position: absolute;
-    font: 400 13px/1 var(--mono);
-    color: var(--rule);
-    transform: translate(-50%, -50%);
-  }
-
-  .bezel b:nth-child(1) { top: 0;    left: 0; }
-  .bezel b:nth-child(2) { top: 0;    left: 100%; }
-  .bezel b:nth-child(3) { top: 100%; left: 0; }
-  .bezel b:nth-child(4) { top: 100%; left: 100%; }
-
-  /* ---- layout ------------------------------------------------------ */
-
-  .screen {
-    position: relative;
-    z-index: 1;
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: clamp(3rem, 8vh, 6rem) clamp(1.75rem, 6vw, 4.5rem);
-  }
-
-  .grid {
-    width: 100%;
-    max-width: 1060px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: clamp(2.75rem, 6vw, 4rem);
-  }
-
-  @media (min-width: 900px) {
-    .grid {
-      grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-      gap: clamp(3rem, 6vw, 5.5rem);
-      align-items: start;
-    }
-  }
-
-  /* ---- wordmark ---------------------------------------------------- */
-
-  h1 {
-    margin: 0 0 1.15rem;
-    font-family: var(--pixel);
-    font-weight: 400;
-    font-size: clamp(2.75rem, 9vw, 4.5rem);
-    line-height: 1;
-    letter-spacing: 0.01em;
-    color: var(--ink);
-    text-shadow: 0 0 18px rgba(255, 182, 66, 0.32);
-  }
-
-  .wm-hole {
-    height: 0.72em;
-    width: auto;
-    margin-left: 0.07em;
-    vertical-align: baseline;
-    color: var(--hot);
-    filter: drop-shadow(0 0 9px rgba(255, 236, 205, 0.45));
-  }
-
-  .tagline {
-    margin: 0;
-    font-size: clamp(0.95rem, 2.6vw, 1.15rem);
-    line-height: 1.45;
-    color: var(--ink);
-    letter-spacing: 0.005em;
-    max-width: 44ch;
-  }
-
-  /* ---- the tree ---------------------------------------------------- */
-
-  .tree {
-    position: relative;
-    list-style: none;
-    margin: 0;
-    padding: 1.4rem 0 0;
-    font-size: clamp(0.8125rem, 2.1vw, 0.9rem);
-  }
-
-  .tree::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 1px;
-    height: 1.4rem;
-    background: var(--rule);
-  }
-
-  .tree li {
-    position: relative;
-    padding: 0 0 0.95rem 2.4ch;
-  }
-
-  .tree li:last-child { padding-bottom: 0; }
-
-  .tree li::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 1px;
-    background: var(--rule);
-  }
-
-  .tree li:last-child::before {
-    bottom: auto;
-    height: 0.72em;
-  }
-
-  .tree li::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0.72em;
-    width: 1.5ch;
-    height: 1px;
-    background: var(--rule);
-  }
-
-  .tree .leaf { padding-top: 1.1rem; }
-
-  a {
-    display: inline-block;
-    color: var(--ink);
-    text-decoration: none;
-    padding: 0.05em 0.5ch;
-    margin-left: -0.5ch;
-    border-bottom: 1px dotted var(--rule);
-    transition: background-color 90ms linear, color 90ms linear;
-  }
-
-  a:hover,
-  a:focus-visible {
-    background: var(--ink);
-    color: var(--void);
-    border-bottom-color: transparent;
-    outline: none;
-    text-shadow: none;
-  }
-
-  a:focus-visible { box-shadow: 0 0 0 1px var(--hot); }
-
-  /* ---- terminal ---------------------------------------------------- */
-
-  .term {
-    border: 1px solid var(--rule);
-    background: rgba(255, 182, 66, 0.022);
-    box-shadow: 0 0 44px rgba(255, 182, 66, 0.05);
-  }
-
-  .rail {
-    height: 1.4rem;
-    border-bottom: 1px solid var(--soft);
-    background-image: repeating-conic-gradient(var(--rule) 0 25%, transparent 0 50%);
-    background-size: 4px 4px;
-    opacity: 0.55;
-    -webkit-mask-image: linear-gradient(90deg, #000 0%, transparent 62%);
-    mask-image: linear-gradient(90deg, #000 0%, transparent 62%);
-  }
-
-  .log {
-    padding: 1.05rem 1.15rem 1.15rem;
-    overflow-x: auto;
-    font-size: clamp(0.8125rem, 2.1vw, 0.875rem);
-  }
-
-  .row {
-    display: grid;
-    grid-template-columns: 23ch minmax(0, 1fr);
-    line-height: 1.95;
-    min-height: 1.95em;
-    white-space: nowrap;
-  }
-
-  .p {
-    color: var(--faint);
-    padding-right: 1ch;
-  }
-
-  .cmd { color: var(--dim); }
-
-  .st {
-    border-left: 1px dashed var(--soft);
-    padding-left: 1.5ch;
-    color: var(--hot);
-  }
-
-  .v { transition: opacity 180ms linear; }
-
-  .sel { color: var(--faint); }
-
-  .hole {
-    color: var(--hot);
-    letter-spacing: 0.05em;
-    text-shadow: 0 0 10px rgba(255, 236, 205, 0.4);
-  }
-
-  .hole.flag {
-    color: var(--dim);
-    border-bottom: 1px dashed var(--rule);
-    text-shadow: none;
-  }
-
-  .cur {
-    display: inline-block;
-    width: 0.55ch;
-    height: 1em;
-    margin-left: 0.2ch;
-    background: var(--hot);
-    vertical-align: -0.16em;
-    box-shadow: 0 0 10px rgba(255, 236, 205, 0.5);
-  }
-
-  /* ---- animated state ---------------------------------------------- */
-
-  .anim .v { opacity: 0; }
-  .anim .v.show { opacity: 1; }
-  .anim .cur { animation: blink 1.06s steps(1, end) infinite; }
-  .anim .log.clearing .row { opacity: 0.18; transition: opacity 260ms linear; }
-
-  @keyframes blink {
-    0%, 55% { opacity: 1; }
-    56%, 100% { opacity: 0; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .anim .v { opacity: 1; }
-    .cur { animation: none; }
-  }
-
-  @media (max-width: 420px) {
-    .st { padding-left: 1.1ch; }
-  }
-</style>
+<meta property="og:title" content="nothing">
+<meta property="og:description" content="A language with no syntax. The AST is the source of truth: no parser, no text files, no syntax errors.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0b0c'/%3E%3Cg fill='%23e9e9ec'%3E%3Crect x='3' y='2' width='2' height='2'/%3E%3Crect x='5' y='2' width='2' height='2'/%3E%3Crect x='2' y='4' width='2' height='8'/%3E%3Crect x='3' y='12' width='2' height='2'/%3E%3Crect x='5' y='12' width='2' height='2'/%3E%3Crect x='9' y='2' width='2' height='2'/%3E%3Crect x='11' y='2' width='2' height='2'/%3E%3Crect x='12' y='4' width='2' height='8'/%3E%3Crect x='9' y='12' width='2' height='2'/%3E%3Crect x='11' y='12' width='2' height='2'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/Satoshi-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/Satoshi-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/main.css">
+<script>
+document.documentElement.classList.add("js");
+try {
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches)
+    document.documentElement.classList.add("intro");
+} catch (e) {}
+</script>
+<script defer src="/vendor/brush.js"></script>
+<script defer src="/js/art.js"></script>
+<script defer src="/js/main.js"></script>
 </head>
 <body>
 
-<div class="scan" aria-hidden="true"></div>
-<div class="vignette" aria-hidden="true"></div>
-<div class="bezel" aria-hidden="true"><b>┌</b><b>┐</b><b>└</b><b>┘</b></div>
+<a class="skip" href="#main">Skip to content</a>
 
-<main class="screen">
-  <div class="grid">
+<div class="grain" aria-hidden="true"></div>
 
-    <div>
-      <h1 aria-label="nothing">nothin<svg class="wm-hole" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="6" height="2"/><rect x="0" y="2" width="2" height="10"/><rect x="0" y="12" width="6" height="2"/><rect x="8" y="0" width="6" height="2"/><rect x="12" y="2" width="2" height="10"/><rect x="8" y="12" width="6" height="2"/></svg></h1>
-      <p class="tagline">Rethinking programming from the ground up</p>
+<!-- 01 / loading intro -->
+<div id="intro" aria-hidden="true">
+  <div class="intro-stage">
+    <canvas id="intro-canvas"></canvas>
+    <span class="intro-word">nothing</span>
+  </div>
+  <p class="intro-line">Rethinking programming from the ground up</p>
+</div>
 
-      <ul class="tree">
-        <li>Parse-free: the syntax tree is the program</li>
-        <li>Strong typing guaranteed, with holes as first-class values</li>
-        <li>Structural merging that deeply understands your code</li>
-        <li class="leaf"><a href="https://github.com/frgmt0/nothing">github.com/frgmt0/nothing</a></li>
-      </ul>
-    </div>
+<header class="nav" id="nav">
+  <a class="nav-word" href="#top">nothing</a>
+  <nav aria-label="Site">
+    <a class="nav-link" href="#editor">editor</a>
+    <a class="nav-link" href="https://github.com/frgmt0/nothing">GitHub</a>
+  </nav>
+</header>
 
-    <div class="term">
-      <div class="rail" aria-hidden="true"></div>
-      <div class="log" id="log">
-        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-num 1</span></span><span class="st"><span class="v"><span class="sel">»</span>1<span class="sel">«</span></span></span></div>
-        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-binop +</span></span><span class="st"><span class="v">1 + <span class="sel">»</span><span class="hole">⦇⦈</span><span class="sel">«</span></span></span></div>
-        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-bool true</span></span><span class="st"><span class="v">1 + <span class="sel">»</span><span class="hole flag">⦇true⦈</span><span class="sel">«</span></span></span></div>
-        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">delete</span></span><span class="st"><span class="v">1 + <span class="sel">»</span><span class="hole">⦇⦈</span><span class="sel">«</span></span></span></div>
-        <div class="row"><span class="cmd"><span class="p">&gt;</span><span class="t">construct-num 2</span></span><span class="st"><span class="v">1 + <span class="sel">»</span>2<span class="sel">«</span></span></span></div>
+<main id="main">
+
+  <!-- 02 / hero reveal -->
+  <section class="hero" id="top">
+    <div class="hero-art" aria-hidden="true"><canvas id="hero-canvas"></canvas></div>
+    <div class="wrap hero-wrap">
+      <p class="eyebrow reveal">Rethinking programming from the ground up</p>
+      <h1 class="reveal d1">A language with<br><em>no</em> syntax.</h1>
+      <p class="lede reveal d2">The syntax tree is the program. No parser, no text files,
+      no syntax errors. Every edit is a typed tree transformation, so every program is
+      well-typed at every instant, even half-finished.</p>
+      <div class="cta reveal d3">
+        <a class="btn" href="https://github.com/frgmt0/nothing">View on GitHub</a>
+        <a class="btn ghost" href="#editor">See it edit</a>
       </div>
     </div>
+    <p class="scroll-hint" aria-hidden="true">Scroll<span class="arr">&darr;</span></p>
+  </section>
 
-  </div>
+  <!-- 03 / capabilities overview -->
+  <section class="orbit-sec" id="orbit">
+    <div class="wrap cols">
+      <div class="col-copy">
+        <p class="eyebrow reveal">One artifact</p>
+        <h2 class="reveal d1">Everything orbits <em>the tree</em>.</h2>
+        <p class="body reveal d2">There is no file format, so the editor and the language
+        are one artifact. The terminal editor projects the tree. The merge engine diffs
+        it. The evaluator runs around its holes. Agents edit it through the same typed
+        actions you do.</p>
+        <p class="body dim reveal d2">One typed tree. Four projections. An action either
+        applies and leaves a well-typed program, or it is refused and nothing changes.
+        There is no third outcome.</p>
+        <a class="quiet-link reveal d3" href="#install">Get the code <span class="arr">&rarr;</span></a>
+      </div>
+      <div class="orbit-art reveal d2" role="img" aria-label="Diagram: the AST at the center, with the editor, merge engine, evaluator, and agents orbiting it">
+        <svg class="orbit-under" viewBox="0 0 100 82" preserveAspectRatio="none" aria-hidden="true">
+          <ellipse cx="50" cy="41" rx="42" ry="24.6" transform="rotate(-17 50 41)"/>
+          <ellipse cx="50" cy="41" rx="33" ry="32.8" transform="rotate(16 50 41)"/>
+          <ellipse cx="50" cy="41" rx="46" ry="18" transform="rotate(3.4 50 41)"/>
+        </svg>
+        <canvas id="orbit-canvas" aria-hidden="true"></canvas>
+        <span class="orbit-core" aria-hidden="true">AST</span>
+        <span class="orbit-node n1" aria-hidden="true">editor</span>
+        <span class="orbit-node n2" aria-hidden="true">merge</span>
+        <span class="orbit-node n3" aria-hidden="true">eval</span>
+        <span class="orbit-node n4" aria-hidden="true">agents</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 04 / features scroll -->
+  <section class="feat-sec" id="features">
+    <div class="wrap">
+      <p class="eyebrow reveal">Capabilities</p>
+      <h2 class="reveal d1">What falls out of the tree.</h2>
+      <div class="cards">
+        <article class="card reveal">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M11 7l-4 9M13 7l4 9"/></svg>
+          <h3>Parse-free editing</h3>
+          <canvas class="stroke-line" aria-hidden="true"></canvas>
+          <p>There is nothing to parse. Construct, move, delete, finish: each edit either
+          applies or is refused, and the program cannot break in between.</p>
+          <p class="metric">0.16x to 0.51x the keystrokes of Neovim</p>
+        </article>
+        <article class="card reveal">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4c-2.6 1.8-4 4.6-4 8s1.4 6.2 4 8M16 4c2.6 1.8 4 4.6 4 8s-1.4 6.2-4 8M8.5 4v16M15.5 4v16"/></svg>
+          <h3>Typed holes</h3>
+          <canvas class="stroke-line" aria-hidden="true"></canvas>
+          <p>An empty hole &#x2987;&#x2988; stands for code you have not written yet. A
+          quarantine wraps code that does not fit its context. 1 + true is not an error;
+          it is 1 + &#x2987;true&#x2988;.</p>
+          <p class="metric">incompleteness is a value</p>
+        </article>
+        <article class="card reveal">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v7c0 3 2 5 5 5h7M18 4v4c0 2.5-1.6 4-4 4"/><path d="M15 13l3 3-3 3"/></svg>
+          <h3>Structural merge</h3>
+          <canvas class="stroke-line" aria-hidden="true"></canvas>
+          <p>Merge reads typed operations, not lines. Names are metadata, not identity,
+          so a rename cannot collide with an edit and formatting cannot cause a
+          conflict.</p>
+          <p class="metric">13 of 16 clean; git merge-file: 2 of 16</p>
+        </article>
+        <article class="card reveal">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M7 10l3 2.5L7 15M12.5 15h4"/></svg>
+          <h3>Agent protocol</h3>
+          <canvas class="stroke-line" aria-hidden="true"></canvas>
+          <p>Models edit over JSON through the same action calculus. An ill-typed
+          program is not caught by review; it is unrepresentable.</p>
+          <p class="metric">0 ill-typed states across 132 model edits</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 05 / interactive terminal -->
+  <section class="term-sec" id="editor">
+    <div class="term-art" aria-hidden="true"><canvas id="term-canvas"></canvas></div>
+    <div class="wrap narrow">
+      <p class="eyebrow reveal">The editor</p>
+      <h2 class="reveal d1">A type error, <em>quarantined</em>.</h2>
+      <p class="body reveal d2">Real output. Type a Bool where a Num goes and the editor
+      does not stop you. The mistake lands in a quarantine, stays visible, and the
+      program stays well-typed the whole time.</p>
+      <div class="term reveal d2" role="img" aria-label="Editor transcript. construct-num 1 gives 1. construct-binop plus gives 1 plus an empty hole. construct-bool true gives 1 plus true, quarantined. delete gives 1 plus an empty hole. construct-num 2 gives 1 plus 2.">
+        <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i><span>nothing-tui</span></div>
+        <div class="term-log" id="term-log" aria-hidden="true">
+          <div class="trow"><span class="tcmd"><span class="tp">&gt;</span><span class="tt">construct-num 1</span></span><span class="tres"><span class="tv"><span class="tsel">&raquo;</span>1<span class="tsel">&laquo;</span></span></span></div>
+          <div class="trow"><span class="tcmd"><span class="tp">&gt;</span><span class="tt">construct-binop +</span></span><span class="tres"><span class="tv">1 + <span class="tsel">&raquo;</span><span class="thole">&#x2987;&#x2988;</span><span class="tsel">&laquo;</span></span></span></div>
+          <div class="trow"><span class="tcmd"><span class="tp">&gt;</span><span class="tt">construct-bool true</span></span><span class="tres"><span class="tv">1 + <span class="tsel">&raquo;</span><span class="thole flag">&#x2987;true&#x2988;</span><span class="tsel">&laquo;</span></span></span></div>
+          <div class="trow"><span class="tcmd"><span class="tp">&gt;</span><span class="tt">delete</span></span><span class="tres"><span class="tv">1 + <span class="tsel">&raquo;</span><span class="thole">&#x2987;&#x2988;</span><span class="tsel">&laquo;</span></span></span></div>
+          <div class="trow"><span class="tcmd"><span class="tp">&gt;</span><span class="tt">construct-num 2</span></span><span class="tres"><span class="tv">1 + <span class="tsel">&raquo;</span>2<span class="tsel">&laquo;</span></span></span></div>
+        </div>
+      </div>
+      <p class="caption reveal d3">The third step puts a Bool in a Num position. The
+      editor quarantines it as &#x2987;true&#x2988; instead of refusing, and the program
+      stays well-typed.</p>
+    </div>
+  </section>
+
+  <!-- 06 / footer + cta -->
+  <section class="end-sec" id="install">
+    <div class="end-art" aria-hidden="true" id="end-art"><canvas id="end-canvas"></canvas></div>
+    <div class="wrap cols">
+      <div class="col-copy">
+        <p class="eyebrow reveal">Install</p>
+        <h2 class="reveal d1">Start from <em>nothing</em>.</h2>
+        <p class="body reveal d2">Rust and a terminal. The editor, the merge engine, and
+        the agent protocol build from one repo.</p>
+        <pre class="install reveal d2"><code><span class="ip">$</span> git clone https://github.com/frgmt0/nothing
+<span class="ip">$</span> cd nothing &amp;&amp; cargo build --release
+<span class="ip">$</span> cargo run -p nothing-tui</code></pre>
+        <div class="cta reveal d3">
+          <a class="btn" href="https://github.com/frgmt0/nothing">github.com/frgmt0/nothing</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
 </main>
 
-<script>
-(function () {
-  var log = document.getElementById("log");
-  if (!log || !window.requestAnimationFrame) return;
-
-  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var rows = Array.prototype.slice.call(log.querySelectorAll(".row"));
-  if (!rows.length) return;
-
-  var steps = rows.map(function (row) {
-    var t = row.querySelector(".t");
-    return { row: row, t: t, text: t.textContent, st: row.querySelector(".v") };
-  });
-
-  var cursor = document.createElement("span");
-  cursor.className = "cur";
-  cursor.setAttribute("aria-hidden", "true");
-
-  document.documentElement.classList.add("anim");
-
-  if (reduce) {
-    steps.forEach(function (s) { s.st.classList.add("show"); });
-    steps[steps.length - 1].t.parentNode.appendChild(cursor);
-    return;
-  }
-
-  var sleep = function (ms) {
-    return new Promise(function (res) { setTimeout(res, ms); });
-  };
-
-  var awake = function () {
-    if (!document.hidden) return Promise.resolve();
-    return new Promise(function (res) {
-      var on = function () {
-        if (document.hidden) return;
-        document.removeEventListener("visibilitychange", on);
-        res();
-      };
-      document.addEventListener("visibilitychange", on);
-    });
-  };
-
-  function reset() {
-    steps.forEach(function (s) {
-      s.t.textContent = "";
-      s.st.classList.remove("show");
-    });
-  }
-
-  async function run() {
-    for (;;) {
-      await awake();
-      reset();
-      await sleep(420);
-
-      for (var i = 0; i < steps.length; i++) {
-        var s = steps[i];
-        s.t.parentNode.appendChild(cursor);
-        for (var c = 1; c <= s.text.length; c++) {
-          s.t.textContent = s.text.slice(0, c);
-          await sleep(38);
-        }
-        await sleep(320);
-        s.st.classList.add("show");
-        await sleep(i === steps.length - 1 ? 3200 : 720);
-        await awake();
-      }
-
-      log.classList.add("clearing");
-      await sleep(320);
-      reset();
-      log.classList.remove("clearing");
-    }
-  }
-
-  run();
-})();
-</script>
+<footer class="foot">
+  <div class="wrap foot-row">
+    <span>nothing &middot; the AST is the source of truth</span>
+    <a href="https://github.com/frgmt0/nothing">frgmt0/nothing</a>
+  </div>
+</footer>
 
 </body>
 </html>
