@@ -24,6 +24,109 @@ author id recorded in the action log (default `1`).
 
 ---
 
+## Protocol version 1
+
+This document describes **protocol version 1**, and version 1 is frozen. A
+client asks which version it is talking to with the cheapest request in the
+protocol:
+
+```json
+{"method": "version"}
+```
+
+answers
+
+```json
+{"id":null,"ok":true,"applied":false,"protocol_version":"1","protocol_major":1,"protocol_minor":0,"implementation_version":"0.1.0","state":{…}}
+```
+
+- `protocol_version` is the **major** version as a string, and nothing else. A
+  client may compare it to `"1"` and be right for the whole life of v1.
+- `protocol_major` and `protocol_minor` are the same number split into integers,
+  so a client can require a minimum minor version without parsing a string.
+  Every additive change bumps `protocol_minor`; the string does not move.
+- `implementation_version` is the crate version of the process answering — the
+  build, not the contract. It moves on every release and means nothing to
+  compatibility.
+
+`help` reports the same `protocol_version` alongside the method list and the
+whole step grammar; `version` exists because a handshake should not have to
+carry a multi-kilobyte grammar to learn one number.
+
+### What version 1 guarantees
+
+For every method in the table below, and for every error response:
+
+- every field named in this document is **present** on every response that
+  document says carries it;
+- every such field keeps the **JSON type** it has here — an integer stays an
+  integer, an array stays an array, an object stays an object;
+- a field documented as nullable may be `null` or its stated type, and nothing
+  else;
+- `id`, `ok`, `applied` and `state` are on **every** response, without
+  exception, including `version` and every error.
+
+### Additive versus breaking
+
+**Additive, allowed inside v1** (bumps `protocol_minor`):
+
+- a new field on a response object;
+- a new method, added to `METHODS` and to the table below;
+- a new optional `params` key whose absence keeps the old behaviour;
+- a new member of an open-ended string set — a new `focus_kind`, a new
+  `action`, a new step spelling.
+
+**Breaking, forbidden inside v1** (would require a v2):
+
+- removing or renaming any field;
+- changing the JSON type at any documented path;
+- making a nullable field non-nullable in a way that removes it, or a
+  non-nullable field null;
+- removing a method, or changing what an existing `params` key means;
+- moving a field to a different nesting level.
+
+### The compatibility test enforces this
+
+`agentapi/tests/protocol_v1_compat.rs` drives the real `protocol::handle` with a
+real `AgentSession` — no mock — over one case for every method in the table
+below and five more for the error shapes, and compares each response against a
+golden fixture in `agentapi/fixtures/protocol/v1/`, one file per case.
+
+The fixtures pin the **shape**, not the values — ids, timestamps and hole ids are
+freshly generated on every run, so pinning values would pin noise. Each fixture
+records the `setup` requests, the pinned `request`, and a sorted
+`response_shape`: one `path: type` line for every path in the response, where
+an object field extends the path with `.name`, and every element of an array
+extends it with `[]` and has its types **unioned** across the elements, so array
+length can never make the shape wobble. A path whose only observed value was
+`null` is pinned as `null`, which matches any later type — that is how a
+documented nullable field stays pinnable.
+
+The comparison is deliberately asymmetric. Every pinned path must still be
+present with a compatible type: a path that disappeared, or whose type changed,
+fails the test and names itself in the failure. A path present in the response
+but absent from the fixture is an **addition**, so it is printed to stdout as an
+allowed additive change and does not fail; run the test with `-- --nocapture` to
+read that list. Fixtures cannot rot behind that leniency, though: a second test
+asserts that every method in `protocol::METHODS` has a fixture, so adding a
+method without pinning it fails, and a third asserts the fixture directory holds
+exactly the pinned cases, so a stale file fails too.
+
+Regenerate the fixtures — after a deliberate additive change, or when adding a
+method — by running the test with `NOTHING_UPDATE_FIXTURES=1`:
+
+```sh
+NOTHING_UPDATE_FIXTURES=1 cargo test -p nothing-agentapi --test protocol_v1_compat
+```
+
+Review the resulting diff. Lines that only appear are additive. A line that
+disappears, or whose type changed, is a break in v1 and the code is wrong, not
+the fixture. Fixture requests may use the placeholder `$TMPDIR/` at the front of
+a path string; the test substitutes a scratch directory it creates and removes,
+so `save` and `load` fixtures are the same on every machine.
+
+---
+
 ## Requests
 
 ```json
@@ -39,6 +142,8 @@ optional. The methods are:
 | `apply` | `step` or `action`, optional `author` | apply one action |
 | `script` | `steps` (array), optional `author` | apply a sequence, stopping at the first step that does not apply |
 | `hole_context` | — | the hole-context query (below) |
+| `stdlib` | — | the whole prelude catalogue, once (`stdlib`) |
+| `move_to_hole` | optional `forward` (default `true`), optional `author` | walk the cursor to the next unfinished position, as ordinary logged moves (`actions`) |
 | `undo` | — | truncate one entry and replay |
 | `redo` | — | re-apply the entry undo removed |
 | `reset` | — | back to the empty program with an empty log |
@@ -48,6 +153,7 @@ optional. The methods are:
 | `provenance` | — | per-node author and time, from the replayed log |
 | `annotate` | `agents` (array of author ids), `style` | an author-annotated render (`annotated`, one definition; `annotated_document`, all of them) |
 | `help` | — | the protocol version, the method list, the step grammar |
+| `version` | — | the protocol version alone (`protocol_version`, `protocol_major`, `protocol_minor`, `implementation_version`) |
 | `quit` | — | answer, then exit |
 
 ### Naming an action
@@ -110,16 +216,18 @@ program looks like now.
 ```json
 {
   "render": "λn:Num. if n == 0 then 1 else n * main (n - 1)",
-  "render_with_cursor": "λn:Num. if n == 0 then 1 else n * main (n - »1«)",
   "render_document": "main : Num -> Num = λn:Num. if n == 0 then 1 else n * main (n - 1)",
   "definitions": [
-    {"id": "…", "name": "main", "ann": {…}, "ann_text": "Num -> Num", "current": true}
+    {"id": "…", "name": "main", "ann": {…}, "ann_text": "Num -> Num",
+     "doc": null, "current": true}
   ],
   "definition": "…",
   "definition_name": "main",
+  "definition_doc": null,
   "definition_index": 0,
   "definition_count": 1,
   "definition_ann": {"ty": "Arrow", …},
+  "render_with_cursor": "λn:Num. if n == 0 then 1 else n * main (n - »1«)",
   "cursor_path": [0, 2, 1],
   "focus_kind": "EmptyHole",
   "expected_ty": {"ty": "Num"},
@@ -127,13 +235,18 @@ program looks like now.
   "well_typed": true,
   "empty_holes": 1,
   "non_empty_holes": 0,
+  "holes": [[0, 2, 1]],
+  "document_empty_holes": 1,
+  "document_non_empty_holes": 0,
   "complete": false,
   "log_len": 16,
   "can_undo": true,
   "can_redo": false,
   "author": 1,
   "exp": {"exp": "Lam", "id": "…", "name": "n", "ann": {…}, "body": {…}},
-  "names": [{"id": "…", "name": "n"}]
+  "names": [{"id": "…", "name": "n"}],
+  "docs": [{"id": "…", "doc": "two of them"}],
+  "stdlib_count": 12
 }
 ```
 
@@ -141,6 +254,21 @@ program looks like now.
 same coordinate system `merge`'s `Path` uses. `complete` is true when the program
 contains neither kind of hole. `well_typed` is reported rather than assumed; it
 has never been observed false, because the calculus does not permit it.
+
+`holes` lists the cursor path of every unfinished position — every empty and
+non-empty hole — in the definition the cursor is in, in the order the cursor
+would walk them, which is the order `move_to_hole` uses. `empty_holes` and
+`non_empty_holes` count that same definition; `document_empty_holes` and
+`document_non_empty_holes` count every definition in the document, so a client
+can tell "this definition is finished" from "the program is finished".
+
+`definition_doc` and each entry's `doc` are the documentation line for that
+definition, or `null` when it has none. `names` and `docs` are the vocabulary
+needed to read this document: the document's own names, plus the name and doc
+line of every prelude definition the document actually references, and no
+others — an untouched document borrows nothing. `stdlib_count` is how many
+definitions the prelude holds in total; the catalogue itself comes from the
+`stdlib` method, which is answered once rather than repeated on every response.
 
 Since the document era (Phase B1) a program is an ordered list of named
 top-level definitions. `render`, `render_with_cursor`, `exp` and `cursor_path`
@@ -162,6 +290,10 @@ next edit, and nothing it would have to guess:
 
 ```json
 {
+  "definition": "…",
+  "definition_name": "main",
+  "definition_ann": {"ty": "Num"},
+  "definition_ann_text": "Num",
   "cursor_path": [0, 1],
   "focus_kind": "EmptyHole",
   "focus_render": "⦇⦈",
@@ -170,7 +302,8 @@ next edit, and nothing it would have to guess:
   "expected_ty_text": "Num",
   "bindings": [
     {"id": "…", "name": "n", "ty": {"ty":"Num"}, "ty_text": "Num",
-     "consistent_with_expected": true, "shadowed": false}
+     "consistent_with_expected": true, "shadowed": false,
+     "definition": false, "stdlib": false, "doc": null}
   ],
   "constructions": [
     {"step": "construct-num 0", "template": "construct-num <integer>",
@@ -178,19 +311,21 @@ next edit, and nothing it would have to guess:
      "produces": "λn:Num. n * »0«", "cursor_after": [0, 1]}
   ],
   "movements": ["move-parent", "move-prev-sibling", "move-next-def"],
-  "other_actions": ["delete", "create-definition", "set-def-ann Num", "rename-def <name>"],
-  "definition": "…",
-  "definition_name": "main",
-  "definition_ann": {"ty": "Num"}
+  "other_actions": ["delete", "create-definition", "set-def-ann Num", "rename-def <name>"]
 }
 ```
 
-**Bindings** are the definitions of the document followed by the binders in
-scope at the cursor, outermost first, each with its type from the typing
-context, its *display name* from the name table, and whether that type is
-consistent with the expected type. A binding with `"definition": true` is a
-top-level definition rather than a path binder — including the definition the
-cursor is in, which is how a recursive call is written. `shadowed` marks a
+`step` and `template` on a construction, and `doc` on a binding, are `null` when
+they do not apply; the keys are always there.
+
+**Bindings** are the definitions of the document and of the prelude, followed by
+the binders in scope at the cursor, outermost first, each with its type from the
+typing context, its *display name* from the name table, its documentation line
+if it has one, and whether that type is consistent with the expected type. A
+binding with `"definition": true` is a top-level definition rather than a path
+binder — including the definition the cursor is in, which is how a recursive
+call is written — and `"stdlib": true` marks the ones that come from the prelude
+rather than from this document. `shadowed` marks a
 binding whose display name is taken by a nearer binding — it is still reachable
 through the structured `ConstructVar` form, and its `step` is `null`, because
 the textual `construct-var NAME` would resolve to the other one.
@@ -225,6 +360,37 @@ Movements and the remaining actions (`delete`, `finish`, `set-ann`, `rename`,
 are listed separately because they are not constructions: they do not fill the
 hole, so the well-typedness question above does not apply to them. Only the ones
 that actually apply at this cursor are listed.
+
+---
+
+## The standard library, and walking to the next hole
+
+`{"method": "stdlib"}` answers with the whole prelude catalogue in one reply,
+under `stdlib`:
+
+```json
+[{"id": "…", "name": "map", "ann_text": "(Num -> Num) -> [Num] -> [Num]",
+  "doc": "apply a function to every element"}]
+```
+
+`doc` is `null` for a definition with no documentation line. The catalogue rides
+on the reply that asked for it and never on `state`, because it does not change:
+a client fetches it once per session. `state.stdlib_count` says how many entries
+it has, so a client can tell whether it has them all.
+
+`{"method": "move_to_hole"}` walks the cursor to the next unfinished position —
+empty hole or quarantine — in the definition the cursor is in, wrapping round to
+the first when there is none after the cursor. `{"params": {"forward": false}}`
+walks backwards. It is not a jump: the reply's `actions` is the list of ordinary
+movement actions it applied, every one of them written to the action log, so
+undo walks back through them exactly as it would through hand-made moves.
+
+```json
+{"id":null,"ok":true,"applied":true,"actions":[{"action":"MoveChild","n":2},{"action":"MoveChild","n":1}],"state":{…}}
+```
+
+A definition with nothing unfinished left in it answers `ok:false` with an
+`error` rather than moving.
 
 ---
 

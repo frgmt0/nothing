@@ -42,9 +42,9 @@ pub fn run(base: &Path, a: &Path, b: &Path, out: Option<&Path>) -> i32 {
         }
     };
 
-    let base_v = DocVersion::new(base_doc.doc, base_doc.names);
-    let a_v = DocVersion::new(a_doc.doc, a_doc.names);
-    let b_v = DocVersion::new(b_doc.doc, b_doc.names);
+    let base_v = DocVersion::documented(base_doc.doc, base_doc.names, base_doc.docs);
+    let a_v = DocVersion::documented(a_doc.doc, a_doc.names, a_doc.docs);
+    let b_v = DocVersion::documented(b_doc.doc, b_doc.names, b_doc.docs);
 
     let outcome = merge_documents(&base_v, &a_v, &b_v);
 
@@ -58,8 +58,12 @@ pub fn run(base: &Path, a: &Path, b: &Path, out: Option<&Path>) -> i32 {
 
     match out {
         Some(path) => {
-            let doc =
-                Document::from_doc(outcome.merged.doc, outcome.merged.names, ActionLog::new());
+            let doc = Document::documented(
+                outcome.merged.doc,
+                outcome.merged.names,
+                outcome.merged.docs,
+                ActionLog::new(),
+            );
             if let Err(err) = write_document(path, &doc) {
                 eprintln!("error: {err}");
                 return 1;

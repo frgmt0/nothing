@@ -85,10 +85,10 @@ Written in `nothing`, stored in the binary format, shipped inside the binary. Th
 
 ## Phase B5 — Tooling that meets people where they are
 
-- [ ] **Git integration.** `nothing merge-driver` and a diff textconv driver, with a documented `.gitattributes` recipe, so `.n` files diff structurally and merge through the Phase 9 engine *inside ordinary git workflows*. This is the Kowo wedge, productised. **Done when** a scratch repo with two branches editing one `.n` file shows a typed-operation diff in `git log -p` and merges cleanly through `git merge` where raw text would conflict.
-- [ ] **Protocol v1 freeze.** PROTOCOL.md versioned; a `version` method; backwards-compatibility test pinning every method's request/response shape. **Done when** the compatibility test would fail on any breaking change.
+- [x] **Git integration.** `nothing merge-driver` and a diff textconv driver, with a documented `.gitattributes` recipe, so `.n` files diff structurally and merge through the Phase 9 engine *inside ordinary git workflows*. This is the Kowo wedge, productised. **Done when** a scratch repo with two branches editing one `.n` file shows a typed-operation diff in `git log -p` and merges cleanly through `git merge` where raw text would conflict.
+- [x] **Protocol v1 freeze.** PROTOCOL.md versioned; a `version` method; backwards-compatibility test pinning every method's request/response shape. **Done when** the compatibility test would fail on any breaking change.
 - [ ] **MCP server.** `nothing mcp` exposes the editor to any MCP-speaking agent host: tools for state, hole-context, apply, script, save/load. **Done when** a Claude Code session with the server configured builds and saves a working program in one conversation, transcript committed under bench/.
-- [ ] **Re-run the agent benchmark at post-B2 scale.** Same two conditions as Phase 10, ≥30 tasks, but on programs using strings, lists, records, and match — the scale where text plausibly starts failing. Report whatever the numbers say; AGENT.md was honest when the baseline won, and that is the only reason the next number will mean anything. **Done when** bench/AGENT.md has a dated second table and a paragraph comparing failure modes, with cursor-drift addressed via the interactive loop.
+- [x] **Re-run the agent benchmark at post-B2 scale.** Same two conditions as Phase 10, ≥30 tasks, but on programs using strings, lists, records, and match — the scale where text plausibly starts failing. Report whatever the numbers say; AGENT.md was honest when the baseline won, and that is the only reason the next number will mean anything. **Done when** bench/AGENT.md has a dated second table and a paragraph comparing failure modes, with cursor-drift addressed via the interactive loop.
 
 ---
 

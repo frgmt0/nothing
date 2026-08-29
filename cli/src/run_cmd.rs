@@ -2,9 +2,11 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 
 use nothing_core::doc::MAIN_NAME;
+use nothing_core::prelude::Prelude;
 use nothing_eval::{
     Io, Outcome, eval_doc_with_fuel, main_type, perform_doc, render, runs_as_a_command,
 };
+use nothing_store::Document;
 
 use crate::fileio::read_document;
 
@@ -51,6 +53,100 @@ impl Io for StdIo {
     }
 }
 
+pub struct RunReport {
+    pub performed: bool,
+    pub value: Option<String>,
+    pub lines: Vec<String>,
+    pub status: i32,
+}
+
+pub fn missing_main_message(doc: &Document) -> String {
+    let mut message = format!("this document has no definition named `{MAIN_NAME}`\nit defines:\n");
+    for def in doc.doc.defs() {
+        message.push_str(&format!("  {} : {}\n", doc.names.display(def.id), def.ann));
+    }
+    message.push_str(&format!(
+        "rename one of them to `{MAIN_NAME}` to say where to start"
+    ));
+    message
+}
+
+pub fn perform_or_evaluate(
+    doc: &Document,
+    prelude: &Prelude,
+    fuel: usize,
+    io: &mut (dyn Io + Send),
+) -> Result<RunReport, String> {
+    let Some(main) = doc.main_id() else {
+        return Err(missing_main_message(doc));
+    };
+
+    let program = prelude.extend(&doc.doc);
+    let performed = runs_as_a_command(&program, main);
+    let outcome = if performed {
+        perform_doc(&program, main, fuel, io).outcome
+    } else {
+        eval_doc_with_fuel(&program, main, fuel)
+    };
+    let names = prelude.names_for(&doc.names);
+
+    let mut lines = Vec::new();
+    let mut value = None;
+    let status = match outcome {
+        Outcome::Value(result) => {
+            let rendered = render(&result, &names);
+            if !performed {
+                lines.push(rendered.clone());
+            }
+            value = Some(rendered);
+            0
+        }
+        Outcome::Indeterminate { result, blocked } => {
+            lines.push(format!("indeterminate: {}", render(&result, &names)));
+            for hole in &blocked {
+                lines.push(format!(
+                    "  blocked on hole {:?} ({:?})",
+                    hole.hole, hole.kind
+                ));
+                for (id, known) in hole.known() {
+                    lines.push(format!(
+                        "    {} = {}",
+                        names.display(id),
+                        render(&known, &names)
+                    ));
+                }
+            }
+            if performed && blocked.is_empty() {
+                lines.push(format!(
+                    "  this command cannot go any further: {} is stuck",
+                    main_type(&program, main)
+                ));
+            }
+            2
+        }
+        Outcome::OutOfFuel { partial, steps } => {
+            lines.push(format!(
+                "out of fuel after {steps} steps: {}",
+                render(&partial, &names)
+            ));
+            if performed {
+                lines.push(format!(
+                    "  the run stopped at its budget of {fuel} steps; \
+                     raise it with `--fuel N` if the program really is this long"
+                ));
+            }
+            3
+        }
+    };
+
+    Ok(RunReport {
+        performed,
+        value,
+        lines,
+        status,
+    })
+}
+
 pub fn run_with_fuel(path: &Path, fuel: usize) -> i32 {
     let doc = match read_document(path) {
         Ok(doc) => doc,
@@ -60,60 +156,17 @@ pub fn run_with_fuel(path: &Path, fuel: usize) -> i32 {
         }
     };
 
-    let Some(main) = doc.main_id() else {
-        eprintln!("error: this document has no definition named `{MAIN_NAME}`");
-        eprintln!("it defines:");
-        for def in doc.doc.defs() {
-            eprintln!("  {} : {}", doc.names.display(def.id), def.ann);
+    let prelude = nothing_stdlib::prelude();
+    match perform_or_evaluate(&doc, &prelude, fuel, &mut StdIo) {
+        Err(message) => {
+            eprintln!("error: {message}");
+            1
         }
-        eprintln!("rename one of them to `{MAIN_NAME}` to say where to start");
-        return 1;
-    };
-
-    let program = nothing_stdlib::prelude().extend(&doc.doc);
-    let performing = runs_as_a_command(&program, main);
-    let outcome = if performing {
-        perform_doc(&program, main, fuel, &mut StdIo).outcome
-    } else {
-        eval_doc_with_fuel(&program, main, fuel)
-    };
-    let names = nothing_stdlib::prelude().names_for(&doc.names);
-
-    match outcome {
-        Outcome::Value(value) => {
-            if !performing {
-                println!("{}", render(&value, &names));
+        Ok(report) => {
+            for line in &report.lines {
+                println!("{line}");
             }
-            0
-        }
-        Outcome::Indeterminate { result, blocked } => {
-            println!("indeterminate: {}", render(&result, &names));
-            for hole in &blocked {
-                println!("  blocked on hole {:?} ({:?})", hole.hole, hole.kind);
-                for (id, value) in hole.known() {
-                    println!("    {} = {}", names.display(id), render(&value, &names));
-                }
-            }
-            if performing && blocked.is_empty() {
-                println!(
-                    "  this command cannot go any further: {} is stuck",
-                    main_type(&program, main)
-                );
-            }
-            2
-        }
-        Outcome::OutOfFuel { partial, steps } => {
-            println!(
-                "out of fuel after {steps} steps: {}",
-                render(&partial, &names)
-            );
-            if performing {
-                println!(
-                    "  the run stopped at its budget of {fuel} steps; \
-                     raise it with `--fuel N` if the program really is this long"
-                );
-            }
-            3
+            report.status
         }
     }
 }

@@ -18,6 +18,12 @@ use nothing_core::names::NameTable;
 
 pub const PROTOCOL_VERSION: &str = "1";
 
+pub const PROTOCOL_VERSION_MAJOR: i64 = 1;
+
+pub const PROTOCOL_VERSION_MINOR: i64 = 0;
+
+pub const IMPLEMENTATION_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub const METHODS: &[&str] = &[
     "state",
     "apply",
@@ -34,6 +40,7 @@ pub const METHODS: &[&str] = &[
     "provenance",
     "annotate",
     "help",
+    "version",
     "quit",
 ];
 
@@ -290,6 +297,18 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
                     Json::arr(METHODS.iter().map(|m| Json::str(*m)).collect()),
                 ),
                 ("step_grammar", Json::str(HELP)),
+            ],
+        ),
+
+        "version" => ok(
+            id,
+            false,
+            session,
+            vec![
+                ("protocol_version", Json::str(PROTOCOL_VERSION)),
+                ("protocol_major", Json::Int(PROTOCOL_VERSION_MAJOR)),
+                ("protocol_minor", Json::Int(PROTOCOL_VERSION_MINOR)),
+                ("implementation_version", Json::str(IMPLEMENTATION_VERSION)),
             ],
         ),
 
@@ -1014,6 +1033,93 @@ mod tests {
                 .as_str(),
             Some("⦇⦈")
         );
+    }
+
+    #[test]
+    fn the_version_method_answers_with_the_frozen_protocol_version() {
+        let mut s = session();
+        let out = handle(&mut s, &request(r#"{"id":9,"method":"version"}"#));
+        assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(true));
+        assert_eq!(out.value.get("id").unwrap().as_i64(), Some(9));
+        assert_eq!(
+            out.value.get("protocol_version").unwrap().as_str(),
+            Some("1")
+        );
+        assert_eq!(out.value.get("protocol_major").unwrap().as_i64(), Some(1));
+        assert!(out.value.get("protocol_minor").unwrap().as_i64().is_some());
+        assert_eq!(
+            out.value.get("implementation_version").unwrap().as_str(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(!out.quit);
+    }
+
+    #[test]
+    fn the_version_method_changes_nothing_and_still_carries_the_state() {
+        let mut s = session();
+        handle(
+            &mut s,
+            &request(r#"{"method":"apply","params":{"step":"construct-num 3"}}"#),
+        );
+        let before = s.clone();
+        let out = handle(&mut s, &request(r#"{"method":"version"}"#));
+        assert_eq!(out.value.get("applied").unwrap().as_bool(), Some(false));
+        assert_eq!(
+            out.value
+                .get("state")
+                .unwrap()
+                .get("render")
+                .unwrap()
+                .as_str(),
+            Some("3")
+        );
+        assert_eq!(before, s);
+    }
+
+    #[test]
+    fn the_version_method_and_the_help_method_agree_on_the_protocol_version() {
+        let mut s = session();
+        let version = handle(&mut s, &request(r#"{"method":"version"}"#));
+        let help = handle(&mut s, &request(r#"{"method":"help"}"#));
+        assert_eq!(
+            version.value.get("protocol_version"),
+            help.value.get("protocol_version")
+        );
+    }
+
+    #[test]
+    fn the_protocol_version_string_is_the_major_number_alone() {
+        assert_eq!(PROTOCOL_VERSION, PROTOCOL_VERSION_MAJOR.to_string());
+    }
+
+    #[test]
+    fn every_advertised_method_is_answered_rather_than_unknown() {
+        let mut s = session();
+        let help = handle(&mut s, &request(r#"{"method":"help"}"#));
+        let advertised: Vec<String> = help
+            .value
+            .get("methods")
+            .and_then(Json::as_arr)
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.as_str())
+            .map(str::to_string)
+            .collect();
+        assert_eq!(advertised, METHODS.to_vec());
+        for method in METHODS {
+            let mut fresh = session();
+            let out = handle(&mut fresh, &request(&format!(r#"{{"method":"{method}"}}"#)));
+            let complaint = out
+                .value
+                .get("error")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_string();
+            assert!(
+                !complaint.starts_with("unknown method"),
+                "`{method}` is advertised but not handled"
+            );
+        }
     }
 
     #[test]

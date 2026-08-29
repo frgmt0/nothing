@@ -2190,3 +2190,171 @@ so it falls through to `syn` — `is_well_typed` on a list costs O(n²) and
 takes two minutes on 40,000 cells. That is why the CLI deep tests use 5,000
 cells and not 50,000: the ceiling there is the type-checker's complexity, not
 the stack. It is a real defect and it is untouched by this change.
+
+### 2026-08-29 — `.n` files live inside ordinary git, through three drivers
+
+Phase B5 asks that `.n` files diff and merge inside normal git workflows.
+A `nothing` document is binary, so out of the box every concurrent change
+conflicts and no change is legible in review. Three commands fix that, and
+the split between them is the decision.
+
+**`nothing merge-driver %O %A %B %L %P`** decodes all three sides, runs
+`merge_documents`, and on a clean merge writes the result over `%A` — the
+file git reads — and exits 0. Three sub-decisions inside it:
+
+- **A conflict leaves `%A` exactly as git wrote it and exits 1.** The
+  alternative — writing a partially merged tree — was rejected: there is no
+  honest way to put `<<<<<<<` in a document with no text, and a half-merged
+  tree that still had to be well-typed would silently discard one side's
+  edits. Leaving the *ours* blob in place keeps all three stages available
+  in the index (`git show :1:`, `:2:`, `:3:`), which is what
+  `nothing merge <base> <a> <b>` needs to re-report the conflict outside the
+  merge.
+- **The driver refuses to write a result that is not well-typed.** It has
+  never been observed to happen — the merge is proven to preserve
+  well-typedness — but a merge driver is the one place where a bug would
+  write an invalid program to disk under a tool that reports success. The
+  check costs one typecheck per merge and makes the failure mode a conflict
+  instead of a corrupt file.
+- **The merged document gets a fresh, empty action log.** A merge is not a
+  sequence of edits by one author, so there is no honest log to carry
+  forward; concatenating the two branches' logs would claim a history that
+  never happened. From the merge commit on, the history lives in git.
+
+**`nothing textconv` and `nothing diff-driver` are both provided**, rather
+than picking one, because git treats them differently and neither dominates.
+`textconv` diffs a rendering, so it behaves like git everywhere — `git
+log -p`, `git show`, `-U`, `--word-diff` — and is the documented default.
+`diff.<name>.command` replaces the whole diff machinery: it can print the
+actual typed `Operation`s the structural diff recovered, which is what the
+spec's "typed-operation diff" asks for and what the merge engine actually
+sees, but it ignores `-U` and `git log -p` skips it without `--ext-diff`.
+Shipping only `textconv` would have meant the phrase "typed-operation diff"
+was satisfied by a text diff of a projection; shipping only the external
+driver would have broken `git log -p`. GIT.md states the tradeoff in a table
+rather than hiding it.
+
+**The textconv rendering is deliberately lossy and says so.** It carries no
+hole ids, no action log and no raw ids, so no tool can reconstruct a
+document from it and `git apply` cannot consume it. That is the honest
+shape for a projection: making it round-trippable would have meant inventing
+a text serialisation, which is a parser, which the project does not have.
+
+Rejected: a smudge/clean filter pair storing `.n` files as text in the
+object database. It would make git diff and merge them natively, and it is
+the standard trick — but it puts a parser on the checkout path, which is the
+one thing the project does not permit. The whole point is that the tree is
+the program.
+
+### 2026-08-29 — Protocol v1: the version is the major number, frozen
+
+The protocol is frozen at v1. `protocol_version` stays the string `"1"` and
+means the **major** version alone, so a client that compares it to `"1"` is
+correct for the whole life of v1. `protocol_major` and `protocol_minor`
+carry the same number as integers, so a client can require a feature added
+later without parsing a string. `implementation_version` is the crate
+version and is explicitly *not* part of the contract.
+
+Rejected: making the string `"1.0"` and bumping it (forces every client to
+write a version parser to answer "is this v1?", and `help` already ships
+`"1"`, so the change would itself break the field the freeze exists to
+protect); a nested `{"major":1,"minor":0}` object (changes a field's JSON
+type — exactly the class of change v1 forbids, committed in the same change
+that declares the freeze); major-only with no minor (leaves the additive
+lane with no observable expression, so clients can only feature-detect by
+probing).
+
+**`version` still carries `state`.** The tempting reading of "a cheap
+handshake method" is to strip `state` off it. That was rejected: `state` on
+every response is the protocol's oldest documented invariant, and making
+`version` the single exception forces every client into a special case at
+exactly the handshake. `version` is cheap in the way that matters — it omits
+`help`'s multi-kilobyte step grammar and method list.
+
+**The compatibility test pins shapes, not values.** Ids, timestamps and hole
+ids are freshly generated every run, so pinning values would pin noise. Each
+fixture records a sorted `path: type` line per JSON path; array elements all
+extend the path with `[]` and have their types unioned, so array length and
+element order cannot move the shape. The comparison is deliberately
+asymmetric — every pinned path must still be present with a compatible type,
+while a new path is printed as an allowed addition and does not fail — which
+is what makes additive changes pass and breaking changes fail. Two further
+tests stop the fixtures rotting behind that leniency: every method in
+`METHODS` must have a fixture, and the fixture directory must hold exactly
+the pinned cases.
+
+### 2026-08-29 — The MCP server translates; it does not reimplement
+
+`nothing mcp` speaks JSON-RPC 2.0 over stdio to any MCP host. The decision
+that matters is that it owns **no editor semantics**: every tool builds an
+agent-protocol request and hands it to `protocol::handle` with a real
+`AgentSession`. A second implementation of "what does `construct-lam` do at
+this cursor" is exactly the kind of drift the full-thread rule exists to
+prevent, and the protocol is already the tested surface.
+
+The JSON-RPC layer is hand-rolled on the existing `agentapi::json`. An MCP
+SDK would have brought a dependency tree, an async runtime and a JSON
+library into a workspace that has none of those, to save perhaps two hundred
+lines of dispatch. The protocol is small enough that honesty is cheaper than
+a framework: `initialize` negotiates a version it actually supports, a
+message with no `id` is a notification and gets no reply, a failing tool
+returns `isError: true` in the result rather than a JSON-RPC error, and
+JSON-RPC errors are reserved for protocol-level failures.
+
+**`run` captures output instead of printing it.** Under MCP, stdout *is* the
+JSON-RPC channel, so a program's `print` writing to it would corrupt the
+stream. The `Io` used here collects lines into the tool result and returns
+`None` for `read_line`, and a test asserts every stdout line the server
+emits is valid JSON-RPC. The shared run and check logic was factored out of
+`run_cmd.rs` and `check.rs` rather than copied, so the CLI and the MCP tool
+cannot disagree about what "well-typed" or "out of fuel" means.
+
+**The session transcript the spec asks for is not included, and is marked
+HUMAN-REQUIRED.** An agent running inside Claude Code cannot start a second
+Claude Code session against its own host and record it. `bench/MCP.md` and
+`bench/agent-transcripts/mcp-session.md` say so plainly and give the
+maintainer the steps; the worked example in MCP.md is labelled as a scripted
+run, not a conversation. Writing a plausible transcript would have closed
+the checkbox and broken the honesty guard, which is the more expensive loss.
+
+### 2026-08-29 — The post-B2 agent benchmark: the baseline won again
+
+Second run, 32 new tasks on programs using strings, lists, records and
+`match`, 385 real model calls. Numbers and failure-mode analysis are in
+`bench/AGENT.md`. The verdict: **the text baseline won again** — 0 invalid
+edits against the protocol's 9, and more targets reached. The one number
+that moved the protocol's way is its own, 11.4 % → 2.9 %, on programs five
+times the size.
+
+Decisions taken while building it, recorded so they are not relitigated:
+
+- **Condition B kept its one-shot form; B2 was added beside it.** Condition
+  A was given an interactive loop this run, and a loop is a large advantage;
+  without one for the baseline the comparison would be rigged. But
+  *replacing* B would have deleted the only column comparable to the
+  2026-08-28 table, and it is a change to the measuring instrument made
+  after seeing which way the numbers went. Adding an arm settles fairness
+  without touching the old one. It mattered: B2 reached 31/32, better than
+  B's 30/32, so B2 is the arm the protocol has to beat.
+- **A's step cap is 30, B2's turn cap is 5.** The units differ — one B2 turn
+  rewrites the whole program, one A step moves the cursor or builds a node.
+  Equalising *calls* would have handicapped A; the caps equalise chances to
+  get the program right. B2 never came close to its cap (33 calls for 32
+  tasks); A hit its on 4 tasks.
+- **The default task set stays `original`.** `tasks()` is byte-identical to
+  its previous form and the legacy prompt grammar is pinned in a constant
+  with a test, so the 2026-08-28 table stays reproducible.
+- **The baseline's syntax legend is test-pinned.** Every example round-trips
+  through `core::render`, and a test asserts full post-B2 coverage, so a
+  baseline "syntax error" cannot be an artefact of showing the model a
+  syntax the renderer does not produce. The previous legend literally said
+  "no strings, no lists", which at this scale would have been a strawman.
+- **`ill_typed_steps` and `type_errors` stay separate columns.** The first
+  is A steps leaving an ill-typed program — 0 out of 320, by construction,
+  which is the protocol's whole claim. The second is B/B2 replies the
+  typechecker rejects. Merging them would muddy the one clean result.
+- **Results are collected by task index, not completion order**, so the
+  10-worker parallelism is a pure wall-clock knob and the transcript is
+  byte-identical regardless of worker count. The transcript is flushed after
+  every task: an earlier 28-of-32 run was lost entirely because the harness
+  only wrote at the end.

@@ -340,4 +340,110 @@ Only `nothing run` performs one.
 - `nothing run`, `nothing check` and `nothing edit` all put the standard
   library in scope; `nothing check` reports how much of it is there.
 
+## Phase B5 — tooling that meets people where they are
+
+### Added
+
+- **`.n` files diff and merge inside ordinary git.** Three new subcommands
+  and a documented recipe in the new **`GIT.md`**:
+  - `nothing merge-driver <base> <ours> <theirs> [<marker-size>] [<path>]`
+    is a real git merge driver (`merge.nothing.driver`). It decodes all
+    three sides, runs the Phase 9 structural three-way merge over them —
+    name table and doc table included — checks the result is well-typed with
+    the standard library in scope, writes it back over `%A` and exits 0. A
+    conflict prints every conflict on stderr, leaves `%A` as git wrote it,
+    and exits 1; so does an undecodable file or an ill-typed result. It
+    never writes an ill-typed document and never panics on a garbled blob.
+  - `nothing textconv <file>` is git's `textconv` hook
+    (`diff.nothing.textconv`): a stable, deterministic structural rendering
+    — one definition at a time, name and type, doc line, then the body one
+    syntactic group per line — so `git diff`, `git show` and `git log -p`
+    show ordinary hunks instead of `Binary files ... differ`.
+  - `nothing diff-driver` is git's external diff command
+    (`diff.nothing.command`): the typed `Operation`s the structural diff
+    recovered, in three ordered sections (`names`, `documentation`,
+    `definitions`), with added/removed/renamed/re-annotated/moved
+    definitions named and each edited one followed by a line per operation.
+    Handles the seven-argument form, the nine-argument rename form, the
+    one-argument unmerged form, and a `/dev/null` or undecodable side.
+- **`cli/tests/git_integration.rs`** drives real `git` in a scratch
+  repository on every `cargo test`: the same merge conflicts *without* the
+  driver and succeeds *with* it (so the test cannot pass vacuously),
+  disjoint edits inside one definition merge, a rename against a body edit
+  merges, an addition against an edit merges, two edits to the same node
+  still conflict, `git log -p` shows the structural rendering, and the
+  external driver prints typed operations under `--ext-diff`. It skips
+  rather than fails when `git` is absent. `cli/tests/deep_programs.rs`
+  gained small-main-stack cases for `textconv` and `diff-driver`.
+- **The agent protocol is frozen at version 1.** A new `version` method
+  answers `protocol_version` (the major number as a string), `protocol_major`
+  and `protocol_minor` as integers, and `implementation_version` for the
+  build. `agentapi/PROTOCOL.md` gained a "Protocol version 1" section
+  stating what v1 guarantees and which changes are additive versus breaking,
+  and was brought back in line with what the handler actually emits — the
+  method table was missing `stdlib` and `move_to_hole`, and the `state` and
+  `hole_context` examples were missing eleven fields between them.
+- **A backwards-compatibility test that fails on any breaking change.**
+  `agentapi/tests/protocol_v1_compat.rs` drives the real `protocol::handle`
+  with a real `AgentSession` over 22 golden fixtures in
+  `agentapi/fixtures/protocol/v1/` — one per method in `METHODS`, plus five
+  error shapes. Fixtures pin the *shape* (a sorted `path: type` line per JSON
+  path, array elements unioned) rather than values, since ids and timestamps
+  are freshly generated. A removed path or a changed type fails and names
+  itself; an added path is reported as an allowed additive change. Two
+  further tests stop the fixtures rotting: every advertised method must have
+  a fixture, and the directory must hold exactly the pinned cases.
+  `NOTHING_UPDATE_FIXTURES=1` regenerates them.
+- **`nothing mcp` — an MCP server over stdio.** JSON-RPC 2.0, hand-rolled on
+  the existing `agentapi::json`, no new dependencies: `initialize` (protocol
+  versions `2025-06-18`, `2025-03-26`, `2024-11-05`), `tools/list`,
+  `tools/call`, `ping`, and notifications answered with silence as the spec
+  requires. Fifteen tools mirror the agent protocol — `get_state`,
+  `get_projection`, `hole_context`, `apply_action`, `apply_actions`,
+  `save_document`, `load_document`, `typecheck`, `run`, `stdlib`,
+  `action_grammar`, `undo`, `redo`, `reset`, `move_to_hole` — every one of
+  them routed through `protocol::handle`, so the MCP layer owns no editor
+  semantics of its own. A failing tool returns `isError: true` in the
+  result; JSON-RPC errors are reserved for protocol-level failures.
+- **`cli/tests/mcp.rs`** speaks MCP over stdio to the spawned binary: the
+  handshake, that `notifications/initialized` produces no reply, the tool
+  list, building a program through tool calls and saving it, reloading it in
+  a *fresh* server process and confirming it is well-typed and hole-free,
+  that `run` does not corrupt the stream, and that malformed lines and
+  unknown tools are survivable.
+- **`bench/MCP.md`** documents the server, the tool reference, the
+  `claude mcp add` command and the raw JSON config, with a worked example
+  labelled as the scripted run it is.
+- **A second agent benchmark, at post-B2 scale.** `bench/AGENT.md` gained a
+  dated 2026-08-29 section: 32 new tasks over programs using strings, lists,
+  records and `match` (targets averaging 90 rendered characters against 17
+  for the first set), with condition A driven as an interactive
+  one-action-per-call loop and a third arm B2 giving the text baseline the
+  same interactive treatment. 385 real model calls, transcript in
+  `bench/agent-transcripts/post-b2-invalid-edit-rate.jsonl`.
+  **The text baseline won again**: 0 invalid edits against the protocol's 9,
+  and 30/32 and 31/32 targets against 23/32. The protocol's own rate fell
+  from 11.4 % to 2.9 % on programs five times the size, and 0 of its 320
+  steps left an ill-typed program. Reported as it came out.
+
+### Changed
+
+- `nothing merge -o` no longer drops the doc table. It built its
+  `DocVersion`s with `DocVersion::new` and wrote the result with
+  `Document::from_doc`, both of which discard doc lines; it now uses
+  `DocVersion::documented` and `Document::documented`.
+- The run and check logic shared by `nothing run`, `nothing check` and the
+  MCP tools was factored into `run_cmd::perform_or_evaluate` and
+  `check::check_document` so the CLI and the MCP server cannot disagree
+  about what "well-typed" or "out of fuel" means.
+
+### Human-required
+
+- `bench/agent-transcripts/mcp-session.md` is a marked placeholder. Phase
+  B5's done-when for the MCP server asks for a real Claude Code session
+  transcript; an agent cannot start a Claude Code session against its own
+  host, and inventing one would be a fabrication. `bench/MCP.md` carries the
+  step-by-step instructions for a maintainer to run it and commit the
+  result.
+
 [Unreleased]: https://github.com/frgmt0/nothing

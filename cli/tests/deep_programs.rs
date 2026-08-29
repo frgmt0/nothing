@@ -97,6 +97,37 @@ fn nothing_run_evaluates_a_long_list_with_a_small_main_stack() {
 }
 
 #[test]
+fn nothing_textconv_renders_a_long_list_with_a_small_main_stack() {
+    on_a_ci_sized_stack(|| {
+        let path = write_long_list("textconv-small-stack.nothing", 5_000);
+        let (code, stdout) = run_with_a_small_main_stack(&["textconv", path.to_str().unwrap()]);
+        assert_eq!(code, 0, "stdout: {}", &stdout[..stdout.len().min(80)]);
+        assert!(stdout.starts_with("def main : "), "stdout: {stdout:.80}");
+        assert!(stdout.contains("4999 :: nil"), "stdout: {stdout:.80}");
+    });
+}
+
+#[test]
+fn nothing_diff_driver_compares_two_long_lists_with_a_small_main_stack() {
+    on_a_ci_sized_stack(|| {
+        let old = write_long_list("diff-driver-old.nothing", 5_000);
+        let new = write_long_list("diff-driver-new.nothing", 5_001);
+        let (code, stdout) = run_with_a_small_main_stack(&[
+            "diff-driver",
+            "long.n",
+            old.to_str().unwrap(),
+            "0000000",
+            "100644",
+            new.to_str().unwrap(),
+            "0000000",
+            "100644",
+        ]);
+        assert_eq!(code, 0, "stdout: {}", &stdout[..stdout.len().min(80)]);
+        assert!(stdout.contains("definition `main` edited"), "{stdout:.200}");
+    });
+}
+
+#[test]
 fn nothing_check_type_checks_a_long_list_with_a_small_main_stack() {
     on_a_ci_sized_stack(|| {
         let path = write_long_list("check-small-stack.nothing", 5_000);

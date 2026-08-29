@@ -2,7 +2,9 @@ mod check;
 mod doc_cmd;
 mod edit;
 mod fileio;
+mod git_cmd;
 mod holes;
+mod mcp;
 mod merge_cmd;
 mod protocol_cmd;
 mod repl_cmd;
@@ -23,7 +25,11 @@ Commands:
   doc [<file>]           render a reference for <file>, or for the stdlib
   repl                   the action-name REPL
   protocol               speak the JSON agent protocol over stdio
+  mcp                    serve the editor to MCP agent hosts over stdio
   merge <base> <a> <b>   three-way structural merge
+  merge-driver <files>   git merge driver — see GIT.md
+  textconv <file>        structural rendering, for git diff
+  diff-driver <args>     git external diff of typed operations
 
   --version, -V          print the version and exit
   --help, -h             print this help and exit
@@ -74,7 +80,17 @@ fn dispatch(args: &[String]) -> u8 {
             }
             protocol_cmd::run(rest) as u8
         }
+        "mcp" => {
+            if wants_help(rest) {
+                println!("{}", mcp::HELP);
+                return 0;
+            }
+            mcp::run(rest) as u8
+        }
         "merge" => merge_command(rest),
+        "merge-driver" => merge_driver_command(rest),
+        "textconv" => run_file_command(rest, git_cmd::TEXTCONV_HELP, git_cmd::run_textconv),
+        "diff-driver" => diff_driver_command(rest),
         other => {
             eprintln!("error: unknown command `{other}`");
             eprintln!("{TOP_HELP}");
@@ -217,4 +233,32 @@ fn merge_command(args: &[String]) -> u8 {
         std::path::Path::new(&positional[2]),
         out.as_deref(),
     ) as u8
+}
+
+fn merge_driver_command(args: &[String]) -> u8 {
+    if wants_help(args) {
+        println!("{}", git_cmd::MERGE_DRIVER_HELP);
+        return 0;
+    }
+
+    if args.len() < 3 {
+        eprintln!("error: expected <base> <ours> <theirs>");
+        eprintln!("{}", git_cmd::MERGE_DRIVER_HELP);
+        return 1;
+    }
+
+    git_cmd::run_merge_driver(
+        std::path::Path::new(&args[0]),
+        std::path::Path::new(&args[1]),
+        std::path::Path::new(&args[2]),
+        args.get(4).map(String::as_str),
+    ) as u8
+}
+
+fn diff_driver_command(args: &[String]) -> u8 {
+    if wants_help(args) {
+        println!("{}", git_cmd::DIFF_DRIVER_HELP);
+        return 0;
+    }
+    git_cmd::run_diff_driver(args) as u8
 }
