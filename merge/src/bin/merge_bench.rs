@@ -5,7 +5,7 @@ use nothing_merge::merge3::merge;
 use nothing_merge::scenarios::all;
 use nothing_merge::text::to_text;
 
-const DATE: &str = "2026-08-28";
+const DATE: &str = "2026-08-29";
 
 fn default_output() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

@@ -40,6 +40,19 @@ fn ty_json(ty: &Ty) -> String {
             ty_json(b)
         ),
         Ty::List(elem) => format!("{{\"ty\":\"List\",\"elem\":{}}}", ty_json(elem)),
+        Ty::Record(fields) => {
+            let items: Vec<String> = fields
+                .iter()
+                .map(|(id, ty)| {
+                    format!(
+                        "{{\"field\":{},\"ty\":{}}}",
+                        escape(&id.to_string()),
+                        ty_json(ty)
+                    )
+                })
+                .collect();
+            format!("{{\"ty\":\"Record\",\"fields\":[{}]}}", items.join(","))
+        }
     }
 }
 
@@ -117,6 +130,24 @@ fn exp_json(exp: &Exp) -> String {
             exp_json(list),
             exp_json(init),
             exp_json(step)
+        ),
+        Exp::Record(fields) => {
+            let items: Vec<String> = fields
+                .iter()
+                .map(|(id, value)| {
+                    format!(
+                        "{{\"field\":{},\"value\":{}}}",
+                        escape(&id.to_string()),
+                        exp_json(value)
+                    )
+                })
+                .collect();
+            format!("{{\"exp\":\"Record\",\"fields\":[{}]}}", items.join(","))
+        }
+        Exp::Field(subject, id) => format!(
+            "{{\"exp\":\"Field\",\"subject\":{},\"field\":{}}}",
+            exp_json(subject),
+            escape(&id.to_string())
         ),
         Exp::EmptyHole(h) => format!(
             "{{\"exp\":\"EmptyHole\",\"hole\":{}}}",
@@ -197,6 +228,23 @@ fn action_json(action: &Action) -> String {
         Action::MovePrevDef => "{\"action\":\"MovePrevDef\"}".to_string(),
         Action::MoveToDef(id) => format!(
             "{{\"action\":\"MoveToDef\",\"id\":{}}}",
+            escape(&id.to_string())
+        ),
+        Action::ConstructRecord => "{\"action\":\"ConstructRecord\"}".to_string(),
+        Action::ConstructField(id) => format!(
+            "{{\"action\":\"ConstructField\",\"field\":{}}}",
+            escape(&id.to_string())
+        ),
+        Action::AddField => "{\"action\":\"AddField\"}".to_string(),
+        Action::RemoveField => "{\"action\":\"RemoveField\"}".to_string(),
+        Action::MoveFieldPrev => "{\"action\":\"MoveFieldPrev\"}".to_string(),
+        Action::MoveFieldNext => "{\"action\":\"MoveFieldNext\"}".to_string(),
+        Action::SetField(id) => format!(
+            "{{\"action\":\"SetField\",\"field\":{}}}",
+            escape(&id.to_string())
+        ),
+        Action::SetFieldId(id) => format!(
+            "{{\"action\":\"SetFieldId\",\"field\":{}}}",
             escape(&id.to_string())
         ),
     }

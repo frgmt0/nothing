@@ -1,6 +1,6 @@
 use nothing_action::cursor_render::{CURSOR_CLOSE, CURSOR_OPEN};
 use nothing_action::zipper::{Frame, Zipper};
-use nothing_core::exp::{Exp, Op, Side};
+use nothing_core::exp::{Exp, Id, Op, Side};
 use nothing_core::names::NameTable;
 use nothing_core::render::quote_str;
 use nothing_core::ty::Ty;
@@ -49,6 +49,28 @@ pub fn phrase(exp: &Exp, names: &NameTable) -> String {
             ty_phrase(ty),
             phrase(body, names)
         ),
+        Exp::Record(fields) => {
+            let parts: Vec<String> = fields
+                .iter()
+                .map(|(id, value)| field_phrase(*id, &phrase(value, names), names))
+                .collect();
+            record_phrase(&parts)
+        }
+        Exp::Field(subject, id) => {
+            format!("the {} of {}", names.display(*id), phrase(subject, names))
+        }
+    }
+}
+
+fn field_phrase(id: Id, value: &str, names: &NameTable) -> String {
+    format!("{} set to {value}", names.display(id))
+}
+
+fn record_phrase(parts: &[String]) -> String {
+    match parts.split_last() {
+        None => "a record with no fields".to_string(),
+        Some((last, [])) => format!("a record with {last}"),
+        Some((last, rest)) => format!("a record with {} and {last}", rest.join(", ")),
     }
 }
 
@@ -79,6 +101,11 @@ pub fn ty_phrase(ty: &Ty) -> String {
         Ty::Arrow(a, b) => format!("a function from {} to {}", ty_phrase(a), ty_phrase(b)),
         Ty::Prod(a, b) => format!("a pair of {} and {}", ty_phrase(a), ty_phrase(b)),
         Ty::List(elem) => format!("a list of {}", ty_phrase(elem)),
+        Ty::Record(fields) => match fields.len() {
+            0 => "a record with no fields".to_string(),
+            1 => "a record with 1 field".to_string(),
+            n => format!("a record with {n} fields"),
+        },
     }
 }
 
@@ -139,6 +166,16 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
             phrase(init, names)
         ),
         Frame::NonEmptyHoleBody(_) => format!("(not yet fitting: {child})"),
+        Frame::RecordField(others, index, id) => {
+            let mut parts: Vec<String> = others
+                .iter()
+                .map(|(other, value)| field_phrase(*other, &phrase(value, names), names))
+                .collect();
+            let here = field_phrase(*id, child, names);
+            parts.insert((*index).min(parts.len()), here);
+            record_phrase(&parts)
+        }
+        Frame::FieldSubject(id) => format!("the {} of {child}", names.display(*id)),
     }
 }
 
@@ -341,6 +378,53 @@ mod tests {
             ),
             "combining 1 in front of 2 in front of 3 in front of an empty list, \
              starting from 0, with _00000000"
+        );
+    }
+
+    #[test]
+    fn a_record_reads_by_name() {
+        let mut names = names();
+        let x = nothing_core::exp::Id::from_u128(0x1a);
+        let y = nothing_core::exp::Id::from_u128(0x1b);
+        names.set(x, "x");
+        names.set(y, "y");
+
+        let point = Exp::record([(x, Exp::num(1)), (y, Exp::num(2))]);
+        assert_eq!(
+            phrase(&point, &names),
+            "a record with x set to 1 and y set to 2"
+        );
+        assert_eq!(
+            phrase(&Exp::record([(x, Exp::num(1))]), &names),
+            "a record with x set to 1"
+        );
+        assert_eq!(phrase(&Exp::record([]), &names), "a record with no fields");
+        assert_eq!(
+            phrase(&Exp::field(point.clone(), x), &names),
+            "the x of a record with x set to 1 and y set to 2"
+        );
+        assert_eq!(
+            ty_phrase(&Ty::Record(vec![(x, Ty::Num), (y, Ty::Bool)])),
+            "a record with 2 fields"
+        );
+        assert_eq!(
+            ty_phrase(&Ty::Record(Vec::new())),
+            "a record with no fields"
+        );
+
+        let z = unzip(Exp::field(point, x));
+        let z = z.move_child(0).expect("into the subject");
+        let z = z.move_child(1).expect("into the second field");
+        let marked = render_with_cursor(&z, &names);
+        assert_eq!(
+            marked.replace(CURSOR_OPEN, "").replace(CURSOR_CLOSE, ""),
+            "the x of a record with x set to 1 and y set to 2",
+            "the surrounding prose is rebuilt around whichever field the cursor is in"
+        );
+        assert_eq!(
+            marked,
+            format!("the x of a record with x set to 1 and y set to {CURSOR_OPEN}2{CURSOR_CLOSE}"),
+            "and the cursor is on the field's value, not on the record"
         );
     }
 

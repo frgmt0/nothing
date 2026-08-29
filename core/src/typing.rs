@@ -1,6 +1,13 @@
 use crate::ctx::Ctx;
-use crate::exp::{Exp, Op, Side};
-use crate::ty::{Ty, is_consistent, matched_arrow, matched_list, matched_prod};
+use crate::exp::{Exp, Id, Op, Side};
+use crate::ty::{
+    Ty, is_consistent, matched_arrow, matched_list, matched_prod, matched_record,
+    matched_record_fields,
+};
+
+pub fn fields_are_distinct(ids: &[Id]) -> bool {
+    ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id))
+}
 
 pub fn is_comparable(ty: &Ty) -> bool {
     matches!(ty, Ty::Num | Ty::Bool | Ty::Str | Ty::Hole)
@@ -53,6 +60,14 @@ pub fn join(a: &Ty, b: &Ty) -> Option<Ty> {
             Some(Ty::Prod(Box::new(join(a1, b1)?), Box::new(join(a2, b2)?)))
         }
         (Ty::List(a), Ty::List(b)) => Some(Ty::List(Box::new(join(a, b)?))),
+        (Ty::Record(a), Ty::Record(b)) if a.len() == b.len() => {
+            let mut fields = Vec::with_capacity(a.len());
+            for (id, left) in a {
+                let (_, right) = b.iter().find(|(other, _)| other == id)?;
+                fields.push((*id, join(left, right)?));
+            }
+            Some(Ty::Record(fields))
+        }
         _ => None,
     }
 }
@@ -150,6 +165,23 @@ pub fn syn(ctx: &Ctx, exp: &Exp) -> Option<Ty> {
             }
         }
 
+        Exp::Record(fields) => {
+            let ids: Vec<Id> = fields.iter().map(|(id, _)| *id).collect();
+            if !fields_are_distinct(&ids) {
+                return None;
+            }
+            let mut tys = Vec::with_capacity(fields.len());
+            for (id, e) in fields {
+                tys.push((*id, syn(ctx, e)?));
+            }
+            Some(Ty::Record(tys))
+        }
+
+        Exp::Field(subject, field) => {
+            let subject_ty = syn(ctx, subject)?;
+            matched_record(&subject_ty, *field)
+        }
+
         Exp::EmptyHole(_) => Some(Ty::Hole),
 
         Exp::NonEmptyHole(_, inner) => {
@@ -204,6 +236,20 @@ pub fn ana(ctx: &Ctx, exp: &Exp, ty: &Ty) -> bool {
                 return false;
             };
             ana(ctx, init, ty) && ana(ctx, step, &step_ty(&elem, ty))
+        }
+
+        Exp::Record(fields) => {
+            let ids: Vec<Id> = fields.iter().map(|(id, _)| *id).collect();
+            if !fields_are_distinct(&ids) {
+                return false;
+            }
+            match matched_record_fields(ty, &ids) {
+                Some(expected) => fields
+                    .iter()
+                    .zip(expected.iter())
+                    .all(|((_, e), want)| ana(ctx, e, want)),
+                None => false,
+            }
         }
 
         _ => match syn(ctx, exp) {
@@ -601,5 +647,109 @@ mod tests {
         let body = Exp::var(x());
         assert!(!is_well_typed(&body));
         assert!(is_well_typed(&Exp::let_(x(), Exp::num(1), body)));
+    }
+
+    fn fx() -> Id {
+        Id::from_u128(0xf1)
+    }
+
+    fn fy() -> Id {
+        Id::from_u128(0xf2)
+    }
+
+    fn point() -> Exp {
+        Exp::record([(fx(), Exp::num(1)), (fy(), Exp::str_("here"))])
+    }
+
+    #[test]
+    fn a_record_synthesises_a_record_type_field_by_field() {
+        assert_eq!(
+            syn(&Ctx::empty(), &point()),
+            Some(crate::ty::record([(fx(), Ty::Num), (fy(), Ty::Str)]))
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::record([])),
+            Some(crate::ty::record([]))
+        );
+    }
+
+    #[test]
+    fn the_same_field_twice_in_one_record_is_ill_formed() {
+        let doubled = Exp::record([(fx(), Exp::num(1)), (fx(), Exp::num(2))]);
+        assert_eq!(syn(&Ctx::empty(), &doubled), None);
+        assert!(!ana(&Ctx::empty(), &doubled, &Ty::Hole));
+    }
+
+    #[test]
+    fn a_record_analyses_against_a_record_type_whatever_order_it_is_written_in() {
+        let want = crate::ty::record([(fy(), Ty::Str), (fx(), Ty::Num)]);
+        assert!(ana(&Ctx::empty(), &point(), &want));
+        assert!(ana(&Ctx::empty(), &point(), &Ty::Hole));
+
+        let wrong = crate::ty::record([(fx(), Ty::Bool), (fy(), Ty::Str)]);
+        assert!(!ana(&Ctx::empty(), &point(), &wrong));
+        assert!(!ana(&Ctx::empty(), &point(), &Ty::Num));
+    }
+
+    #[test]
+    fn projecting_a_field_reads_the_records_own_type() {
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::field(point(), fx())),
+            Some(Ty::Num)
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::field(point(), fy())),
+            Some(Ty::Str)
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::field(point(), Id::from_u128(0xf9))),
+            None,
+            "a field the record does not have has no type"
+        );
+    }
+
+    #[test]
+    fn projecting_a_field_of_an_unknown_record_fails_open() {
+        let p = Id::from_u128(0xa1);
+        let f = Exp::lam(p, Ty::Hole, Exp::field(Exp::var(p), fx()));
+        assert_eq!(
+            syn(&Ctx::empty(), &f),
+            Some(arrow(Ty::Hole, Ty::Hole)),
+            "a function over records is writable without a record annotation"
+        );
+        assert!(is_well_typed(&f));
+
+        let hole = Exp::field(Exp::empty_hole(h(3)), fx());
+        assert_eq!(syn(&Ctx::empty(), &hole), Some(Ty::Hole));
+    }
+
+    #[test]
+    fn a_record_with_a_hole_in_one_field_still_projects_the_others() {
+        let partial = Exp::record([(fx(), Exp::num(1)), (fy(), Exp::empty_hole(h(4)))]);
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::field(partial.clone(), fx())),
+            Some(Ty::Num)
+        );
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::field(partial, fy())),
+            Some(Ty::Hole)
+        );
+    }
+
+    #[test]
+    fn a_record_joins_field_wise_across_the_branches_of_an_if() {
+        let then = Exp::record([(fx(), Exp::num(1)), (fy(), Exp::empty_hole(h(5)))]);
+        let else_ = Exp::record([(fx(), Exp::empty_hole(h(6))), (fy(), Exp::str_("x"))]);
+        assert_eq!(
+            syn(&Ctx::empty(), &Exp::if_(Exp::bool_(true), then, else_)),
+            Some(crate::ty::record([(fx(), Ty::Num), (fy(), Ty::Str)]))
+        );
+
+        let mismatched = Exp::if_(
+            Exp::bool_(true),
+            Exp::record([(fx(), Exp::num(1))]),
+            Exp::record([(fx(), Exp::bool_(true))]),
+        );
+        assert_eq!(syn(&Ctx::empty(), &mismatched), None);
     }
 }

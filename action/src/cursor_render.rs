@@ -1,8 +1,8 @@
 use nothing_core::exp::Side;
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    CONS_STR, FOLD_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec, op_prec,
-    op_str, render_id, render_prec,
+    CONS_STR, FIELD_STR, FOLD_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec,
+    op_prec, op_str, render_id, render_prec, render_ty,
 };
 
 use crate::zipper::{Frame, Zipper};
@@ -28,6 +28,8 @@ fn min_prec_for(frame: &Frame) -> Prec {
         Frame::ConsHead(..) => PREC_CONS + 1,
         Frame::ConsTail(..) => PREC_CONS,
         Frame::FoldList(..) | Frame::FoldInit(..) | Frame::FoldStep(..) => PREC_ATOM,
+        Frame::RecordField(..) => PREC_BINDER,
+        Frame::FieldSubject(..) => PREC_ATOM,
         Frame::NonEmptyHoleBody(..) => PREC_BINDER,
     }
 }
@@ -48,13 +50,21 @@ fn own_prec(frame: &Frame) -> Prec {
         | Frame::FoldStep(..) => PREC_APP,
         Frame::BinOpLeft(op, _) | Frame::BinOpRight(op, _) => op_prec(*op),
         Frame::ConsHead(..) | Frame::ConsTail(..) => PREC_CONS,
-        Frame::PairFst(..) | Frame::PairSnd(..) | Frame::NonEmptyHoleBody(..) => PREC_ATOM,
+        Frame::PairFst(..)
+        | Frame::PairSnd(..)
+        | Frame::RecordField(..)
+        | Frame::FieldSubject(..)
+        | Frame::NonEmptyHoleBody(..) => PREC_ATOM,
     }
 }
 
 fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
     match frame {
-        Frame::LamBody(id, ty) => format!("λ{}:{}. {child}", render_id(*id, names), ty),
+        Frame::LamBody(id, ty) => format!(
+            "λ{}:{}. {child}",
+            render_id(*id, names),
+            render_ty(ty, names)
+        ),
         Frame::ApFun(arg) => format!("{child} {}", render_prec(arg, PREC_ATOM, names)),
         Frame::ApArg(fun) => format!("{} {child}", render_prec(fun, PREC_APP, names)),
         Frame::BinOpLeft(op, rhs) => {
@@ -127,6 +137,24 @@ fn assemble(frame: &Frame, child: &str, names: &NameTable) -> String {
             render_prec(list, PREC_ATOM, names),
             render_prec(init, PREC_ATOM, names)
         ),
+        Frame::RecordField(others, index, id) => {
+            let mut fields: Vec<String> = Vec::with_capacity(others.len() + 1);
+            for (i, (other, e)) in others.iter().enumerate() {
+                if i == *index {
+                    fields.push(format!("{} = {child}", render_id(*id, names)));
+                }
+                fields.push(format!(
+                    "{} = {}",
+                    render_id(*other, names),
+                    render_prec(e, PREC_BINDER, names)
+                ));
+            }
+            if *index >= others.len() {
+                fields.push(format!("{} = {child}", render_id(*id, names)));
+            }
+            format!("{{{}}}", fields.join(", "))
+        }
+        Frame::FieldSubject(id) => format!("{child}{FIELD_STR}{}", render_id(*id, names)),
         Frame::NonEmptyHoleBody(_) => format!("⦇{child}⦈"),
     }
 }

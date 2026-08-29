@@ -23,6 +23,8 @@ pub enum Frame {
     FoldList(Exp, Exp),
     FoldInit(Exp, Exp),
     FoldStep(Exp, Exp),
+    RecordField(Vec<(Id, Exp)>, usize, Id),
+    FieldSubject(Id),
     NonEmptyHoleBody(HoleId),
 }
 
@@ -53,11 +55,20 @@ impl Frame {
             Frame::FoldStep(list, init) => {
                 Exp::Fold(Box::new(list), Box::new(init), Box::new(focus))
             }
+            Frame::RecordField(others, index, id) => {
+                let mut fields = others;
+                fields.insert(index, (id, focus));
+                Exp::Record(fields)
+            }
+            Frame::FieldSubject(id) => Exp::Field(Box::new(focus), id),
             Frame::NonEmptyHoleBody(h) => Exp::NonEmptyHole(h, Box::new(focus)),
         }
     }
 
     pub fn child_index(&self) -> usize {
+        if let Frame::RecordField(_, index, _) = self {
+            return *index;
+        }
         match self {
             Frame::LamBody(..)
             | Frame::ApFun(..)
@@ -68,6 +79,8 @@ impl Frame {
             | Frame::ProjBody(..)
             | Frame::ConsHead(..)
             | Frame::FoldList(..)
+            | Frame::FieldSubject(..)
+            | Frame::RecordField(..)
             | Frame::NonEmptyHoleBody(..) => 0,
             Frame::ApArg(..)
             | Frame::BinOpRight(..)
@@ -81,8 +94,15 @@ impl Frame {
     }
 
     pub fn parent_arity(&self) -> usize {
+        if let Frame::RecordField(others, _, _) = self {
+            return others.len() + 1;
+        }
         match self {
-            Frame::LamBody(..) | Frame::ProjBody(..) | Frame::NonEmptyHoleBody(..) => 1,
+            Frame::LamBody(..)
+            | Frame::ProjBody(..)
+            | Frame::FieldSubject(..)
+            | Frame::RecordField(..)
+            | Frame::NonEmptyHoleBody(..) => 1,
             Frame::ApFun(..)
             | Frame::ApArg(..)
             | Frame::BinOpLeft(..)
@@ -106,7 +126,8 @@ impl Frame {
 pub fn arity(exp: &Exp) -> usize {
     match exp {
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 0,
-        Exp::Lam(..) | Exp::Proj(..) | Exp::NonEmptyHole(..) => 1,
+        Exp::Record(fields) => fields.len(),
+        Exp::Lam(..) | Exp::Proj(..) | Exp::Field(..) | Exp::NonEmptyHole(..) => 1,
         Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
         Exp::If(..) | Exp::Fold(..) => 3,
     }
@@ -216,6 +237,11 @@ impl Zipper {
                 _ => (Frame::FoldStep(*list, *init), *step),
             },
             Exp::Proj(side, inner) => (Frame::ProjBody(side), *inner),
+            Exp::Field(subject, id) => (Frame::FieldSubject(id), *subject),
+            Exp::Record(mut fields) => {
+                let (id, child) = fields.remove(n);
+                (Frame::RecordField(fields, n, id), child)
+            }
             Exp::NonEmptyHole(h, inner) => (Frame::NonEmptyHoleBody(h), *inner),
 
             Exp::Var(_)
@@ -274,6 +300,20 @@ impl Zipper {
             })
             .filter(|id| ctx.lookup(id).is_some())
             .collect()
+    }
+
+    pub fn record_field_id(&self) -> Option<Id> {
+        match self.path.last()? {
+            Frame::RecordField(_, _, id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    pub fn projected_field_id(&self) -> Option<Id> {
+        match &self.focus {
+            Exp::Field(_, id) => Some(*id),
+            _ => None,
+        }
     }
 
     pub fn binder_id(&self) -> Option<Id> {

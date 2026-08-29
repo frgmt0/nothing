@@ -26,6 +26,8 @@ pub enum Value {
     Nil,
     Cons(Box<Value>, Box<Value>),
     Fold(Box<Value>, Box<Value>, Box<Value>),
+    Record(Vec<(Id, Value)>),
+    Field(Box<Value>, Id),
     EmptyHole(HoleId, IncrEnv),
     NonEmptyHole(HoleId, IncrEnv, Box<Value>),
 }
@@ -34,6 +36,7 @@ fn is_fully_reduced(v: &Value) -> bool {
     match v {
         Value::Num(_) | Value::Bool(_) | Value::Str(_) | Value::Closure(..) | Value::Nil => true,
         Value::Pair(a, b) | Value::Cons(a, b) => is_fully_reduced(a) && is_fully_reduced(b),
+        Value::Record(fields) => fields.iter().all(|(_, value)| is_fully_reduced(value)),
         _ => false,
     }
 }
@@ -71,6 +74,13 @@ pub fn value_to_dyn(v: &Value) -> Dyn {
             Box::new(value_to_dyn(init)),
             Box::new(value_to_dyn(step)),
         ),
+        Value::Record(fields) => Dyn::Record(
+            fields
+                .iter()
+                .map(|(id, value)| (*id, value_to_dyn(value)))
+                .collect(),
+        ),
+        Value::Field(subject, id) => Dyn::Field(Box::new(value_to_dyn(subject)), *id),
         Value::EmptyHole(h, env) => Dyn::EmptyHole(*h, env_to_dyn_env(env)),
         Value::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, env_to_dyn_env(env), Box::new(value_to_dyn(inner)))
@@ -103,7 +113,12 @@ fn collect_blocked(v: &Value, out: &mut Vec<Blocked>) {
             collect_blocked(init, out);
             collect_blocked(step, out);
         }
-        Value::Proj(_, inner) => collect_blocked(inner, out),
+        Value::Proj(_, inner) | Value::Field(inner, _) => collect_blocked(inner, out),
+        Value::Record(fields) => {
+            for (_, value) in fields {
+                collect_blocked(value, out);
+            }
+        }
         Value::Var(_)
         | Value::Num(_)
         | Value::Bool(_)
@@ -171,7 +186,12 @@ fn free_vars(exp: &Exp) -> HashSet<Id> {
                 go(t, bound, out);
                 go(e, bound, out);
             }
-            Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => go(e, bound, out),
+            Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => go(e, bound, out),
+            Exp::Record(fields) => {
+                for (_, value) in fields {
+                    go(value, bound, out);
+                }
+            }
             Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {}
         }
     }
@@ -515,6 +535,23 @@ impl IncrEngine {
                     _ => Value::Proj(*side, Box::new(vi)),
                 }
             }
+            Exp::Record(fields) => Value::Record(
+                fields
+                    .iter()
+                    .map(|(id, value)| (*id, self.eval_node(value, env).0))
+                    .collect(),
+            ),
+            Exp::Field(subject, id) => {
+                let (vs, _) = self.eval_node(subject, env);
+                let found = match &vs {
+                    Value::Record(fields) => fields
+                        .iter()
+                        .find(|(f, _)| f == id)
+                        .map(|(_, value)| value.clone()),
+                    _ => None,
+                };
+                found.unwrap_or_else(|| Value::Field(Box::new(vs), *id))
+            }
             Exp::EmptyHole(h) => Value::EmptyHole(*h, env.clone()),
             Exp::NonEmptyHole(h, inner) => {
                 let (vi, _) = self.eval_node(inner, env);
@@ -621,8 +658,14 @@ fn walk_with_table(
             scope.pop();
             next_hash(table, idx)
         }
-        Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => {
+        Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => {
             walk_with_table(e, table, idx, scope, dependents);
+            next_hash(table, idx)
+        }
+        Exp::Record(fields) => {
+            for (_, value) in fields {
+                walk_with_table(value, table, idx, scope, dependents);
+            }
             next_hash(table, idx)
         }
     }

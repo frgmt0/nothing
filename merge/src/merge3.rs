@@ -107,7 +107,7 @@ fn plan(ops: &[Operation]) -> Vec<Planned> {
             effective: op.clone(),
             phase: match op {
                 Operation::Move { .. } => PHASE_MOVE,
-                Operation::MoveBinding { .. } => PHASE_ORDER,
+                Operation::MoveBinding { .. } | Operation::ReorderFields { .. } => PHASE_ORDER,
                 _ => PHASE_PLAIN,
             },
             commuted_with: None,
@@ -267,9 +267,10 @@ fn classify(a: &Operation, b: &Operation) -> ConflictKind {
     match (a, b) {
         (Operation::Rename { .. }, Operation::Rename { .. }) => ConflictKind::CompetingRenames,
         (Operation::SetAnn { .. }, Operation::SetAnn { .. }) => ConflictKind::CompetingAnnotations,
-        (Operation::MoveBinding { .. }, _) | (_, Operation::MoveBinding { .. }) => {
-            ConflictKind::OrderingAgainstRestructure
-        }
+        (Operation::MoveBinding { .. }, _)
+        | (_, Operation::MoveBinding { .. })
+        | (Operation::ReorderFields { .. }, _)
+        | (_, Operation::ReorderFields { .. }) => ConflictKind::OrderingAgainstRestructure,
         (Operation::Move { .. }, _) | (_, Operation::Move { .. }) => ConflictKind::CompetingMoves,
         _ => {
             if a.site() == b.site() {

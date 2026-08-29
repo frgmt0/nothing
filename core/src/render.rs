@@ -2,6 +2,7 @@ use std::fmt::Write as _;
 
 use crate::exp::{Exp, Id, Op, Side};
 use crate::names::NameTable;
+use crate::ty::Ty;
 
 pub type Prec = u8;
 
@@ -14,6 +15,7 @@ pub const PREC_APP: Prec = 5;
 pub const PREC_ATOM: Prec = 6;
 
 pub const CONS_STR: &str = "::";
+pub const FIELD_STR: &str = ".";
 pub const NIL_STR: &str = "nil";
 pub const FOLD_STR: &str = "fold";
 
@@ -54,6 +56,64 @@ pub fn quote_str(s: &str) -> String {
 
 pub fn render_id(id: Id, names: &NameTable) -> String {
     names.display(id)
+}
+
+pub fn render_ty(ty: &Ty, names: &NameTable) -> String {
+    let mut out = String::new();
+    fmt_ty(ty, 0, names, &mut out);
+    out
+}
+
+fn fmt_ty(ty: &Ty, min_prec: u8, names: &NameTable, out: &mut String) {
+    match ty {
+        Ty::Num | Ty::Bool | Ty::Str | Ty::Hole => write!(out, "{ty}").unwrap(),
+        Ty::Arrow(a, b) => {
+            let parens = min_prec > 0;
+            if parens {
+                out.push('(');
+            }
+            fmt_ty(a, 1, names, out);
+            out.push_str(" -> ");
+            fmt_ty(b, 0, names, out);
+            if parens {
+                out.push(')');
+            }
+        }
+        Ty::Prod(a, b) => {
+            let parens = min_prec > 1;
+            if parens {
+                out.push('(');
+            }
+            fmt_ty(a, 2, names, out);
+            out.push_str(" * ");
+            fmt_ty(b, 2, names, out);
+            if parens {
+                out.push(')');
+            }
+        }
+        Ty::List(elem) => {
+            let parens = min_prec > 2;
+            if parens {
+                out.push('(');
+            }
+            out.push_str("List ");
+            fmt_ty(elem, 3, names, out);
+            if parens {
+                out.push(')');
+            }
+        }
+        Ty::Record(fields) => {
+            out.push('{');
+            for (i, (id, field_ty)) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write!(out, "{}: ", render_id(*id, names)).unwrap();
+                fmt_ty(field_ty, 0, names, out);
+            }
+            out.push('}');
+        }
+    }
 }
 
 pub fn render(exp: &Exp, names: &NameTable) -> String {
@@ -158,9 +218,25 @@ fn fmt_prec(exp: &Exp, min_prec: Prec, names: &NameTable, out: &mut String) {
             fmt_prec(body, PREC_BINDER, names, out);
         }
         Exp::Lam(id, ty, body) => {
-            write!(out, "λ{}:{}. ", render_id(*id, names), ty).unwrap();
+            write!(out, "λ{}:{}. ", render_id(*id, names), render_ty(ty, names)).unwrap();
 
             fmt_prec(body, PREC_BINDER, names, out);
+        }
+        Exp::Record(fields) => {
+            out.push('{');
+            for (i, (id, e)) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write!(out, "{} = ", render_id(*id, names)).unwrap();
+                fmt_prec(e, PREC_BINDER, names, out);
+            }
+            out.push('}');
+        }
+        Exp::Field(subject, id) => {
+            fmt_prec(subject, PREC_ATOM, names, out);
+            out.push_str(FIELD_STR);
+            out.push_str(&render_id(*id, names));
         }
     }
     if needs_parens {
@@ -177,6 +253,8 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::EmptyHole(_)
         | Exp::NonEmptyHole(_, _)
         | Exp::Nil
+        | Exp::Record(_)
+        | Exp::Field(_, _)
         | Exp::Pair(_, _) => PREC_ATOM,
         Exp::Cons(_, _) => PREC_CONS,
         Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) => PREC_APP,
@@ -541,6 +619,71 @@ mod tests {
         assert_eq!(
             render(&if_over_pairs_with_hole(), &names()),
             "if true then (1, 2) else (⦇⦈, 4)"
+        );
+    }
+
+    fn field_names() -> NameTable {
+        let mut names = names();
+        names.set(x(10), "x");
+        names.set(x(11), "y");
+        names
+    }
+
+    #[test]
+    fn a_record_renders_its_fields_by_display_name() {
+        let point = Exp::record([(x(10), Exp::num(1)), (x(11), Exp::num(2))]);
+        assert_eq!(render(&point, &field_names()), "{x = 1, y = 2}");
+        assert_eq!(render(&Exp::record([]), &field_names()), "{}");
+        assert_eq!(
+            render(
+                &Exp::record([(x(10), Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2)))]),
+                &field_names()
+            ),
+            "{x = 1 + 2}"
+        );
+    }
+
+    #[test]
+    fn a_projection_binds_tighter_than_anything_else() {
+        let names = field_names();
+        let p = Exp::var(x(0));
+        assert_eq!(render(&Exp::field(p.clone(), x(10)), &names), "x0.x");
+        assert_eq!(
+            render(&Exp::field(Exp::field(p.clone(), x(10)), x(11)), &names),
+            "x0.x.y"
+        );
+        assert_eq!(
+            render(&Exp::field(Exp::ap(p.clone(), Exp::num(1)), x(10)), &names),
+            "(x0 1).x"
+        );
+        assert_eq!(
+            render(&Exp::ap(p.clone(), Exp::field(p.clone(), x(10))), &names),
+            "x0 x0.x"
+        );
+        assert_eq!(
+            render(
+                &Exp::bin_op(Op::Add, Exp::field(p, x(10)), Exp::num(1)),
+                &names
+            ),
+            "x0.x + 1"
+        );
+    }
+
+    #[test]
+    fn a_record_type_in_an_annotation_reads_its_field_names_from_the_table() {
+        let ty = crate::ty::record([(x(10), Ty::Num), (x(11), Ty::Str)]);
+        assert_eq!(render_ty(&ty, &field_names()), "{x: Num, y: Str}");
+        assert_eq!(
+            render(&Exp::lam(x(0), ty, Exp::num(1)), &field_names()),
+            "λx0:{x: Num, y: Str}. 1"
+        );
+        assert_eq!(render_ty(&Ty::Num, &field_names()), "Num");
+        assert_eq!(
+            render_ty(
+                &Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool)),
+                &field_names()
+            ),
+            "Num -> Bool"
         );
     }
 }

@@ -600,3 +600,121 @@ Both tripwires
 (`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
 and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
 cover six programs and pass.
+
+---
+
+## 2026-08-29 — Phase B2, records (`{x = e}`, `e.x`)
+
+Reproduce with:
+
+```
+cargo run -p nothing-bench -- keytable
+cargo run -p nothing-bench -- table
+cargo test -p nothing-tui --test references -- --nocapture
+```
+
+The re-run required by Phase B2's record checkbox. One fixture changed:
+**reference 3, `record`, is a record now** — a two-field record built in one
+definition and projected by name in another. Every other fixture and every
+other keystroke is byte-identical to the lists entry above, which is what
+makes this a controlled measurement of one feature.
+
+### Reference 3 was upgraded, not re-measured
+
+Since 2026-08-26 the `record` fixture has been a positional **pair**, and
+`bench/references.md` §3 said so in a paragraph headed *what is lost: the
+field names — nothing in the program records that component 0 is called
+`x`. This is the substitution that gives up the most.* Records exist now, so
+that paragraph was cashed in. The fixture is
+
+```
+mk   : Num -> Num -> ? = λx1:Num. λx2:Num. {x = x1, y = x2}
+main : ? -> Num        = λp:?. p.x
+```
+
+and the `x` in `main` is the same `Id` as the `x` in `mk`, in a different
+definition. **The denominator did not move:** 65 was hand-counted once on
+2026-08-26 from the reference text by the method in `bench/references.md`,
+and the reference text has not changed. Only the numerator moved, and it
+moved up:
+
+| reference 3 | keystrokes | actions (keyboard) | actions (script) | ratio |
+|---|---:|---:|---:|---:|
+| old fixture (a positional pair, 2026-08-28) | 46 | 40 | 25 | 0.71× |
+| new fixture (a real record, this entry) | 50 | 43 | 27 | 0.77× |
+
+Four more keystrokes, three more logged actions, and a ratio six points
+worse for a program that now says what reference 3 describes. The parts:
+
+| part of the program | old | new | Δ |
+|---|---:|---:|---:|
+| definition names | 4 | 10 | +6 |
+| definition annotations | 14 | 10 | −4 |
+| lambdas and their annotations | 20 | 15 | −5 |
+| the bodies | 8 | 13 | +5 |
+| navigation (`up` out of the record) | 0 | 2 | +2 |
+
+Two of those five point downward, and neither is a win. The annotations and
+the lambda parameters got *shorter* because a record type is a list of field
+identities and identities are not spelled (`DECISIONS.md`, 2026-08-29): the
+pair fixture wrote `Num * Num` twice, this one writes `?` twice. **The new
+program is cheaper to type in exactly the places where it says less about
+itself**, and it would be dishonest to bank that as a saving. The three
+upward parts are the feature itself — two field names, a projection that
+names its field, a constructor that now needs a name of its own because it
+is the document's first definition, and two keystrokes of cursor movement
+out of the record so that `C-n` means "new definition" again rather than
+"new field" (`KEYS.md` item 19(c)).
+
+### Keystrokes
+
+| # | Program | Neovim keystrokes | `nothing` keystrokes | `nothing` actions | Ratio | vs. 2026-08-29 (lists) | Guard |
+|---|---------|------------------:|----------------------:|-------------------:|------:|:----------------------:|:-----:|
+| 1 | factorial | 84 | 28 | 33 | 0.33x | unchanged | OK |
+| 2 | list_map * | 114 | 44 | 53 | 0.39x | unchanged | OK |
+| 3 | record * | 65 | 50 | 43 | 0.77x | 0.71x → 0.77x | OK |
+| 4 | state_machine * | 151 | 24 | 33 | 0.16x | unchanged | OK |
+| 5 | nested_conditional | 146 | 31 | 42 | 0.21x | unchanged | OK |
+| 6 | greeting * | 127 | 52 | 56 | 0.41x | unchanged | OK |
+
+`record` keeps its `*`: the reference declares a *nominal* type
+(`type Point = …`) and `nothing` has no such declaration, so the two
+annotated positions in the reference are holes here.
+
+### Action counts, for comparison with the earlier tables
+
+```
+cargo run -p nothing-bench -- table
+```
+
+| # | Program | Neovim | actions | Ratio | 2026-08-29 (lists) actions |
+|---|---------|-------:|--------:|------:|---------------------------:|
+| 1 | factorial | 84 | 23 | 0.27x | 23 |
+| 2 | list_map * | 114 | 37 | 0.32x | 37 |
+| 3 | record * | 65 | 27 | 0.42x | 25 |
+| 4 | state_machine * | 151 | 24 | 0.16x | 24 |
+| 5 | nested_conditional | 146 | 35 | 0.24x | 35 |
+| 6 | greeting * | 127 | 27 | 0.21x | 27 |
+
+Two more script actions than the pair fixture, and they are not the record
+machinery. The constructor went 17 → 18: its body is six actions
+(`construct-record`, `rename-field`, `construct-var`, `add-field`,
+`rename-field`, `construct-var`) where the pair's was four, and it saves one
+because it is the document's first definition and no longer needs
+`create-definition`. The accessor went 8 → 9: it *gains*
+`create-definition` and `rename-def` for the same reason, and loses the
+`set-ann Num * Num` it can no longer write. The projection itself,
+`construct-field x`, costs exactly what `construct-proj l` cost.
+
+### Guard status: PASS
+
+Worst case is still `record`, now at **0.77×** — a quarter of the 3× guard
+from Phase 0; best is `state_machine` at 0.16x. Both tripwires
+(`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
+and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
+cover six programs and pass.
+
+Three of the six ratios have now risen across Phase B2 — `list_map` when
+lists arrived, `record` when records did, and `factorial` back in the
+definition era — every one of them because a fixture stopped approximating.
+That is still the only kind of regression this file welcomes.

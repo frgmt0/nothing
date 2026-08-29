@@ -172,6 +172,31 @@ fn build_rec(exp: &Exp, stack: &mut Vec<Id>, table: &mut Vec<NodeEntry>) -> (u32
             let idx = push_entry(table, hash, 15, vec![], vec![list_idx, init_idx, step_idx]);
             (idx, hash)
         }
+        Exp::Record(fields) => {
+            let mut child_idxs = Vec::with_capacity(fields.len());
+            let mut child_hashes = Vec::with_capacity(fields.len());
+            for (_, value) in fields {
+                let (idx, hash) = build_rec(value, stack, table);
+                child_idxs.push(idx);
+                child_hashes.push(hash);
+            }
+            let mut payload = Vec::new();
+            crate::codec::write_varint(&mut payload, fields.len() as u64);
+            for (id, _) in fields {
+                write_id(&mut payload, *id);
+            }
+            let hash = hash_node(16, &payload, &child_hashes);
+            let idx = push_entry(table, hash, 16, payload, child_idxs);
+            (idx, hash)
+        }
+        Exp::Field(subject, id) => {
+            let (subject_idx, subject_hash) = build_rec(subject, stack, table);
+            let mut payload = Vec::new();
+            write_id(&mut payload, *id);
+            let hash = hash_node(17, &payload, &[subject_hash]);
+            let idx = push_entry(table, hash, 17, payload, vec![subject_idx]);
+            (idx, hash)
+        }
         Exp::EmptyHole(h) => {
             let hash = hash_node(10, &[], &[]);
             let mut payload = Vec::new();
@@ -291,6 +316,23 @@ fn decode_at(entries: &[NodeEntry], idx: usize) -> Result<Exp, DecodeError> {
             let step = decode_child(entries, entry, 2)?;
             Ok(Exp::fold(list, init, step))
         }
+        16 => {
+            let count = crate::codec::read_varint(&entry.payload, &mut pos)? as usize;
+            if count != entry.children.len() {
+                return Err(DecodeError::MissingChild);
+            }
+            let mut fields = Vec::with_capacity(count);
+            for which in 0..count {
+                let id = read_id(&entry.payload, &mut pos)?;
+                fields.push((id, decode_child(entries, entry, which)?));
+            }
+            Ok(Exp::Record(fields))
+        }
+        17 => {
+            let id = read_id(&entry.payload, &mut pos)?;
+            let subject = decode_child(entries, entry, 0)?;
+            Ok(Exp::field(subject, id))
+        }
         10 => {
             let h = read_hole_id(&entry.payload, &mut pos)?;
             Ok(Exp::empty_hole(h))
@@ -374,6 +416,45 @@ mod tests {
         let b = Exp::empty_hole(HoleId::from_u128(2));
         assert_ne!(a, b);
         assert_eq!(content_hash(&a), content_hash(&b));
+    }
+
+    #[test]
+    fn a_records_field_identities_are_part_of_its_hash() {
+        let x = Id::from_u128(1);
+        let y = Id::from_u128(2);
+        assert_ne!(
+            content_hash(&Exp::record([(x, Exp::num(1))])),
+            content_hash(&Exp::record([(y, Exp::num(1))])),
+            "a field is a document-global identity, not a position"
+        );
+        assert_ne!(
+            content_hash(&Exp::record([(x, Exp::num(1)), (y, Exp::num(2))])),
+            content_hash(&Exp::record([(y, Exp::num(2)), (x, Exp::num(1))])),
+            "field order is written down, so reordering is a structural edit"
+        );
+        assert_ne!(
+            content_hash(&Exp::field(Exp::record([(x, Exp::num(1))]), x)),
+            content_hash(&Exp::field(Exp::record([(y, Exp::num(1))]), y)),
+            "and a projection hashes the field it reads"
+        );
+        assert_eq!(
+            content_hash(&Exp::record([(x, Exp::num(1))])),
+            content_hash(&Exp::record([(x, Exp::num(1))]))
+        );
+    }
+
+    #[test]
+    fn a_record_and_a_projection_round_trip_through_the_node_table() {
+        let x = Id::from_u128(1);
+        let y = Id::from_u128(2);
+        for e in [
+            Exp::record([]),
+            Exp::record([(x, Exp::num(1))]),
+            Exp::field(Exp::record([(x, Exp::num(1)), (y, Exp::str_("hi"))]), y),
+        ] {
+            let table = build_node_table(&e);
+            assert_eq!(decode_node_table(&table).unwrap(), e);
+        }
     }
 
     #[test]

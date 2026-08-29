@@ -60,6 +60,11 @@ pub enum Operation {
         path: Path,
         node: Exp,
     },
+    ReorderFields {
+        path: Path,
+        from: Vec<Id>,
+        to: Vec<Id>,
+    },
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -69,6 +74,7 @@ pub enum Region {
     Name(Id),
     Order(Path, usize),
     Cell(Path),
+    FieldOrder(Path),
 }
 
 pub fn regions_overlap(a: &Region, b: &Region) -> bool {
@@ -91,6 +97,15 @@ pub fn regions_overlap(a: &Region, b: &Region) -> bool {
             chain::touches_ordering(root, *len, p)
         }
         (Region::Order(p, _), Region::Order(q, _)) => p == q,
+        (Region::FieldOrder(p), Region::FieldOrder(q)) => p == q,
+        (Region::FieldOrder(p), Region::Node(q) | Region::Shape(q) | Region::Cell(q))
+        | (Region::Node(q) | Region::Shape(q) | Region::Cell(q), Region::FieldOrder(p)) => {
+            is_prefix(q, p)
+        }
+        (Region::FieldOrder(p), Region::Order(root, len))
+        | (Region::Order(root, len), Region::FieldOrder(p)) => {
+            chain::touches_ordering(root, *len, p)
+        }
     }
 }
 
@@ -118,6 +133,7 @@ impl Operation {
                 chain_len,
                 ..
             } => vec![Region::Order(chain_root.clone(), *chain_len)],
+            Operation::ReorderFields { path, .. } => vec![Region::FieldOrder(path.clone())],
         }
     }
 
@@ -133,6 +149,7 @@ impl Operation {
             | Operation::SetAnn { path, .. } => Some(path),
             Operation::Move { from, .. } => Some(from),
             Operation::MoveBinding { chain_root, .. } => Some(chain_root),
+            Operation::ReorderFields { path, .. } => Some(path),
         }
     }
 
@@ -189,6 +206,7 @@ impl Operation {
             Operation::Replace { .. } => "Replace",
             Operation::SetAnn { .. } => "SetAnn",
             Operation::Rebind { .. } => "Rebind",
+            Operation::ReorderFields { .. } => "ReorderFields",
         }
     }
 
@@ -224,6 +242,9 @@ impl Operation {
             Operation::Replace { to, .. } => render(to, names),
             Operation::SetAnn { to, .. } => format!("annotation {to}"),
             Operation::Rebind { node, .. } => render(node, names),
+            Operation::ReorderFields { to, .. } => {
+                format!("fields in the order {}", field_list(to, names))
+            }
         }
     }
 
@@ -282,8 +303,19 @@ impl Operation {
                 "changes binder identity at {} without changing structure",
                 label(base, path)
             ),
+            Operation::ReorderFields { path, from, to } => format!(
+                "reorders the fields of the record at {} from {} to {}",
+                label(base, path),
+                field_list(from, names),
+                field_list(to, names)
+            ),
         }
     }
+}
+
+fn field_list(ids: &[Id], names: &NameTable) -> String {
+    let shown: Vec<String> = ids.iter().map(|id| names.display(*id)).collect();
+    format!("`{}`", shown.join(", "))
 }
 
 #[cfg(test)]

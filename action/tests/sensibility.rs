@@ -40,10 +40,18 @@ fn variant_name(action: &Action) -> &'static str {
         Action::ConstructNil => "ConstructNil",
         Action::ConstructCons => "ConstructCons",
         Action::ConstructFold => "ConstructFold",
+        Action::ConstructRecord => "ConstructRecord",
+        Action::ConstructField(_) => "ConstructField",
+        Action::AddField => "AddField",
+        Action::RemoveField => "RemoveField",
+        Action::MoveFieldPrev => "MoveFieldPrev",
+        Action::MoveFieldNext => "MoveFieldNext",
+        Action::SetField(_) => "SetField",
+        Action::SetFieldId(_) => "SetFieldId",
     }
 }
 
-const ALL_VARIANTS: [&str; 30] = [
+const ALL_VARIANTS: [&str; 38] = [
     "MoveChild",
     "MoveParent",
     "MoveNextSibling",
@@ -74,6 +82,14 @@ const ALL_VARIANTS: [&str; 30] = [
     "ConstructNil",
     "ConstructCons",
     "ConstructFold",
+    "ConstructRecord",
+    "ConstructField",
+    "AddField",
+    "RemoveField",
+    "MoveFieldPrev",
+    "MoveFieldNext",
+    "SetField",
+    "SetFieldId",
 ];
 
 fn arb_op() -> impl Strategy<Value = Op> {
@@ -152,14 +168,22 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
         Just(Action::ConstructNil).boxed(),
         Just(Action::ConstructCons).boxed(),
         Just(Action::ConstructFold).boxed(),
+        Just(Action::ConstructRecord).boxed(),
+        arb_id().prop_map(Action::ConstructField).boxed(),
+        Just(Action::AddField).boxed(),
+        Just(Action::RemoveField).boxed(),
+        Just(Action::MoveFieldPrev).boxed(),
+        Just(Action::MoveFieldNext).boxed(),
+        arb_id().prop_map(Action::SetField).boxed(),
+        arb_id().prop_map(Action::SetFieldId).boxed(),
     ])
 }
 
 fn one_of_every_action() -> Vec<Action> {
-    one_of_every_action_in(&[])
+    one_of_every_action_in(&[], &[])
 }
 
-fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
+fn one_of_every_action_in(scope: &[Id], fields: &[Id]) -> Vec<Action> {
     let mut actions = vec![
         Action::MoveChild(0),
         Action::MoveChild(1),
@@ -208,9 +232,21 @@ fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
         Action::MoveNextDef,
         Action::MovePrevDef,
         Action::MoveToDef(Id::from_u128(0)),
+        Action::ConstructRecord,
+        Action::ConstructField(Id::from_u128(0)),
+        Action::ConstructField(Id::from_u128(9)),
+        Action::AddField,
+        Action::RemoveField,
+        Action::MoveFieldPrev,
+        Action::MoveFieldNext,
+        Action::SetField(Id::from_u128(0)),
+        Action::SetField(Id::from_u128(9)),
+        Action::SetFieldId(Id::from_u128(0)),
+        Action::SetFieldId(Id::from_u128(9)),
     ];
     actions.extend(scope.iter().copied().map(Action::ConstructVar));
     actions.extend(scope.iter().copied().map(Action::MoveToDef));
+    actions.extend(fields.iter().copied().map(Action::SetField));
     actions.sort_by_key(variant_name);
     actions
 }
@@ -378,7 +414,7 @@ proptest! {
                 .into_iter()
                 .chain(cursor.zipper.binders())
                 .collect();
-            for action in one_of_every_action_in(&scope) {
+            for action in one_of_every_action_in(&scope, &cursor.field_ids()) {
                 check_document_sensible(&cursor, &action)?;
             }
         }
@@ -441,7 +477,7 @@ fn every_action_succeeds_somewhere_in_the_search_space() {
                 .into_iter()
                 .chain(cursor.zipper.binders())
                 .collect();
-            for action in one_of_every_action_in(&scope) {
+            for action in one_of_every_action_in(&scope, &cursor.field_ids()) {
                 total_applications += 1;
                 let name = variant_name(&action);
                 if let Some(after) = cursor.apply(action.clone()) {
@@ -485,7 +521,7 @@ fn actions_that_do_not_apply_leave_the_program_untouched() {
                 .into_iter()
                 .chain(cursor.zipper.binders())
                 .collect();
-            for action in one_of_every_action_in(&scope) {
+            for action in one_of_every_action_in(&scope, &cursor.field_ids()) {
                 let before = cursor.render_document();
                 if cursor.apply(action.clone()).is_none() {
                     refusals += 1;

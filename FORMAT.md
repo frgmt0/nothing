@@ -9,14 +9,33 @@ magic bytes below.
 A "document" is the three things a saved program needs: the **definitions**,
 the name table, and the action log that produced it.
 
-**Format version 4** (this revision) adds lists: three node tags (`Nil`,
-`Cons`, `Fold`), one `Ty` tag (`List`), and three action tags, and nothing
-else — the layout of §3.1 is unchanged from version 2. Versions 1, 2 and 3
+**Format version 5** (this revision) adds records: two node tags (`Record`,
+`Field`), one `Ty` tag (`Record`), and eight action tags, and nothing else
+— the layout of §3.1 is unchanged from version 2. Versions 1, 2, 3 and 4
 still open — see §11, which is normative: a migrating reader for every
 previous version ships with every format change from here on.
 
+**Format version 4** added lists: three node tags (`Nil`, `Cons`, `Fold`),
+one `Ty` tag (`List`), and three action tags.
+
 **Format version 3** added string literals: a node tag, a `Ty` tag, an `Op`
 tag and an action tag.
+
+A record is **the first node of variable arity**, and it needs no change to
+the framing to be one. Every node table entry has always written a varint
+child count (§4), so a node with three children and a node with nine are
+the same shape of record on disk; `Record` is the first `Exp` variant to
+use that. What it does add is a payload that must line up with the child
+list: the field **identities**, in order, one 16-byte uuid each, preceded
+by their count. The count is redundant with the child count and is written
+anyway, so that a truncated or crossed file is a decode error rather than a
+silently misaligned record (`store::nodes` rejects a `Record` whose payload
+count and child count disagree).
+
+A field identity is **an identity, not a name**, exactly like a binder's:
+the display name lives in the name table (§7) and is renamed there, while
+the uuid in the payload is what the program means. Unlike a binder's id,
+though, a field id is **hashed raw** — see §6.
 
 A list is **structure, not a payload**. `List` is the first type
 constructor in this format that is neither a base type nor a pair of
@@ -70,7 +89,7 @@ raw bytes.
 ```
 offset  size  field
 0       4     magic:   4E 54 48 47   ("NTHG", ASCII)
-4       1     version_major:  0x04
+4       1     version_major:  0x05
 5       1     version_minor:  0x00
 6       1     kind:    0x01 (Document — the only kind this version defines)
 ```
@@ -209,15 +228,23 @@ decode").
 | 13 | `Nil` | empty | none |
 | 14 | `Cons(head, tail)` | empty | `[head, tail]` |
 | 15 | `Fold(list, init, step)` | empty | `[list, init, step]` |
+| 16 | `Record(fields)` | a varint field count `n`, then `n` × 16 bytes: the field `id`s in order | the `n` field values, in the same order |
+| 17 | `Field(subject, id)` | 16 bytes: `id` | `[subject]` |
 
-This table is exhaustive over the sixteen `Exp` variants as of Phase B2's
-list feature. Tags 0–11 are unchanged from version 2, tag `12` is the
-version-3 addition, and tags `13`–`15` are the version-4 additions.
-If a seventeenth variant is added to `core::exp::Exp`, it gets the next tag
-(`16`) and a row here; a reader must treat an unrecognised tag as a hard
+This table is exhaustive over the eighteen `Exp` variants as of Phase B2's
+record feature. Tags 0–11 are unchanged from version 2, tag `12` is the
+version-3 addition, tags `13`–`15` are the version-4 additions, and tags
+`16`–`17` are the version-5 additions.
+If a nineteenth variant is added to `core::exp::Exp`, it gets the next tag
+(`18`) and a row here; a reader must treat an unrecognised tag as a hard
 decode error, not skip it silently (the `payload_len`/`children_count`
 framing lets it skip the *bytes*, but it cannot reconstruct an `Exp` it has
 no variant for).
+
+Tag `16` is the only row whose payload length depends on its child count.
+A decoder must read the varint first and check it against the entry's
+`children_count`; a mismatch is a decode error (`MissingChild`), never a
+truncation to the shorter of the two.
 
 #### 5.1 `Ty` encoding
 
@@ -233,6 +260,7 @@ determined entirely by the tag byte):
 | 4 | `Hole` | none |
 | 5 | `Str` | none |
 | 6 | `List(a)` | `Ty(a)` |
+| 7 | `Record(fields)` | a varint field count `n`, then `n` × (16 bytes: the field `id`, then `Ty` of that field) |
 
 #### 5.2 `Op` encoding (1 byte)
 
@@ -286,7 +314,24 @@ carry identity but no meaning:
 A `Ty` annotation (on `Lam`) *is* included in the canonical payload, in
 full, via the §5.1 encoding — `λx:Num.x` and `λx:Bool.x` are genuinely
 different programs, and nothing about that distinction is identity rather
-than meaning.
+than meaning. That now includes a `Ty::Record`'s field ids, for the same
+reason the next paragraph gives.
+
+**Field ids are hashed raw, and that is deliberate.** A field id looks like
+a binder id and is not one. A binder's id is meaningless outside the term
+that binds it, which is why de Bruijn canonicalisation can erase it; a
+field's id has no binder at all — it is a free, document-wide identity that
+a `Record` in one definition and a `Field` in another use to mean *the same
+field*. There is no stack to measure it against and no shape-only
+description of "which field this is", so `Record` writes the ids into its
+canonical payload verbatim and `Field` writes the one it projects. The
+consequence is exactly the one the design wants: `{x = 1}` and `{y = 1}`
+have **different** content hashes even though they are the same shape,
+because they are different records; and renaming the field `x` to `y`
+changes **no** hash at all, because a display name is not in any payload.
+Move detection in `merge` inherits both halves of that: a record that was
+renamed is still recognisably the same subtree, and a record whose field
+set changed is not.
 
 Everything else (`Num`'s `i64`, `Bool`'s bit, `Str`'s UTF-8 bytes,
 `BinOp`/`Proj`'s `Op`/`Side` tag) is meaning, not identity, and is hashed
@@ -398,13 +443,28 @@ log_entry:
 | 27 | `ConstructNil` | empty |
 | 28 | `ConstructCons` | empty |
 | 29 | `ConstructFold` | empty |
+| 30 | `ConstructRecord` | empty |
+| 31 | `ConstructField(id)` | 16 bytes |
+| 32 | `AddField` | empty |
+| 33 | `RemoveField` | empty |
+| 34 | `MoveFieldPrev` | empty |
+| 35 | `MoveFieldNext` | empty |
+| 36 | `SetField(id)` | 16 bytes |
+| 37 | `SetFieldId(id)` | 16 bytes |
 
-This table is exhaustive over the thirty `Action` variants as of format
-version 4. Tags 0–19 are unchanged from version 1, tags 0–25 from version 2
-and tags 0–26 from version 3, so an older log decodes under the current
-reader without translation. The same rule as §5 applies to a future
-thirty-first variant: next tag, new row, hard decode error on an
-unrecognised tag rather than a silent skip.
+This table is exhaustive over the thirty-eight `Action` variants as of
+format version 5. Tags 0–19 are unchanged from version 1, tags 0–25 from
+version 2, tags 0–26 from version 3 and tags 0–29 from version 4, so an
+older log decodes under the current reader without translation. The same
+rule as §5 applies to a future thirty-ninth variant: next tag, new row,
+hard decode error on an unrecognised tag rather than a silent skip.
+
+Renaming a *field* also uses tag 18, `Rename`, for the same reason
+renaming a definition does: a field's display name is a name-table entry
+keyed by an `Id`, and there is exactly one action in this format that
+writes one. `SetField` and `SetFieldId` are not renames — they re-aim a
+projection at a different field and re-identify a record's field
+respectively, and both change the program, not its vocabulary.
 
 Note that renaming a *definition* uses tag 18, `Rename` — the same action
 that renames a lambda binder, because a definition's display name lives in
@@ -416,7 +476,8 @@ the deleted id into fresh empty holes) is derived at replay time from the
 document the log has built so far, which keeps replay deterministic
 without storing the rewrite.
 
-`Id`s inside actions (`ConstructVar`, `SetBinderId`, `Rename`) are written
+`Id`s inside actions (`ConstructVar`, `SetBinderId`, `Rename`,
+`ConstructField`, `SetField`, `SetFieldId`) are written
 literally, not de-Bruijn-canonicalised — the action log is a replayable
 history of concrete edits against concrete `Id`s (some freshly generated at
 apply time by `action::act::Fresh`), not a content-addressed structure, and
@@ -454,7 +515,7 @@ byte-for-byte here the way the binary format is; it is not a wire format,
 and Phase 7 only asks that it exist.
 
 
-## 11. Migration from versions 1, 2 and 3
+## 11. Migration from versions 1, 2, 3 and 4
 
 Format stability starts at version 1, so every earlier version's files
 open. The reader dispatches on `version_major` in the header (§3):
@@ -480,7 +541,17 @@ open. The reader dispatches on `version_major` in the header (§3):
   against bytes an older build really produced. One of them,
   `bench_greeting.v3.nothing`, carries string literals, which are the thing
   version 3 could express and version 2 could not.
-- `0x04` → the current layout in §3.1.
+- `0x04` → the same version-2/§3.1 body layout, minus the tags added in
+  version 5. `store::v4::encode_document_v4` exists for the same reason
+  `encode_document_v3` does — the committed v4 fixtures under
+  `store/fixtures/v4/` contain nothing a version-4 build could not have
+  written — asserted, not assumed, by
+  `store/tests/migration.rs::no_version_four_artifact_contains_a_version_five_form`
+  — so the version-5 reader is exercised against real older bytes. Two of
+  them, `bench_list_map.v4.nothing` and `list_sum.v4.nothing`, carry list
+  nodes, which are the thing version 4 could express and version 3 could
+  not.
+- `0x05` → the current layout in §3.1.
 - anything else → `DecodeError::UnsupportedVersion`.
 
 A version-1 file is a single expression. It becomes a document with
@@ -500,15 +571,15 @@ hashes are stable. And two people who migrate the *same* v1 file
 independently get the same definition id, so the merge engine matches
 their definitions instead of seeing an add-and-delete pair.
 
-Version 2 → version 3 and version 3 → version 4 need no rewriting at all:
+Version 2 → 3, version 3 → 4 and version 4 → 5 need no rewriting at all:
 every earlier node, type, operator and action tag means the same thing
 under the current version, and each new version only added tags the older
 one never wrote. The migration is the header bump, and it happens on save.
 
 Migration is read-only and lossless in the direction that matters: the
 name table and the action log carry across untouched (§8's tags 0–19 are
-version-stable across all four versions, 20–25 across the last three, and
-26 across the last two),
+version-stable across all five versions, 20–25 across the last four, 26–29
+across the last two, and 30–37 are new in version 5),
 and the expression is byte-identical after re-encoding as the single
 definition's node table. There is no downgrading writer; saving a migrated
 file writes the current version, and the older bytes on disk are only

@@ -75,6 +75,35 @@ fn build(target: &Exp, actions: &mut Vec<Action>) {
             build_children(&[list, init, step], actions);
         }
 
+        Exp::Record(fields) => {
+            actions.push(Action::ConstructNonEmptyHole);
+            actions.push(Action::ConstructRecord);
+            for _ in 1..fields.len() {
+                actions.push(Action::MoveParent);
+                actions.push(Action::AddField);
+            }
+            if fields.is_empty() {
+                actions.push(Action::RemoveField);
+            } else {
+                actions.push(Action::MoveParent);
+                for (i, (id, value)) in fields.iter().enumerate() {
+                    actions.push(Action::MoveChild(i));
+                    actions.push(Action::SetFieldId(*id));
+                    build(value, actions);
+                    actions.push(Action::MoveParent);
+                }
+            }
+            actions.push(Action::MoveParent);
+            actions.push(Action::Finish);
+        }
+        Exp::Field(subject, id) => {
+            actions.push(Action::ConstructNonEmptyHole);
+            build(subject, actions);
+            actions.push(Action::ConstructField(*id));
+            actions.push(Action::MoveParent);
+            actions.push(Action::Finish);
+        }
+
         Exp::NonEmptyHole(_, inner) => {
             actions.push(Action::ConstructNonEmptyHole);
             build_children(&[inner], actions);
@@ -139,6 +168,14 @@ fn canonical_hole_ids(exp: &Exp) -> Exp {
             Exp::Cons(l, r) => Exp::cons(go(l, next), go(r, next)),
             Exp::Fold(l, i, st) => Exp::fold(go(l, next), go(i, next), go(st, next)),
             Exp::Proj(side, inner) => Exp::proj(*side, go(inner, next)),
+            Exp::Field(subject, id) => Exp::field(go(subject, next), *id),
+            Exp::Record(fields) => {
+                let mut out = Vec::with_capacity(fields.len());
+                for (id, e) in fields {
+                    out.push((*id, go(e, next)));
+                }
+                Exp::Record(out)
+            }
         }
     }
     go(exp, &mut 0)
@@ -152,7 +189,8 @@ fn is_hole_free(exp: &Exp) -> bool {
     match exp {
         Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => false,
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => true,
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) => is_hole_free(b),
+        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => is_hole_free(b),
+        Exp::Record(fields) => fields.iter().all(|(_, e)| is_hole_free(e)),
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
@@ -389,6 +427,22 @@ fn the_targets_cover_the_hard_cases() {
                 survey(init, seen);
                 survey(step, seen);
             }
+            Exp::Record(fields) => {
+                note("Record", seen);
+                if fields.is_empty() {
+                    note("EmptyRecord", seen);
+                }
+                if fields.len() > 1 {
+                    note("WideRecord", seen);
+                }
+                for (_, e) in fields {
+                    survey(e, seen);
+                }
+            }
+            Exp::Field(subject, _) => {
+                note("Field", seen);
+                survey(subject, seen);
+            }
         }
     }
 
@@ -414,6 +468,10 @@ fn the_targets_cover_the_hard_cases() {
         "Nil",
         "Cons",
         "Fold",
+        "Record",
+        "EmptyRecord",
+        "WideRecord",
+        "Field",
     ] {
         assert!(
             seen.contains(&form),

@@ -1,6 +1,6 @@
 use nothing_action::script::replay_script;
 use nothing_core::doc::{Def, Doc};
-use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
+use nothing_core::exp::{Exp, HoleId, Id, Op};
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
 use nothing_core::ty::Ty;
@@ -84,6 +84,13 @@ fn drop_calls_to(exp: &Exp, target: Id, next: &mut u128) -> Exp {
             drop_calls_to(t, target, next),
             drop_calls_to(e, target, next),
         ),
+        Exp::Record(fields) => Exp::record(
+            fields
+                .iter()
+                .map(|(id, value)| (*id, drop_calls_to(value, target, next)))
+                .collect::<Vec<_>>(),
+        ),
+        Exp::Field(subject, id) => Exp::field(drop_calls_to(subject, target, next), *id),
     }
 }
 
@@ -201,9 +208,19 @@ fn reference_two_list_map_maps() {
 #[test]
 fn reference_three_record_constructs_and_accesses() {
     let (doc, names) = reference("record", RECORD);
-    assert_eq!(doc.len(), 2, "the record reference is two definitions now");
+    assert_eq!(doc.len(), 2, "the record reference is two definitions");
     let mk = definition(&doc, &names, "mk");
     let main = main_of(&doc, &names);
+
+    let field = |wanted: &str| {
+        doc.field_ids()
+            .into_iter()
+            .find(|id| names.get(*id) == Some(wanted))
+            .unwrap_or_else(|| panic!("no field named `{wanted}` in {}", doc.render(&names)))
+    };
+    let x = field("x");
+    let y = field("y");
+    assert_ne!(x, y, "two fields, two identities, whatever they are called");
 
     let built = call(
         &doc,
@@ -211,15 +228,17 @@ fn reference_three_record_constructs_and_accesses() {
     );
     assert_eq!(
         nothing_eval::dynamic::render(built.dyn_result(), &names),
-        "(3, 4)",
+        "{x = 3, y = 4}",
         "the two-field constructor, called by name across definitions"
     );
 
-    let accessed = call(
-        &doc,
-        Exp::ap(Exp::var(main.id), Exp::pair(Exp::num(3), Exp::num(4))),
+    let point = Exp::record([(x, Exp::num(3)), (y, Exp::num(4))]);
+    let accessed = call(&doc, Exp::ap(Exp::var(main.id), point.clone()));
+    assert_eq!(
+        accessed.num(),
+        Some(3),
+        "the accessor, which names the field rather than counting to it"
     );
-    assert_eq!(accessed.num(), Some(3), "the accessor");
 
     let both = call(
         &doc,
@@ -234,8 +253,17 @@ fn reference_three_record_constructs_and_accesses() {
         "and one definition composed with the other"
     );
 
-    let direct = Exp::proj(Side::R, Exp::pair(Exp::num(3), Exp::num(4)));
-    assert_eq!(eval(&direct).num(), Some(4));
+    assert_eq!(eval(&Exp::field(point, y)).num(), Some(4));
+
+    let half = Exp::record([
+        (x, Exp::num(3)),
+        (y, Exp::empty_hole(HoleId::from_u128(0x9001))),
+    ]);
+    assert_eq!(
+        eval(&Exp::field(half, x)).num(),
+        Some(3),
+        "and projecting the filled field of a half-written record still answers"
+    );
 }
 
 #[test]

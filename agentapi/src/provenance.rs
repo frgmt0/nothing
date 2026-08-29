@@ -6,8 +6,8 @@ use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, Id, Side};
 use nothing_core::names::NameTable;
 use nothing_core::render::{
-    CONS_STR, FOLD_STR, NIL_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS, Prec,
-    op_prec, op_str, quote_str, render_id,
+    CONS_STR, FIELD_STR, FOLD_STR, NIL_STR, PREC_APP, PREC_ATOM, PREC_BINDER, PREC_CMP, PREC_CONS,
+    Prec, op_prec, op_str, quote_str, render_id,
 };
 use nothing_merge::path::{Path, arity, at, child, extend};
 
@@ -108,6 +108,15 @@ fn shallow_key(exp: &Exp) -> String {
                 Side::R => "R",
             }
         ),
+        Exp::Record(fields) => format!(
+            "Record:{}",
+            fields
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect::<Vec<String>>()
+                .join(",")
+        ),
+        Exp::Field(_, id) => format!("Field:{id}"),
         Exp::EmptyHole(h) => format!("EmptyHole:{h}"),
         Exp::NonEmptyHole(h, _) => format!("NonEmptyHole:{h}"),
     }
@@ -344,6 +353,8 @@ fn prec_of(exp: &Exp) -> Prec {
         | Exp::EmptyHole(_)
         | Exp::NonEmptyHole(_, _)
         | Exp::Nil
+        | Exp::Record(_)
+        | Exp::Field(_, _)
         | Exp::Pair(_, _) => PREC_ATOM,
         Exp::Cons(_, _) => PREC_CONS,
         Exp::Ap(_, _) | Exp::Proj(_, _) | Exp::Fold(..) => PREC_APP,
@@ -469,6 +480,21 @@ impl Marker<'_> {
                 self.kid(exp, path, 1, PREC_ATOM, class, out);
                 out.push(' ');
                 self.kid(exp, path, 2, PREC_ATOM, class, out);
+            }
+            Exp::Record(fields) => {
+                out.push('{');
+                for (n, (id, _)) in fields.iter().enumerate() {
+                    if n > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&format!("{} = ", render_id(*id, self.names)));
+                    self.kid(exp, path, n, PREC_BINDER, class, out);
+                }
+                out.push('}');
+            }
+            Exp::Field(_, id) => {
+                self.kid(exp, path, 0, PREC_ATOM, class, out);
+                out.push_str(&format!("{FIELD_STR}{}", render_id(*id, self.names)));
             }
         }
     }

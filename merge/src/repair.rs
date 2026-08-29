@@ -1,9 +1,9 @@
 use nothing_action::act::Fresh;
 use nothing_core::ctx::Ctx;
-use nothing_core::exp::{Exp, Op};
+use nothing_core::exp::{Exp, Id, Op};
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
-use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod};
+use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod, matched_record};
 use nothing_core::typing::{
     ana, is_comparable, is_well_typed_in, join, operand_expectation, step_ty, syn,
 };
@@ -14,6 +14,7 @@ use crate::path::{Path, extend, label};
 pub enum RepairKind {
     Quarantined,
     Unbound,
+    Reidentified,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -80,6 +81,19 @@ impl State {
             reason: format!("{reason} at {}", label(&self.root, path)),
         });
         Exp::empty_hole(self.fresh.hole())
+    }
+
+    fn reidentify(&mut self, id: Id, path: &[usize]) -> Id {
+        self.repairs.push(Repair {
+            kind: RepairKind::Reidentified,
+            path: path.to_vec(),
+            subject: self.names.display(id),
+            reason: format!(
+                "the merge left two fields with one identity at {}",
+                label(&self.root, path)
+            ),
+        });
+        self.fresh.id()
     }
 
     fn ensure_ana(&mut self, ctx: &Ctx, exp: Exp, ty: &Ty, path: &[usize], reason: &str) -> Exp {
@@ -284,6 +298,35 @@ impl State {
                     "the merge left a fold step that does not match its list",
                 );
                 Exp::Fold(Box::new(list), Box::new(init), Box::new(step))
+            }
+
+            Exp::Record(fields) => {
+                let mut seen: Vec<Id> = Vec::with_capacity(fields.len());
+                let mut repaired = Vec::with_capacity(fields.len());
+                for (index, (id, value)) in fields.iter().enumerate() {
+                    let value = self.go(ctx, value, &extend(path, index));
+                    let id = if seen.contains(id) {
+                        self.reidentify(*id, &extend(path, index))
+                    } else {
+                        *id
+                    };
+                    seen.push(id);
+                    repaired.push((id, value));
+                }
+                Exp::Record(repaired)
+            }
+
+            Exp::Field(subject, field) => {
+                let mut subject = self.go(ctx, subject, &extend(path, 0));
+                let subject_ty = syn(ctx, &subject).unwrap_or(Ty::Hole);
+                if matched_record(&subject_ty, *field).is_none() {
+                    subject = self.quarantine(
+                        subject,
+                        &extend(path, 0),
+                        "the merge left a projection of a field this value does not have",
+                    );
+                }
+                Exp::Field(Box::new(subject), *field)
             }
 
             Exp::NonEmptyHole(h, inner) => {

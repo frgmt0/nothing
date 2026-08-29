@@ -132,6 +132,13 @@ pub fn fresh_binder_name(names: &NameTable) -> String {
         .expect("the candidate stream is unbounded")
 }
 
+pub fn fresh_field_name(names: &NameTable) -> String {
+    (0u64..)
+        .map(|n| format!("f{n}"))
+        .find(|candidate| !names.holds_name(candidate))
+        .expect("the candidate stream is unbounded")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +248,20 @@ mod tests {
             fresh_binder_name(&overlay),
             "x2",
             "an overlay sees the names its base already spent"
+        );
+    }
+
+    #[test]
+    fn a_fresh_field_name_has_its_own_stream_and_avoids_every_name() {
+        let (a, _, _) = ids();
+        let mut names = NameTable::new();
+        assert_eq!(fresh_field_name(&names), "f0");
+        names.set(a, "f0");
+        assert_eq!(fresh_field_name(&names), "f1");
+        assert_eq!(
+            fresh_binder_name(&names),
+            "x0",
+            "a field name never eats a binder name"
         );
     }
 }

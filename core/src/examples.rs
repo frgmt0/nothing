@@ -144,7 +144,8 @@ mod tests {
                 Exp::Pair(l, r) | Exp::Cons(l, r) => {
                     contains_empty_hole(l) || contains_empty_hole(r)
                 }
-                Exp::Proj(_, e) => contains_empty_hole(e),
+                Exp::Proj(_, e) | Exp::Field(e, _) => contains_empty_hole(e),
+                Exp::Record(fields) => fields.iter().any(|(_, e)| contains_empty_hole(e)),
             }
         }
 
@@ -184,7 +185,8 @@ mod tests {
                 Exp::Pair(l, r) | Exp::Cons(l, r) => {
                     contains_non_empty_hole(l) || contains_non_empty_hole(r)
                 }
-                Exp::Proj(_, e) => contains_non_empty_hole(e),
+                Exp::Proj(_, e) | Exp::Field(e, _) => contains_non_empty_hole(e),
+                Exp::Record(fields) => fields.iter().any(|(_, e)| contains_non_empty_hole(e)),
             }
         }
 

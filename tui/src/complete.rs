@@ -1,8 +1,9 @@
 use nothing_action::act::Action;
-use nothing_core::exp::Id;
+use nothing_core::exp::{Exp, Id};
 use nothing_core::ty::{Ty, is_consistent};
+use nothing_core::typing::syn;
 
-use crate::app::AppState;
+use crate::app::{AppState, Slot};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum CandidateKind {
@@ -88,6 +89,32 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
 
 pub fn best(state: &AppState, prefix: &str) -> Option<Candidate> {
     candidates(state, prefix).into_iter().next()
+}
+
+pub fn field_candidates(state: &AppState, prefix: &str) -> Vec<(Id, String)> {
+    let own = projected_fields(state);
+    let mut out: Vec<(Id, String)> = nothing_action::script::fields_in_view(&state.edit)
+        .into_iter()
+        .map(|id| (id, state.display_name(id)))
+        .filter(|(_, name)| name.starts_with(prefix))
+        .collect();
+    out.sort_by_key(|(id, _)| u8::from(!own.contains(id)));
+    out
+}
+
+fn projected_fields(state: &AppState) -> Vec<Id> {
+    let subject = match (state.slot, state.focus()) {
+        (Slot::FieldPick, Exp::Field(subject, _)) => subject.as_ref(),
+        (_, focus) => focus,
+    };
+    match syn(&state.ctx(), subject) {
+        Some(Ty::Record(fields)) => fields.into_iter().map(|(id, _)| id).collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub fn best_field(state: &AppState, prefix: &str) -> Option<(Id, String)> {
+    field_candidates(state, prefix).into_iter().next()
 }
 
 type RankKey = (u8, u8, usize, usize, String);
@@ -272,6 +299,37 @@ mod tests {
         assert_eq!(x1.ty, Ty::Bool);
         assert!(x1.fits(&Ty::Bool));
         assert!(!x1.fits(&Ty::Num));
+    }
+
+    #[test]
+    fn the_fields_of_the_record_being_projected_outrank_the_rest_of_the_document() {
+        let inner = handle_key(key(KeyCode::Up), typed("{x={y=1"));
+        let offered: Vec<String> = field_candidates(&inner, "")
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(
+            offered,
+            vec!["y", "x"],
+            "standing on the inner record, its own field comes first even though the outer \
+             record's field is written earlier"
+        );
+        assert_eq!(
+            best_field(&inner, "").map(|(_, n)| n),
+            Some("y".to_string())
+        );
+
+        let projected = handle_key(key(KeyCode::Char('.')), inner);
+        assert_eq!(projected.text(), "{x = {y = 1}.y}");
+        let offered: Vec<String> = field_candidates(&projected, "")
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(
+            offered,
+            vec!["y", "x"],
+            "and in the pick slot it is the projection's own subject that is ranked first"
+        );
     }
 
     #[test]

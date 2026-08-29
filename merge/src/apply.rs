@@ -22,13 +22,25 @@ pub fn apply_all(base: &Version, ops: &[Operation]) -> Applied {
 
     let mut structural: Vec<&Operation> = ops
         .iter()
-        .filter(|op| !matches!(op, Operation::Rename { .. } | Operation::MoveBinding { .. }))
+        .filter(|op| {
+            !matches!(
+                op,
+                Operation::Rename { .. }
+                    | Operation::MoveBinding { .. }
+                    | Operation::ReorderFields { .. }
+            )
+        })
         .collect();
     structural.sort_by_key(|op| std::cmp::Reverse(op.site().map_or(0, Vec::len)));
 
     let mut orders: Vec<&Operation> = ops
         .iter()
-        .filter(|op| matches!(op, Operation::MoveBinding { .. }))
+        .filter(|op| {
+            matches!(
+                op,
+                Operation::MoveBinding { .. } | Operation::ReorderFields { .. }
+            )
+        })
         .collect();
     orders.sort_by_key(|op| std::cmp::Reverse(op.site().map_or(0, Vec::len)));
 
@@ -97,6 +109,21 @@ pub fn apply_one(exp: &Exp, op: &Operation) -> Option<Exp> {
             }
         }
         Operation::Rebind { path, node } => replace_at(exp, path, node.clone()),
+        Operation::ReorderFields { path, to, .. } => {
+            let current = at(exp, path)?;
+            let Exp::Record(fields) = current else {
+                return None;
+            };
+            if fields.len() != to.len() {
+                return None;
+            }
+            let mut reordered = Vec::with_capacity(to.len());
+            for id in to {
+                let (_, value) = fields.iter().find(|(other, _)| other == id)?;
+                reordered.push((*id, value.clone()));
+            }
+            replace_at(exp, path, Exp::Record(reordered))
+        }
     }
 }
 

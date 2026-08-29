@@ -58,6 +58,7 @@ enum Form {
     If,
     Ap,
     Proj,
+    Field,
     BinOp,
     Fold,
     NonEmptyHole,
@@ -90,7 +91,7 @@ impl Gen {
     }
 
     pub fn ty(&mut self, depth: u32) -> Ty {
-        let n = if depth == 0 { 4 } else { 7 };
+        let n = if depth == 0 { 4 } else { 8 };
         match self.rng.below(n) {
             0 => Ty::Num,
             1 => Ty::Bool,
@@ -98,8 +99,20 @@ impl Gen {
             3 => Ty::Hole,
             4 => Ty::Arrow(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
             5 => Ty::List(Box::new(self.ty(depth - 1))),
+            6 => self.record_ty(depth - 1),
             _ => Ty::Prod(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
         }
+    }
+
+    fn record_ty(&mut self, depth: u32) -> Ty {
+        let count = self.rng.below(3);
+        let mut fields = Vec::with_capacity(count);
+        for _ in 0..count {
+            let id = self.fresh_id();
+            let ty = self.ty(depth);
+            fields.push((id, ty));
+        }
+        Ty::Record(fields)
     }
 
     pub fn document(&mut self, count: usize, depth: u32) -> (Doc, NameTable) {
@@ -153,6 +166,7 @@ impl Gen {
             cands.push(Form::If);
             cands.push(Form::Ap);
             cands.push(Form::Proj);
+            cands.push(Form::Field);
             cands.push(Form::Fold);
             if *ty == Ty::Num || *ty == Ty::Bool || *ty == Ty::Str {
                 cands.push(Form::BinOp);
@@ -189,6 +203,14 @@ impl Gen {
                     let len = shortest + self.rng.below(3 - shortest);
                     let items: Vec<Exp> = (0..len).map(|_| self.exp_syn(ctx, a, d)).collect();
                     Exp::list(items)
+                }
+                Ty::Record(fields) => {
+                    let mut written = Vec::with_capacity(fields.len());
+                    for (id, field_ty) in fields {
+                        let value = self.exp_syn(ctx, field_ty, d);
+                        written.push((*id, value));
+                    }
+                    Exp::record(written)
                 }
             },
 
@@ -228,6 +250,18 @@ impl Gen {
                 };
                 let inner = self.exp_syn(ctx, &pair_ty, d);
                 Exp::proj(side, inner)
+            }
+
+            Form::Field => {
+                let field = self.fresh_id();
+                let mut fields = vec![(field, ty.clone())];
+                for _ in 0..self.rng.below(2) {
+                    let id = self.fresh_id();
+                    let extra = self.ty(1);
+                    fields.push((id, extra));
+                }
+                let subject = self.exp_syn(ctx, &Ty::Record(fields), d);
+                Exp::field(subject, field)
             }
 
             Form::BinOp => {
@@ -306,7 +340,8 @@ pub fn size(exp: &Exp) -> usize {
         Exp::Fold(l, i, s) => 1 + size(l) + size(i) + size(s),
         Exp::Let(_, bound, body) => 1 + size(bound) + size(body),
         Exp::Pair(l, r) | Exp::Cons(l, r) => 1 + size(l) + size(r),
-        Exp::Proj(_, e) => 1 + size(e),
+        Exp::Proj(_, e) | Exp::Field(e, _) => 1 + size(e),
+        Exp::Record(fields) => 1 + fields.iter().map(|(_, e)| size(e)).sum::<usize>(),
         Exp::NonEmptyHole(_, e) => 1 + size(e),
     }
 }
@@ -387,7 +422,12 @@ mod tests {
                     count(t, empty, non_empty);
                     count(el, empty, non_empty);
                 }
-                Exp::Proj(_, e) => count(e, empty, non_empty),
+                Exp::Proj(_, e) | Exp::Field(e, _) => count(e, empty, non_empty),
+                Exp::Record(fields) => {
+                    for (_, e) in fields {
+                        count(e, empty, non_empty);
+                    }
+                }
             }
         }
 

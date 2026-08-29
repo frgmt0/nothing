@@ -45,7 +45,13 @@ without them.
 | the **definition** | definition **name** | definition **annotation** | body |
 | `Lam` | binder **name** | **annotation** | body |
 | `Let` | binder **name** | bound expression | body |
+| `Record` | field 0's **name** | field 0's value | field 1's **name**, … |
 | everything else | child 0 | child 1 | child 2 |
+
+The `Record` row is the only one with no fixed width: a record has as many
+fields as it has, and its editor-level child list is `name₀ value₀ name₁
+value₁ …`. It is still the same table — a name slot beside the thing it
+names — and `←`/`→` walk it in that order.
 
 Since Phase B1 a program is a *document* of named top-level definitions, and
 the definition itself is the outermost row of that table: `↑` off the root of
@@ -97,6 +103,8 @@ IN A BINDER-NAME SLOT                        ;      let ⦇⦈ = e in ⦇⦈    
   :   → annotation slot                      [  ]   fst e / snd e   ConstructProj
   =   → bound expression (let)               /      fold e ⦇⦈ ⦇⦈    ConstructFold
   .   → body                                 !      quarantine  ⦇e⦈   …NonEmptyHole
+                                             {      record  {f = e}  ConstructRecord
+                                             .      field   e.f     ConstructField
 
 IN AN ANNOTATION SLOT (re-issues SetAnn)  HOLES & HISTORY
   n Num  b Bool  s Str  ? unknown           Bksp  run: un-type one char ·
@@ -111,10 +119,22 @@ DEFINITIONS  (the document is a list of      C-z / C-r  undo / redo · C-q quit
   C-↑  previous definition  MovePrevDef      C-t  → definition-type slot
   C-n  new definition, cursor in its name    CreateDefinition
   C-d  drop this definition (never the last) DeleteDefinition
+
+RECORDS  (a record's field list is the other list a cursor can be inside, so
+  C-n / C-d address a field there and a definition everywhere else)
+  C-n  one more field, cursor in its name    AddField
+  C-d  drop this field; each e.f becomes ⦇e⦈ RemoveField
+  C-←  move this field one place earlier     MoveFieldPrev
+  C-→  move this field one place later       MoveFieldNext
+
+IN A FIELD SLOT  (reached by ← from a field's value, or opened by `.`)
+  a-zA-Z0-9_  on a record's field: name it            Rename
+              on a projection: pick the field, ranked SetField
+  =   → the field's value        anything else  exit → the node, reprocess
 ```
 
-40 bindings. Deliberately unbound and held in reserve for Phase 6+:
-`( ) { } | ^ % $ # @ ' . >` outside the slots, and `` ` ``.
+44 bindings. Deliberately unbound and held in reserve for Phase 6+:
+`( ) } | ^ % $ # @ ' >` outside the slots, and `` ` ``.
 
 `&` rather than a doubled `+`: `++` cannot be two keystrokes, because the
 first `+` would already have committed an addition, and a key whose meaning
@@ -142,7 +162,8 @@ is not a context because it is a pure function of the focused node.
 | **`!`** | wrap the hole: `⦇⦇⦈⦈` | quarantine: `⦇e⦈` | `⦇n⦈` | end run, then as B | exit → body, reprocess | exit → body, reprocess | **acts on the wrapper**: `⦇⦇e⦈⦈` | append the character |
 | **`~`** | no-op, hint | no-op unless `Num` | negate: `ConstructNum(-n)` | end run, then as B | exit → body, reprocess | no-op | descend, then as inner | append the character |
 | **`:`** | wrap: `⦇⦈ :: ⦇⦈` | focused `Lam`: → its annotation slot; else climb, then wrap `e :: ⦇⦈` | climb, then wrap | end run, then as B | no-op | → annotation slot (`Lam` only) | descend, then as inner | append the character |
-| **`.`** | no-op, hint | no-op, hint | no-op, hint | end run, then as B | → body slot | → body slot | descend, then as inner | append the character |
+| **`{`** | `{f = ⦇⦈}`, cursor in the field slot | wrap: `{f = e}`, cursor in the field slot | wrap: `{f = n}` | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | append the character |
+| **`.`** | `⦇⦈.f`, field slot opens | wrap: `e.f`, field slot opens (never climbs) | wrap: `⦇n⦈.f` (quarantined) | end run, then as B | → body slot | → body slot | descend, then as inner | append the character |
 | **anything else** | no-op, status-line hint | no-op, hint | no-op, hint | end run, then as B | exit → body, reprocess | exit → body, reprocess | descend, then as inner | printable: append; otherwise close the run, reprocess |
 
 Five rules generalise the table:
@@ -297,6 +318,7 @@ things can decline, each with visible feedback:
 | `Enter` (`Finish`) | the contents of `⦇e⦈` still do not fit | hole marked "does not fit yet: expected τ" |
 | definition annotation slot (`SetDefAnn`) | the annotation would break this definition's body, or a *caller's* — a definition's type is the only thing its callers know about it | slot stays open, status line says why |
 | `C-d` (`DeleteDefinition`) | there is one definition left | "a document keeps at least one definition" |
+| `.` (`ConstructField`) | the document has no field to name — a field is an identity, not a string, so there is nothing to project | "`.` projects a field; this document has none yet" |
 
 The binder-name slot used to be a third row, declining a name that would
 capture or orphan a reference (settled item 13, `FRICTION.md` #7). Phase 5
@@ -471,7 +493,11 @@ the same reason it was worst in Phase 3 (deep nesting, four binders).
 | `CreateDefinition` | `C-n` | `MoveNextDef` | `C-↓` |
 | `DeleteDefinition` | `C-d` | `MovePrevDef` | `C-↑` |
 | `SetDefAnn(Ty)` | `C-t` + annotation slot | `MoveToDef(Id)` | `C-↑`/`C-↓` repeated (the pane shows how far); the protocol has it by name |
-| `Rename(Id, String)` of a definition | typing in the `C-l` slot | | |
+| `Rename(Id, String)` of a definition | typing in the `C-l` slot | `ConstructRecord` | `{` |
+| `AddField` | `C-n` with the cursor in a record | `RemoveField` | `C-d` with the cursor in a record |
+| `ConstructField(Id)` | `.` | `SetField(Id)` | typing in the field slot `.` opened |
+| `MoveFieldPrev` | `C-←` | `MoveFieldNext` | `C-→` |
+| `Rename(Id, String)` of a **field** | typing in the field slot `←` reaches | | |
 
 Editor-level, backed by the action log: `Tab`/`S-Tab` (next/previous hole,
 either kind), undo as truncate-and-replay **per keystroke** (one `C-z` undoes
@@ -738,6 +764,98 @@ Item 18 is dated **2026-08-29** and belongs to Phase B2's second half.
    `annot::tests::a_bracket_is_the_list_prefix_and_takes_the_next_type`, and
    the four new rows/columns of `tui/tests/matrix.rs`.
 
+Item 19 is dated **2026-08-29** and belongs to Phase B2's third feature.
+
+19. **Records cost one new printable key, one key that meant nothing, and
+   nothing else.** A record is the first form with no fixed arity, so it is
+   the first form that needs keys for *how many* as well as *what*; the
+   grammar paid for that out of bindings it already had.
+   **(a)** `{` is **record construction**, taken from the reserve list. It
+   wraps like every other form key — `1` then `{` is `{f1 = 1}` — and it
+   leaves the cursor in the new field's **name slot**, exactly as `\` leaves
+   it in a binder's. That is the whole reason a record is cheap to type: the
+   first thing you know about a field is what it is called.
+   **(b)** `.` is **field projection**, and it is the `:` argument of item 18
+   repeated: reading down the `.` row of the matrix, three of its eight cells
+   said "no-op, hint" and those are exactly the three that now build a
+   projection. The two cells where `.` already meant something — leaving a
+   binder-name or annotation slot for the body — are untouched, which is why
+   the friction the draft grammar flagged in §Rejected item 6 does not come
+   back: `.` means "the thing named next", in a slot and out of one.
+   `.` **never climbs**, because a projection binds tighter than application:
+   with the cursor on the `p` of `f p`, `.` has to give `f (p.x)` and not
+   `(f p).x`. It is the first key whose precedence is `PREC_ATOM`, and no
+   frame is climbable above `PREC_APP`, so the climb rule is a no-op for it
+   by construction — including out of a projection's own subject, which is
+   why `p.x` then `.` wraps in place and reads `p.x.y`.
+   **(c)** `C-n` and `C-d` **generalise instead of multiplying**. They meant
+   "add / drop one row of the list you are in", and until now the document
+   was the only such list; a record's fields are the second, so inside a
+   record they add and drop a *field* and everywhere else they still add and
+   drop a *definition*. The one asymmetry is deliberate: `C-n` appends a
+   field from anywhere in a record, including the record node itself, but
+   `C-d` drops the field the cursor is actually *in*, so on the record node
+   it is still the definition's — which is the only way to delete a
+   definition whose whole body is a record.
+   No new binding, no change to the key-hint line, and
+   the reserve list keeps every character `{` did not take. `C-←`/`C-→` move
+   the field the cursor is in one place earlier or later — the only genuinely
+   new pair, and the only way to reorder anything from the keyboard, which
+   the merge story needs to be real rather than an API-only capability. Like
+   `C-p`, `S-Tab`, `Del`, `Esc` and `C-r`, they are documented here and not
+   in the 80×12 hint line, which the lists entry warned was four characters
+   from full and which now carries `{.` and nothing more.
+   **(d)** The field slot is **one slot to the reader and two flavours to the
+   implementation**, and the split is forced: a projection can itself be the
+   value of a record's field, so the cursor alone cannot say which field the
+   slot is about. The flavour therefore follows how the slot was *entered*,
+   not where it sits. Both are labelled `field`, both are free-running name
+   runs, and both leave on anything they do not understand.
+   `←` from a field's value opens the **rename** flavour, where the buffer
+   *is* the field's display
+   name and every keystroke is `Rename(field, buffer)` — free text, byte for
+   byte the binder-name slot, and the payoff of the design: the same
+   keystroke renames the field at every construction site and every
+   projection in the document, because they are all the same `Id`. `.` opens
+   the **pick** flavour, where the buffer *selects* a field and every
+   keystroke is `SetField(id)` — ranked by prefix over the fields of the
+   record being projected, then over every other field in the document,
+   which is the name run with a different candidate list. `=` leaves either
+   flavour for the value, and anything the slot does not understand exits and
+   is reprocessed, as everywhere else.
+   **(e)** `.` is the fifth thing that can decline, and it declines for a
+   reason no other key has: a field is an identity, and the keyboard cannot
+   invent one. In a document with no record anywhere there is no field to
+   name, so `.` says so rather than minting a field that belongs to nothing.
+   The same argument is why `{` in an *annotation* slot is not a binding at
+   all (`DECISIONS.md`, 2026-08-29): a record type is a list of field
+   identities, a slot is free text, and a type that mints a fresh field on
+   every keystroke of a commit-live run would name fields no record has.
+   Record types are synthesised and displayed; they are not spelled.
+   **(f)** `{` **reads the expectation before it mints anything**, which is
+   the one place records differ from every other form key. A fresh field id
+   is a fresh identity, and a fresh identity is never consistent with a
+   record type that is already known, so a `{` that always minted one field
+   would be quarantined the instant it landed in a position that knew which
+   record it wanted — a definition with a record annotation, a field of
+   another record, the hole `C-n` just made. So: where a record type is
+   expected, `{` lays out *that* record's fields as holes and puts the cursor
+   in the first (or, wrapping a value that fits the first field, keeps the
+   value there and holes the rest); where none is, it mints one field, names
+   it `f0`, and puts the cursor in the value. The keystroke is the same and
+   the wrapping rule is the same; only what it writes reads the type. The
+   reachability suite found this, not the design: `{` in an annotated
+   position was unreachable until it did.
+   Pinned by `keys::tests::a_brace_writes_a_record_and_lands_in_its_field_name`,
+   `keys::tests::a_dot_projects_and_the_field_slot_picks_by_prefix`,
+   `keys::tests::control_n_and_d_address_a_field_inside_a_record_and_a_definition_outside_one`,
+   `keys::tests::renaming_a_field_renames_every_use_of_it_at_once`,
+   `complete::tests::the_fields_of_the_record_being_projected_outrank_the_rest_of_the_document`,
+   and the new `{` row of all eight columns of `tui/tests/matrix.rs` (the
+   `.` row was already there and is unchanged, because none of the eight
+   contexts contains a record for `.` to name a field of — which is item
+   19(e) showing up in the matrix rather than being argued for).
+
 Measured, replacing the predicted table's middle column (`tui/tests/keys/`,
 one keystroke per line). The 2026-08-28 column is the definition era: the
 programs are documents now, and `factorial` and `record` were rebuilt to say
@@ -747,7 +865,7 @@ what they always meant rather than what Phase 1 could express.
 |---|---|---:|---:|---:|---:|---:|
 | 1 | factorial | 84 | 28 | 33 | 0.33× | 16 / 0.19× |
 | 2 | list_map | 114 | 44 | 53 | 0.39× | 29 / 0.25× |
-| 3 | record | 65 | 46 | 40 | 0.71× | 33 / 0.51× |
+| 3 | record | 65 | 50 | 43 | 0.77× | 33 / 0.51× |
 | 4 | state_machine | 151 | 24 | 33 | 0.16× | unchanged |
 | 5 | nested_conditional | 146 | 31 | 42 | 0.21× | unchanged |
 | 6 | greeting | 127 | 52 | 56 | 0.41× | new (2026-08-29) |
@@ -758,16 +876,29 @@ number went **up** (`bench/RESULTS.md`, 2026-08-29 lists entry, and
 `bench/references.md` §2). A ratio that rises because the program got
 honest is the only kind of regression this table welcomes.
 
+Row 3 changed on 2026-08-29 when records arrived, for the same reason: the
+fixture had been a positional *pair* since Phase 1 and is now a real record
+built in one definition and projected by name in another, so the number went
+**up** again (`bench/RESULTS.md`, 2026-08-29 records entry, and
+`bench/references.md` §3). Four of its extra keystrokes are worth naming
+here because two of them are this document's business: the constructor is
+the first definition now and so has to be named, and two are `up` presses
+that walk the cursor out of the record before `C-n` means "new definition"
+rather than "new field" (item 19(c)). The annotations got *shorter*, which
+is not a saving — a record type is never spelled, so two positions the pair
+fixture typed as `Num * Num` are holes.
+
 Row 6 arrived with strings on 2026-08-29 and is the first reference whose
 cost is mostly *content*: 27 of its 52 keystrokes are the characters and
 quotes of four string literals, which no projection can make cheaper. The
-structure cost 25. The other five rows are byte-identical to 2026-08-28 —
-the string run taxed nothing that existed.
+structure cost 25. The other five rows were byte-identical to 2026-08-28 when the string run
+landed — it taxed nothing that existed.
 
-`record` is still the number to watch, and it got worse for a good reason:
-its constructor is a named, annotated top-level definition instead of a
-`let`, which is thirteen more keystrokes and five *fewer* primitive actions.
-The three unchanged rows are the control — the definition bindings cost
+`record` is still the number to watch, and it has now got worse twice for
+good reasons: in the definition era its constructor became a named,
+annotated top-level definition instead of a `let`, and with records its
+fields acquired names the pair never had. The three unchanged rows are the
+control — the definition bindings cost
 nothing in a program that does not use them. These are the editor's own
 numbers; the dated ratios in `bench/RESULTS.md` are written by the benchmark
 re-run.

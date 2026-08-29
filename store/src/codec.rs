@@ -180,6 +180,14 @@ pub fn encode_ty(buf: &mut Vec<u8>, ty: &Ty) {
             buf.push(6);
             encode_ty(buf, elem);
         }
+        Ty::Record(fields) => {
+            buf.push(7);
+            write_varint(buf, fields.len() as u64);
+            for (id, ty) in fields {
+                write_id(buf, *id);
+                encode_ty(buf, ty);
+            }
+        }
     }
 }
 
@@ -200,6 +208,15 @@ pub fn decode_ty(bytes: &[u8], pos: &mut usize) -> Result<Ty, DecodeError> {
         4 => Ok(Ty::Hole),
         5 => Ok(Ty::Str),
         6 => Ok(Ty::List(Box::new(decode_ty(bytes, pos)?))),
+        7 => {
+            let count = read_varint(bytes, pos)? as usize;
+            let mut fields = Vec::with_capacity(count.min(1024));
+            for _ in 0..count {
+                let id = read_id(bytes, pos)?;
+                fields.push((id, decode_ty(bytes, pos)?));
+            }
+            Ok(Ty::Record(fields))
+        }
         other => Err(DecodeError::BadTag(other)),
     }
 }

@@ -180,6 +180,75 @@ fn run_and_check_handle_a_list_program() {
 }
 
 #[test]
+fn run_and_check_handle_a_record_program() {
+    use nothing_core::exp::{HoleId, Id, Op};
+    use nothing_core::names::NameTable;
+    use nothing_core::ty::Ty;
+
+    let width = Id::from_u128(0x11);
+    let height = Id::from_u128(0x12);
+    let p = Id::from_u128(0x13);
+    let mut names = NameTable::new();
+    names.set(width, "width");
+    names.set(height, "height");
+    names.set(p, "p");
+
+    let area = Exp::ap(
+        Exp::lam(
+            p,
+            Ty::Hole,
+            Exp::bin_op(
+                Op::Mul,
+                Exp::field(Exp::var(p), width),
+                Exp::field(Exp::var(p), height),
+            ),
+        ),
+        Exp::record([(width, Exp::num(3)), (height, Exp::num(4))]),
+    );
+
+    let path = scratch_dir().join("run-record.nothing");
+    let doc = Document::new(area, names.clone(), ActionLog::new());
+    std::fs::write(&path, encode_document(&doc)).unwrap();
+
+    let (code, stdout, _) = run(&["check", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert!(stdout.contains("well-typed: true"), "stdout: {stdout}");
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert_eq!(
+        stdout.trim(),
+        "12",
+        "the field names survived the round trip"
+    );
+
+    let half = Exp::record([
+        (width, Exp::num(3)),
+        (height, Exp::empty_hole(HoleId::from_u128(7))),
+    ]);
+    let path = scratch_dir().join("run-record-hole.nothing");
+    let doc = Document::new(half.clone(), names.clone(), ActionLog::new());
+    std::fs::write(&path, encode_document(&doc)).unwrap();
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 2, "stdout: {stdout}");
+    assert!(
+        stdout.contains("{width = 3, height = ⦇⦈}"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("blocked on hole"), "stdout: {stdout}");
+
+    let path = scratch_dir().join("run-record-projection.nothing");
+    let doc = Document::new(Exp::field(half, width), names, ActionLog::new());
+    std::fs::write(&path, encode_document(&doc)).unwrap();
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert_eq!(
+        stdout.trim(),
+        "3",
+        "projecting the filled field of a half-written record still answers"
+    );
+}
+
+#[test]
 fn run_reports_an_indeterminate_result_and_its_hole() {
     let path = write_fixture("run-indeterminate.nothing", examples::add_with_empty_hole());
     let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);

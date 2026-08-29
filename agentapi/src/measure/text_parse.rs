@@ -1,6 +1,6 @@
-use nothing_action::script::parse_ty;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::names::NameTable;
+use nothing_core::ty::Ty;
 
 const KEYWORDS: &[&str] = &[
     "if", "then", "else", "let", "in", "true", "false", "fst", "snd", "nil", "fold",
@@ -42,6 +42,7 @@ pub fn parse_program(text: &str) -> Result<Parsed, TextError> {
         chars: text.chars().collect(),
         pos: 0,
         scope: Vec::new(),
+        fields: Vec::new(),
         next_id: 0,
         next_hole: 0,
         names: &mut names,
@@ -60,6 +61,7 @@ struct Parser<'a> {
     chars: Vec<char>,
     pos: usize,
     scope: Vec<(String, Id)>,
+    fields: Vec<(String, Id)>,
     next_id: u128,
     next_hole: u128,
     names: &'a mut NameTable,
@@ -132,6 +134,90 @@ impl Parser<'_> {
         HoleId::from_u128(0x686f_6c65_0000_0000_0000_0000_0000_0000 | self.next_hole)
     }
 
+    fn field_id(&mut self, name: &str) -> Id {
+        if let Some((_, id)) = self.fields.iter().find(|(known, _)| known == name) {
+            return *id;
+        }
+        let id = self.fresh_id();
+        self.names.set(id, name.to_string());
+        self.fields.push((name.to_string(), id));
+        id
+    }
+
+    fn ty_arrow(&mut self) -> Result<Ty, TextError> {
+        let left = self.ty_prod()?;
+        if self.eat_symbol("->") {
+            let right = self.ty_arrow()?;
+            return Ok(Ty::Arrow(Box::new(left), Box::new(right)));
+        }
+        Ok(left)
+    }
+
+    fn ty_prod(&mut self) -> Result<Ty, TextError> {
+        let mut left = self.ty_atom()?;
+        while self.eat_symbol("*") {
+            let right = self.ty_atom()?;
+            left = Ty::Prod(Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn ty_atom(&mut self) -> Result<Ty, TextError> {
+        self.skip_ws();
+        match self.peek() {
+            Some('?') => {
+                self.pos += 1;
+                Ok(Ty::Hole)
+            }
+            Some('(') => {
+                self.pos += 1;
+                let inner = self.ty_arrow()?;
+                if !self.eat_symbol(")") {
+                    return Err(TextError("unclosed `(` in a type".to_string()));
+                }
+                Ok(inner)
+            }
+            Some('{') => self.ty_record(),
+            _ => match self.take_word() {
+                None => Err(TextError("expected a type".to_string())),
+                Some(word) => match word.to_ascii_lowercase().as_str() {
+                    "num" => Ok(Ty::Num),
+                    "bool" => Ok(Ty::Bool),
+                    "str" => Ok(Ty::Str),
+                    "hole" => Ok(Ty::Hole),
+                    "list" => Ok(Ty::List(Box::new(self.ty_atom()?))),
+                    _ => Err(TextError(format!("unknown type `{word}`"))),
+                },
+            },
+        }
+    }
+
+    fn ty_record(&mut self) -> Result<Ty, TextError> {
+        self.pos += 1;
+        let mut fields = Vec::new();
+        if self.eat_symbol("}") {
+            return Ok(Ty::Record(fields));
+        }
+        loop {
+            self.skip_ws();
+            let name = self
+                .take_word()
+                .ok_or_else(|| TextError("a record type field needs a name".to_string()))?;
+            if !self.eat_symbol(":") {
+                return Err(TextError("a record type field needs `:`".to_string()));
+            }
+            let ty = self.ty_arrow()?;
+            fields.push((self.field_id(&name), ty));
+            if self.eat_symbol(",") {
+                continue;
+            }
+            if self.eat_symbol("}") {
+                return Ok(Ty::Record(fields));
+            }
+            return Err(TextError("a record type needs `,` or `}`".to_string()));
+        }
+    }
+
     fn lookup(&self, name: &str) -> Option<Id> {
         self.scope
             .iter()
@@ -167,18 +253,12 @@ impl Parser<'_> {
                 "a lambda parameter needs `:` and a type".to_string(),
             ));
         }
-        let start = self.pos;
-        while matches!(self.peek(), Some(c) if c != '.') {
-            self.pos += 1;
-        }
-        if self.peek() != Some('.') {
+        let ty = self.ty_arrow()?;
+        if !self.eat_symbol(".") {
             return Err(TextError(
                 "a lambda annotation must end with `.`".to_string(),
             ));
         }
-        let ty_text: String = self.chars[start..self.pos].iter().collect();
-        self.pos += 1;
-        let ty = parse_ty(ty_text.trim()).map_err(|e| TextError(e.to_string()))?;
 
         let id = self.fresh_id();
         self.names.set(id, name.clone());
@@ -317,7 +397,7 @@ impl Parser<'_> {
 
     fn starts_atom(&mut self) -> bool {
         match self.peek() {
-            Some('(') | Some('⦇') | Some('?') | Some('"') => true,
+            Some('(') | Some('⦇') | Some('?') | Some('"') | Some('{') => true,
             Some(c) if c.is_ascii_digit() => true,
             Some('-') => matches!(self.chars.get(self.pos + 1), Some(c) if c.is_ascii_digit()),
             Some(c) if c.is_alphabetic() || c == '_' => match self.peek_word() {
@@ -329,6 +409,47 @@ impl Parser<'_> {
     }
 
     fn atom(&mut self) -> Result<Exp, TextError> {
+        let mut head = self.base_atom()?;
+        while self.peek() == Some('.')
+            && matches!(self.chars.get(self.pos + 1), Some(c) if c.is_alphanumeric() || *c == '_')
+        {
+            self.pos += 1;
+            let name = self
+                .take_word()
+                .ok_or_else(|| TextError("a projection needs a field name".to_string()))?;
+            let id = self.field_id(&name);
+            head = Exp::field(head, id);
+        }
+        Ok(head)
+    }
+
+    fn record(&mut self) -> Result<Exp, TextError> {
+        self.pos += 1;
+        let mut fields = Vec::new();
+        if self.eat_symbol("}") {
+            return Ok(Exp::record(fields));
+        }
+        loop {
+            self.skip_ws();
+            let name = self
+                .take_word()
+                .ok_or_else(|| TextError("a record field needs a name".to_string()))?;
+            if !self.eat_symbol("=") {
+                return Err(TextError("a record field needs `=`".to_string()));
+            }
+            let value = self.expr()?;
+            fields.push((self.field_id(&name), value));
+            if self.eat_symbol(",") {
+                continue;
+            }
+            if self.eat_symbol("}") {
+                return Ok(Exp::record(fields));
+            }
+            return Err(TextError("a record needs `,` or `}`".to_string()));
+        }
+    }
+
+    fn base_atom(&mut self) -> Result<Exp, TextError> {
         self.skip_ws();
         match self.peek() {
             None => Err(TextError("unexpected end of program".to_string())),
@@ -370,6 +491,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 Ok(first)
             }
+            Some('{') => self.record(),
             Some('"') => self.string(),
             Some(c) if c.is_ascii_digit() || c == '-' => self.number(),
             Some(c) if c.is_alphabetic() || c == '_' => {
@@ -521,9 +643,46 @@ mod tests {
             "(1, 2",
             "⦇1",
             "then",
+            "{x = 1",
+            "{x 1}",
+            "λp:{x: Num. p",
+            "λp:{x Num}. p",
         ] {
             assert!(parse_program(text).is_err(), "`{text}` should not parse");
         }
+    }
+
+    #[test]
+    fn a_record_and_a_projection_survive_the_round_trip() {
+        let parsed = parse_program("{x = 1, y = true}.x").unwrap();
+        assert!(is_well_typed(&parsed.exp));
+        assert_eq!(render(&parsed.exp, &parsed.names), "{x = 1, y = true}.x");
+
+        let empty = parse_program("{}").unwrap();
+        assert_eq!(render(&empty.exp, &empty.names), "{}");
+    }
+
+    #[test]
+    fn a_field_name_means_the_same_field_everywhere_in_the_text() {
+        let parsed = parse_program("λp:{x: Num, y: Bool}. p.x + 1").unwrap();
+        assert!(
+            is_well_typed(&parsed.exp),
+            "the annotation and the projection must name one field, not two"
+        );
+        assert_eq!(
+            render(&parsed.exp, &parsed.names),
+            "λp:{x: Num, y: Bool}. p.x + 1"
+        );
+    }
+
+    #[test]
+    fn a_projection_binds_tighter_than_an_application() {
+        let parsed = parse_program("λf:Num -> Num. λp:{x: Num}. f p.x").unwrap();
+        assert!(is_well_typed(&parsed.exp));
+        assert_eq!(
+            render(&parsed.exp, &parsed.names),
+            "λf:Num -> Num. λp:{x: Num}. f p.x"
+        );
     }
 
     #[test]

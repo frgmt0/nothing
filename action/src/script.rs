@@ -13,6 +13,9 @@ pub enum Step {
     Rename(String),
     RenameDef(String),
     Def(String),
+    Field(String),
+    PickField(String),
+    RenameField(String),
 }
 
 impl Step {
@@ -34,8 +37,57 @@ impl Step {
                 Some(id) => Ok(Action::MoveToDef(id)),
                 None => Err(ParseError(format!("no definition named `{name}`"))),
             },
+            Step::Field(name) => match lookup_field(state, name) {
+                Some(id) => Ok(Action::ConstructField(id)),
+                None => Err(ParseError(format!(
+                    "no field named `{name}` in this document"
+                ))),
+            },
+            Step::PickField(name) => match lookup_field(state, name) {
+                Some(id) => Ok(Action::SetField(id)),
+                None => Err(ParseError(format!(
+                    "no field named `{name}` in this document"
+                ))),
+            },
+            Step::RenameField(name) => match state.zipper.record_field_id() {
+                Some(id) => Ok(Action::Rename(id, name.clone())),
+                None => Err(ParseError(
+                    "`rename-field` needs the cursor on a record field's value".to_string(),
+                )),
+            },
         }
     }
+}
+
+pub fn fields_in_view(state: &EditState) -> Vec<Id> {
+    let mut out: Vec<Id> = Vec::new();
+    if let Some(subject) = subject_fields(state) {
+        out.extend(subject);
+    }
+    for id in state.field_ids() {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+fn subject_fields(state: &EditState) -> Option<Vec<Id>> {
+    let ctx = crate::act::ctx_at_in(&state.scope(), &state.zipper);
+    let subject = match &state.zipper.focus {
+        nothing_core::exp::Exp::Field(subject, _) => (**subject).clone(),
+        other => other.clone(),
+    };
+    match nothing_core::typing::syn(&ctx, &subject)? {
+        Ty::Record(fields) => Some(fields.into_iter().map(|(id, _)| id).collect()),
+        _ => None,
+    }
+}
+
+fn lookup_field(state: &EditState, name: &str) -> Option<Id> {
+    fields_in_view(state)
+        .into_iter()
+        .find(|id| state.names.get(*id) == Some(name))
 }
 
 fn lookup_in_scope(state: &EditState, name: &str) -> Option<Id> {
@@ -113,6 +165,15 @@ editing:
   construct-proj SIDE     e becomes fst e / snd e   (l|r, fst|snd, left|right)
   construct-cons          e becomes e :: ⦇⦈
   construct-fold          e becomes fold e ⦇⦈ ⦇⦈
+  construct-record        e becomes {f0 = e}, a record of one named field
+  construct-field NAME    e becomes e.NAME, projecting an existing field
+  add-field               one more field on this record, holding a hole
+  remove-field            drop this field; every e.NAME becomes ⦇e⦈
+  move-field-prev         move this field one place earlier
+  move-field-next         move this field one place later
+  set-field NAME          re-aim the focused projection at another field
+  rename-field NAME       give this record's field the display name NAME
+  set-field-id UUID       re-identify this record's field
   construct-non-empty-hole  e becomes ⦇e⦈
   set-ann TY              set the focused lambda's annotation
                           TY := Num | Bool | Str | ? | List TY
@@ -191,6 +252,15 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
         "construct-proj" => act(Action::ConstructProj(parse_side(rest)?)),
         "construct-cons" => no_arg(Action::ConstructCons),
         "construct-fold" => no_arg(Action::ConstructFold),
+        "construct-record" => no_arg(Action::ConstructRecord),
+        "construct-field" => Ok(Step::Field(parse_name(head, rest)?)),
+        "add-field" => no_arg(Action::AddField),
+        "remove-field" => no_arg(Action::RemoveField),
+        "move-field-prev" => no_arg(Action::MoveFieldPrev),
+        "move-field-next" => no_arg(Action::MoveFieldNext),
+        "set-field" => Ok(Step::PickField(parse_name(head, rest)?)),
+        "set-field-id" => act(Action::SetFieldId(parse_id(head, rest)?)),
+        "rename-field" => Ok(Step::RenameField(parse_name(head, rest)?)),
         "construct-non-empty-hole" => no_arg(Action::ConstructNonEmptyHole),
 
         "set-ann" => act(Action::SetAnn(parse_ty(rest)?)),
@@ -218,6 +288,9 @@ pub fn step_name(step: &Step) -> String {
         Step::Rename(name) => format!("rename {name}"),
         Step::RenameDef(name) => format!("rename-def {name}"),
         Step::Def(name) => format!("move-to-def {name}"),
+        Step::Field(name) => format!("construct-field {name}"),
+        Step::PickField(name) => format!("set-field {name}"),
+        Step::RenameField(name) => format!("rename-field {name}"),
     }
 }
 
@@ -242,6 +315,14 @@ pub fn action_name(action: &Action) -> String {
         Action::ConstructProj(side) => format!("construct-proj {}", side_name(*side)),
         Action::ConstructCons => "construct-cons".to_string(),
         Action::ConstructFold => "construct-fold".to_string(),
+        Action::ConstructRecord => "construct-record".to_string(),
+        Action::ConstructField(id) => format!("construct-field {id}"),
+        Action::AddField => "add-field".to_string(),
+        Action::RemoveField => "remove-field".to_string(),
+        Action::MoveFieldPrev => "move-field-prev".to_string(),
+        Action::MoveFieldNext => "move-field-next".to_string(),
+        Action::SetField(id) => format!("set-field {id}"),
+        Action::SetFieldId(id) => format!("set-field-id {id}"),
         Action::ConstructNonEmptyHole => "construct-non-empty-hole".to_string(),
         Action::SetAnn(ty) => format!("set-ann {ty}"),
         Action::SetBinderId(id) => format!("set-binder-id {id}"),

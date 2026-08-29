@@ -19,9 +19,10 @@ pub fn extend(base: &[usize], step: usize) -> Path {
 pub fn arity(exp: &Exp) -> usize {
     match exp {
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => 0,
-        Exp::Lam(..) | Exp::Proj(..) | Exp::NonEmptyHole(..) => 1,
+        Exp::Lam(..) | Exp::Proj(..) | Exp::Field(..) | Exp::NonEmptyHole(..) => 1,
         Exp::Ap(..) | Exp::BinOp(..) | Exp::Let(..) | Exp::Pair(..) | Exp::Cons(..) => 2,
         Exp::If(..) | Exp::Fold(..) => 3,
+        Exp::Record(fields) => fields.len(),
     }
 }
 
@@ -46,6 +47,8 @@ pub fn child(exp: &Exp, n: usize) -> Option<&Exp> {
         (Exp::Fold(l, _, _), 0) => Some(l),
         (Exp::Fold(_, i, _), 1) => Some(i),
         (Exp::Fold(_, _, s), 2) => Some(s),
+        (Exp::Field(subject, _), 0) => Some(subject),
+        (Exp::Record(fields), n) => fields.get(n).map(|(_, value)| value),
         _ => None,
     }
 }
@@ -71,6 +74,12 @@ pub fn with_child(exp: &Exp, n: usize, new: Exp) -> Option<Exp> {
         (Exp::Fold(_, i, s), 0) => Exp::Fold(Box::new(new), i.clone(), s.clone()),
         (Exp::Fold(l, _, s), 1) => Exp::Fold(l.clone(), Box::new(new), s.clone()),
         (Exp::Fold(l, i, _), 2) => Exp::Fold(l.clone(), i.clone(), Box::new(new)),
+        (Exp::Field(_, id), 0) => Exp::Field(Box::new(new), *id),
+        (Exp::Record(fields), n) if n < fields.len() => {
+            let mut fields = fields.clone();
+            fields[n].1 = new;
+            Exp::Record(fields)
+        }
         _ => return None,
     };
     Some(out)
@@ -123,6 +132,8 @@ pub fn label(exp: &Exp, path: &[usize]) -> String {
             (Exp::If(..), 0) => "an if condition",
             (Exp::If(..), 1) => "an if then-branch",
             (Exp::If(..), _) => "an if else-branch",
+            (Exp::Record(..), _) => "the value of a record field",
+            (Exp::Field(..), _) => "the subject of a projection",
             _ => "an unreachable position",
         };
         words.push(word);

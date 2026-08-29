@@ -13,6 +13,7 @@ use nothing_store::document::{Document, VERSION_MAJOR};
 use nothing_store::v1::encode_document_v1;
 use nothing_store::v2::encode_document_v2;
 use nothing_store::v3::encode_document_v3;
+use nothing_store::v4::encode_document_v4;
 use nothing_store::{decode_document, encode_document};
 
 const FACTORIAL: &str = include_str!("../../bench/fixtures/factorial.actions");
@@ -32,6 +33,10 @@ fn v2_fixture_dir() -> PathBuf {
 
 fn v3_fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v3")
+}
+
+fn v4_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4")
 }
 
 fn sample_log() -> ActionLog {
@@ -168,6 +173,7 @@ fn every_migrated_artifact_round_trips_at_the_current_version() {
         .into_iter()
         .chain(v2_artifacts())
         .chain(v3_artifacts())
+        .chain(v4_artifacts())
     {
         let bytes = fs::read(&path).expect("the artifact is readable");
         let migrated = decode_document(&bytes).expect("the artifact migrates");
@@ -249,7 +255,7 @@ fn every_version_two_artifact_opens_under_version_three() {
             doc.doc.is_well_typed(),
             "{path:?} migrated to an ill-typed document"
         );
-        assert!(doc.doc.len() >= 1, "{path:?} migrated to no definitions");
+        assert!(!doc.doc.is_empty(), "{path:?} migrated to no definitions");
     }
 }
 
@@ -328,7 +334,7 @@ fn every_version_three_artifact_opens_under_version_four() {
             doc.doc.is_well_typed(),
             "{path:?} migrated to an ill-typed document"
         );
-        assert!(doc.doc.len() >= 1, "{path:?} migrated to no definitions");
+        assert!(!doc.doc.is_empty(), "{path:?} migrated to no definitions");
     }
 }
 
@@ -344,10 +350,131 @@ fn a_version_three_document_keeps_every_definition_it_had() {
     }
 }
 
+fn every_v4_program() -> Vec<(String, Doc, NameTable)> {
+    let mut out = every_v3_program();
+    out.push((
+        "list_sum".to_string(),
+        Doc::single(list_sum_program()),
+        NameTable::new(),
+    ));
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn ensure_v4_fixtures() {
+    let dir = v4_fixture_dir();
+    fs::create_dir_all(&dir).expect("the fixture directory is creatable");
+    for (name, doc, names) in every_v4_program() {
+        if doc.defs().iter().any(|def| mentions_a_record(&def.body)) {
+            continue;
+        }
+        let path = dir.join(format!("{name}.v4.nothing"));
+        if !path.exists() {
+            let document = Document::from_doc(doc, names, sample_log());
+            fs::write(&path, encode_document_v4(&document)).expect("the fixture is writable");
+        }
+    }
+}
+
+fn v4_artifacts() -> Vec<PathBuf> {
+    ensure_v4_fixtures();
+    let mut paths: Vec<PathBuf> = fs::read_dir(v4_fixture_dir())
+        .expect("the fixture directory exists")
+        .map(|entry| entry.expect("a readable directory entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "nothing"))
+        .collect();
+    paths.sort();
+    paths
+}
+
 #[test]
-fn a_version_four_file_carries_a_list_no_earlier_version_could() {
-    use nothing_core::exp::Exp;
-    let program = Exp::fold(
+fn there_are_version_four_artifacts_to_migrate() {
+    let paths = v4_artifacts();
+    assert!(
+        paths.len() >= 16,
+        "only {} v4 artifacts were found; the v4 migration path is barely exercised",
+        paths.len()
+    );
+    for path in &paths {
+        let bytes = fs::read(path).expect("the artifact is readable");
+        assert_eq!(&bytes[0..4], b"NTHG", "{path:?} is not a nothing file");
+        assert_eq!(
+            bytes[4], 4,
+            "{path:?} is not version 4, so it does not test migration"
+        );
+    }
+}
+
+#[test]
+fn every_version_four_artifact_opens_under_version_five() {
+    for path in v4_artifacts() {
+        let bytes = fs::read(&path).expect("the artifact is readable");
+        let doc =
+            decode_document(&bytes).unwrap_or_else(|e| panic!("{path:?} failed to migrate: {e:?}"));
+        assert!(
+            doc.doc.is_well_typed(),
+            "{path:?} migrated to an ill-typed document"
+        );
+        assert!(!doc.doc.is_empty(), "{path:?} migrated to no definitions");
+    }
+}
+
+fn mentions_a_record(exp: &Exp) -> bool {
+    fn ty_mentions(ty: &Ty) -> bool {
+        match ty {
+            Ty::Record(_) => true,
+            Ty::Arrow(a, b) | Ty::Prod(a, b) => ty_mentions(a) || ty_mentions(b),
+            Ty::List(a) => ty_mentions(a),
+            Ty::Num | Ty::Bool | Ty::Str | Ty::Hole => false,
+        }
+    }
+    match exp {
+        Exp::Record(_) | Exp::Field(_, _) => true,
+        Exp::Lam(_, ty, body) => ty_mentions(ty) || mentions_a_record(body),
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            false
+        }
+        Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => mentions_a_record(e),
+        Exp::Ap(a, b)
+        | Exp::BinOp(_, a, b)
+        | Exp::Let(_, a, b)
+        | Exp::Pair(a, b)
+        | Exp::Cons(a, b) => mentions_a_record(a) || mentions_a_record(b),
+        Exp::If(a, b, c) | Exp::Fold(a, b, c) => {
+            mentions_a_record(a) || mentions_a_record(b) || mentions_a_record(c)
+        }
+    }
+}
+
+#[test]
+fn no_version_four_artifact_contains_a_version_five_form() {
+    for path in v4_artifacts() {
+        let bytes = fs::read(&path).expect("the artifact is readable");
+        let document = decode_document(&bytes).expect("the artifact decodes");
+        for def in document.doc.defs() {
+            assert!(
+                !mentions_a_record(&def.body),
+                "{path:?} contains a record, so it is not bytes a version-4 build could have \
+                 written and it does not test the migration it claims to"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_version_four_document_keeps_every_definition_it_had() {
+    for (name, doc, names) in every_v4_program() {
+        let before = Document::from_doc(doc, names, sample_log());
+        let bytes = encode_document_v4(&before);
+        assert_eq!(bytes[4], 4, "{name} was not written as version 4");
+        let after = decode_document(&bytes).expect("the v4 bytes migrate");
+        assert_eq!(after.doc, before.doc, "{name} lost a definition");
+        assert_eq!(after.log, before.log, "{name} lost its action log");
+    }
+}
+
+fn list_sum_program() -> Exp {
+    Exp::fold(
         Exp::list([Exp::num(1), Exp::num(2), Exp::num(3)]),
         Exp::num(0),
         Exp::lam(
@@ -363,7 +490,12 @@ fn a_version_four_file_carries_a_list_no_earlier_version_could() {
                 ),
             ),
         ),
-    );
+    )
+}
+
+#[test]
+fn a_version_four_file_carries_a_list_no_earlier_version_could() {
+    let program = list_sum_program();
     let document = Document::new(program.clone(), NameTable::new(), sample_log());
     let bytes = encode_document(&document);
     assert_eq!(bytes[4], VERSION_MAJOR);

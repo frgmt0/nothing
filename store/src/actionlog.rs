@@ -77,6 +77,23 @@ fn encode_action_body(buf: &mut Vec<u8>, action: &Action) {
         Action::ConstructNil => buf.push(27),
         Action::ConstructCons => buf.push(28),
         Action::ConstructFold => buf.push(29),
+        Action::ConstructRecord => buf.push(30),
+        Action::ConstructField(id) => {
+            buf.push(31);
+            write_id(buf, *id);
+        }
+        Action::AddField => buf.push(32),
+        Action::RemoveField => buf.push(33),
+        Action::MoveFieldPrev => buf.push(34),
+        Action::MoveFieldNext => buf.push(35),
+        Action::SetField(id) => {
+            buf.push(36);
+            write_id(buf, *id);
+        }
+        Action::SetFieldId(id) => {
+            buf.push(37);
+            write_id(buf, *id);
+        }
     }
 }
 
@@ -149,6 +166,23 @@ fn decode_action_body(bytes: &[u8], pos: &mut usize) -> Result<Action, DecodeErr
         27 => Ok(Action::ConstructNil),
         28 => Ok(Action::ConstructCons),
         29 => Ok(Action::ConstructFold),
+        30 => Ok(Action::ConstructRecord),
+        31 => {
+            let id = read_id(bytes, pos)?;
+            Ok(Action::ConstructField(id))
+        }
+        32 => Ok(Action::AddField),
+        33 => Ok(Action::RemoveField),
+        34 => Ok(Action::MoveFieldPrev),
+        35 => Ok(Action::MoveFieldNext),
+        36 => {
+            let id = read_id(bytes, pos)?;
+            Ok(Action::SetField(id))
+        }
+        37 => {
+            let id = read_id(bytes, pos)?;
+            Ok(Action::SetFieldId(id))
+        }
         other => Err(DecodeError::BadTag(other)),
     }
 }
@@ -204,6 +238,33 @@ mod tests {
         let decoded = decode_log(&buf, &mut pos).unwrap();
 
         assert_eq!(decoded, log);
+        assert_eq!(pos, buf.len());
+    }
+
+    #[test]
+    fn every_field_action_round_trips_through_the_log() {
+        let field = Id::from_u128(4);
+        let mut log = ActionLog::new();
+        for (i, action) in [
+            Action::ConstructRecord,
+            Action::ConstructField(field),
+            Action::AddField,
+            Action::RemoveField,
+            Action::MoveFieldPrev,
+            Action::MoveFieldNext,
+            Action::SetField(field),
+            Action::SetFieldId(field),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            log.append(action, i as u64, AuthorId::new(1));
+        }
+
+        let mut buf = Vec::new();
+        encode_log(&mut buf, &log);
+        let mut pos = 0;
+        assert_eq!(decode_log(&buf, &mut pos).unwrap(), log);
         assert_eq!(pos, buf.len());
     }
 }

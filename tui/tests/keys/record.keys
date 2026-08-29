@@ -1,66 +1,76 @@
 # 3. Two-field record constructor plus accessor — bench/references.md §3,
-#    definition era:
+#    with real records:
 #
-#   main : Num * Num -> Num = λx0:Num * Num. fst x0
-#   mk : Num -> Num -> Num * Num = λx1:Num. λx2:Num. (x1, x2)
+#   mk   : Num -> Num -> ? = λx1:Num. λx2:Num. {x = x1, y = x2}
+#   main : ? -> Num        = λp:?. p.x
 #
-# What Phase 1 had to smuggle through a `let` is now what it always was: two
-# top-level definitions. The constructor gets a name and a type of its own.
+# What Phase 1 had to smuggle through a positional pair now has field names,
+# minted once in `mk` and read by name in `main`. The two parameter types
+# that used to be spelled `Num * Num` are holes, because a record type is a
+# list of field identities and identities are not spelled.
 
-# main = λx0:Num * Num. fst x0
+# rename this definition to mk
+C-l
+m
+k
+.
+
+# λx1:Num. λx2:Num. {x = x1, y = x2}
 \
 x
-0
+1
 :
 n
-*
+.
+
+\
+x
+2
+:
 n
 .
-[          # fst
-x
-0
 
-# main : Num * Num -> Num
+{          # the record, cursor in the first field's name
+x
+=
+x
+1
+
+C-n        # one more field, cursor in its name
+y
+=
+x
+2
+
+up         # out of the field
+up         # out of the record, so C-n means a definition again
+
+# mk : Num -> Num -> ?
 C-t
-n
-*
 n
 >
 n
+>
+?
 
 # a second definition, cursor in its name slot
 C-n
 m
-k
+a
+i
+n
 .          # → the body
 
-# λx1:Num. λx2:Num. (x1, x2)
+# λp:?. p.x
 \
-x
-1
-:
-n
+p
 .
+.          # the projection, cursor in its field slot
+=          # leave the field slot for the subject
+p
 
-\
-x
-2
-:
-n
-.
-
-x
-1
-,
-x
-2
-
-# mk : Num -> Num -> Num * Num
+# main : ? -> Num
 C-t
-n
+?
 >
-n
->
-n
-*
 n

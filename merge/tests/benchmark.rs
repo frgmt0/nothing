@@ -108,3 +108,41 @@ fn the_table_is_reproducible_and_names_its_own_invocation() {
     let t = totals(&first);
     assert!(body.contains(&format!("| {} |", t.scenarios)));
 }
+
+#[test]
+fn two_branches_that_rename_and_reorder_the_fields_of_one_record_merge_cleanly() {
+    let scenario = nothing_merge::scenarios::all()
+        .into_iter()
+        .find(|s| s.name == "two branches rename and reorder the fields of the same record")
+        .expect("the record scenario is in the table");
+
+    let outcome = nothing_merge::merge3::merge(&scenario.base, &scenario.ours, &scenario.theirs);
+    assert!(
+        outcome.conflicts.is_empty(),
+        "the record scenario must merge cleanly: {}",
+        outcome.report()
+    );
+    let merged = nothing_core::render::render(&outcome.merged.exp, &outcome.merged.names);
+    assert!(
+        merged.ends_with("{thickness = 5, span = 3, height = 4}"),
+        "both renames and the reorder must survive the merge: {merged}"
+    );
+    assert!(nothing_core::typing::is_well_typed(&outcome.merged.exp));
+
+    let Some(rows) = rows() else { return };
+    let row = rows
+        .iter()
+        .find(|r| r.name == scenario.name)
+        .expect("the harness ran it");
+    assert!(
+        !row.git_clean,
+        "the same three versions must conflict under `git merge-file`, or the comparison proves \
+         nothing"
+    );
+    assert!(
+        row.git_output.contains("<<<<<<<"),
+        "and the conflict must be in the rendered text git was given: {}",
+        row.git_output
+    );
+    assert!(row.structural_clean && row.structural_well_typed);
+}

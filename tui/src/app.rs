@@ -21,6 +21,8 @@ pub enum Slot {
     Annotation,
     DefName,
     DefAnn,
+    FieldName,
+    FieldPick,
 }
 
 impl Slot {
@@ -31,7 +33,12 @@ impl Slot {
             Slot::Annotation => "annotation",
             Slot::DefName => "definition name",
             Slot::DefAnn => "definition type",
+            Slot::FieldName | Slot::FieldPick => "field",
         }
+    }
+
+    pub fn names_a_field(self) -> bool {
+        matches!(self, Slot::FieldName | Slot::FieldPick)
     }
 }
 
@@ -293,19 +300,27 @@ impl AppState {
 
     pub fn move_down(&self) -> Option<AppState> {
         match self.slot {
-            Slot::BinderName | Slot::Annotation => None,
+            Slot::BinderName | Slot::Annotation | Slot::FieldName | Slot::FieldPick => None,
             Slot::DefName => Some(self.in_slot(Slot::DefAnn)),
             Slot::DefAnn => Some(self.in_slot(Slot::Node)),
             Slot::Node => match self.binder_kind() {
                 Some(_) => Some(self.in_slot(Slot::BinderName)),
-                None => self.apply_actions(&[Action::MoveChild(0)]),
+                None => {
+                    let into = self.apply_actions(&[Action::MoveChild(0)])?;
+                    Some(match into.edit.zipper.record_field_id() {
+                        Some(_) => into.in_slot(Slot::FieldName),
+                        None => into,
+                    })
+                }
             },
         }
     }
 
     pub fn move_up(&self) -> Option<AppState> {
         match self.slot {
-            Slot::BinderName | Slot::Annotation => Some(self.in_slot(Slot::Node)),
+            Slot::BinderName | Slot::Annotation | Slot::FieldName | Slot::FieldPick => {
+                Some(self.in_slot(Slot::Node))
+            }
             Slot::DefName => None,
             Slot::DefAnn => Some(self.in_slot(Slot::DefName)),
             Slot::Node => match self.apply_actions(&[Action::MoveParent]) {
@@ -326,8 +341,13 @@ impl AppState {
 
             (Slot::Annotation, _) => self.apply_actions(&[Action::MoveChild(0)]),
             (Slot::BinderName, None) => None,
+            (Slot::FieldName | Slot::FieldPick, _) => Some(self.in_slot(Slot::Node)),
             (Slot::Node, _) => match self.edit.zipper.path.last() {
                 Some(Frame::LamBody(..)) | Some(Frame::LetBody(..)) => None,
+                Some(Frame::RecordField(..)) => Some(
+                    self.apply_actions(&[Action::MoveNextSibling])?
+                        .in_slot(Slot::FieldName),
+                ),
                 Some(_) => self.apply_actions(&[Action::MoveNextSibling]),
                 None => None,
             },
@@ -340,7 +360,8 @@ impl AppState {
             Slot::DefAnn => Some(self.in_slot(Slot::DefName)),
             Slot::Annotation => Some(self.in_slot(Slot::BinderName)),
 
-            Slot::BinderName => None,
+            Slot::BinderName | Slot::FieldPick => None,
+            Slot::FieldName => self.apply_actions(&[Action::MovePrevSibling]),
             Slot::Node => match self.edit.zipper.path.last() {
                 Some(Frame::LamBody(..)) => Some(
                     self.apply_actions(&[Action::MoveParent])?
@@ -350,10 +371,37 @@ impl AppState {
                     self.apply_actions(&[Action::MoveParent])?
                         .in_slot(Slot::BinderName),
                 ),
+                Some(Frame::RecordField(..)) => Some(self.in_slot(Slot::FieldName)),
                 Some(_) => self.apply_actions(&[Action::MovePrevSibling]),
                 None => None,
             },
         }
+    }
+
+    pub fn field_slot_id(&self) -> Option<Id> {
+        match self.slot {
+            Slot::FieldName => self.edit.zipper.record_field_id(),
+            Slot::FieldPick => self.edit.zipper.projected_field_id(),
+            _ => None,
+        }
+    }
+
+    pub fn field_name_target(&self) -> Option<AppState> {
+        if self.edit.zipper.record_field_id().is_some() {
+            return Some(self.in_slot(Slot::FieldName));
+        }
+        let last = match self.focus() {
+            Exp::Record(fields) if !fields.is_empty() => fields.len() - 1,
+            _ => return None,
+        };
+        Some(
+            self.apply_actions(&[Action::MoveChild(last)])?
+                .in_slot(Slot::FieldName),
+        )
+    }
+
+    pub fn in_record(&self) -> bool {
+        matches!(self.focus(), Exp::Record(_)) || self.edit.zipper.record_field_id().is_some()
     }
 
     pub fn move_to_hole(&self, forward: bool) -> Option<AppState> {
@@ -469,13 +517,14 @@ fn children(exp: &Exp) -> Vec<&Exp> {
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
             Vec::new()
         }
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::NonEmptyHole(_, b) => vec![b],
+        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::NonEmptyHole(_, b) => vec![b],
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
         | Exp::Pair(a, b)
         | Exp::Cons(a, b) => vec![a, b],
         Exp::If(c, t, e) | Exp::Fold(c, t, e) => vec![c, t, e],
+        Exp::Record(fields) => fields.iter().map(|(_, value)| value).collect(),
     }
 }
 

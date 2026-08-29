@@ -159,6 +159,99 @@ fn the_log_replays_names_as_well_as_structure() {
     );
 }
 
+const PROJECTIONS: usize = 5;
+
+fn session_with_one_field_built_here_and_read_there() -> (EditSession, Id) {
+    let mut session = EditSession::new();
+    let mut clock = 0u64;
+    let author = AuthorId::new(1);
+    let mut apply = |session: &mut EditSession, action: Action| {
+        clock += 1;
+        assert!(
+            session.apply(action.clone(), clock, author),
+            "{action:?} did not apply"
+        );
+    };
+
+    apply(&mut session, Action::ConstructRecord);
+    apply(&mut session, Action::ConstructNum(1));
+
+    let field = *session
+        .state()
+        .field_ids()
+        .first()
+        .expect("constructing a record mints exactly one field");
+    let built = session.state().def_id();
+
+    apply(&mut session, Action::CreateDefinition);
+    apply(&mut session, Action::ConstructField(field));
+    apply(&mut session, Action::ConstructVar(built));
+    for _ in 1..PROJECTIONS {
+        apply(&mut session, Action::MoveParent);
+        apply(&mut session, Action::ConstructBinOp(Op::Add));
+        apply(&mut session, Action::ConstructField(field));
+        apply(&mut session, Action::ConstructVar(built));
+    }
+
+    (session, field)
+}
+
+#[test]
+fn renaming_a_field_renames_its_construction_site_and_every_projection_across_the_document() {
+    let (mut session, field) = session_with_one_field_built_here_and_read_there();
+
+    let before = session.state().render_document();
+    assert_eq!(
+        occurrences(&before, "f0"),
+        PROJECTIONS + 1,
+        "the fixture must build the field in one definition and read it in another: {before}"
+    );
+    assert_eq!(
+        session.state().doc().len(),
+        2,
+        "the two uses must really be in two definitions: {before}"
+    );
+    assert!(
+        session.state().is_well_typed(),
+        "the fixture must typecheck: {before}"
+    );
+
+    let doc_before = session.state().doc();
+    let entries_before = session.log().len();
+
+    assert!(
+        session.apply(
+            Action::Rename(field, "count".to_string()),
+            9_000,
+            AuthorId::new(2)
+        ),
+        "renaming a field is a name-table write: it cannot fail"
+    );
+
+    let after = session.state().render_document();
+    assert_eq!(
+        occurrences(&after, "count"),
+        PROJECTIONS + 1,
+        "one rename must reach the construction site and every projection: {after}"
+    );
+    assert_eq!(occurrences(&after, "f0"), 0, "{after}");
+    assert_eq!(
+        after,
+        before.replace("f0", "count"),
+        "nothing but the name changed"
+    );
+    assert_eq!(
+        session.log().len(),
+        entries_before + 1,
+        "six renamed occurrences in two definitions, one action-log entry"
+    );
+    assert_eq!(
+        session.state().doc(),
+        doc_before,
+        "a field is an identity: renaming it does not touch the document"
+    );
+}
+
 fn shadowing_program() -> (Exp, NameTable, Id, Id) {
     let outer = Id::from_u128(0x0001);
     let inner = Id::from_u128(0x0002);

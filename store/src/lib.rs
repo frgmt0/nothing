@@ -8,6 +8,7 @@ pub mod nodes;
 pub mod v1;
 pub mod v2;
 pub mod v3;
+pub mod v4;
 
 pub use document::{Document, decode_document, encode_document};
 pub use error::DecodeError;

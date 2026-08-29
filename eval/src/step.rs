@@ -188,6 +188,10 @@ pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
 
         Dyn::Fold(list, init, folder) => step_fold(defs, list, init, folder),
 
+        Dyn::Record(fields) => step_record(defs, fields),
+
+        Dyn::Field(subject, id) => step_field(defs, subject, *id),
+
         Dyn::NonEmptyHole(h, env, inner) => {
             step(inner).map(|inner| Dyn::NonEmptyHole(*h, env.clone(), Box::new(inner)))
         }
@@ -229,6 +233,30 @@ fn step_fold(defs: &Defs, list: &Dyn, init: &Dyn, folder: &Dyn) -> Option<Dyn> {
             })
         }
     }
+}
+
+fn step_field(defs: &Defs, subject: &Dyn, field: Id) -> Option<Dyn> {
+    if let Some(stepped) = step_in(defs, subject) {
+        return Some(Dyn::Field(Box::new(stepped), field));
+    }
+    match subject {
+        Dyn::Record(fields) => fields
+            .iter()
+            .find(|(id, _)| *id == field)
+            .map(|(_, value)| value.clone()),
+        _ => None,
+    }
+}
+
+fn step_record(defs: &Defs, fields: &[(Id, Dyn)]) -> Option<Dyn> {
+    for (index, (_, value)) in fields.iter().enumerate() {
+        if let Some(value) = step_in(defs, value) {
+            let mut next = fields.to_vec();
+            next[index].1 = value;
+            return Some(Dyn::Record(next));
+        }
+    }
+    None
 }
 
 fn apply_num_op(op: Op, a: i64, b: i64) -> Option<Dyn> {
@@ -347,7 +375,12 @@ fn collect(d: &Dyn, out: &mut Vec<Blocked>) {
             collect(init, out);
             collect(folder, out);
         }
-        Dyn::Proj(_, inner) => collect(inner, out),
+        Dyn::Proj(_, inner) | Dyn::Field(inner, _) => collect(inner, out),
+        Dyn::Record(fields) => {
+            for (_, value) in fields {
+                collect(value, out);
+            }
+        }
 
         Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::Lam(..) => {}
     }
@@ -668,6 +701,79 @@ mod tests {
             Some((0..400).sum()),
             "with enough fuel it finishes"
         );
+    }
+
+    #[test]
+    fn a_record_of_values_is_a_value_and_a_projection_picks_a_field_out_of_it() {
+        let point = Exp::record([(x(), Exp::num(1)), (y(), Exp::num(2))]);
+        assert!(is_well_typed(&point));
+        let outcome = eval(&point);
+        assert!(outcome.is_value());
+        assert_eq!(render(outcome.dyn_result(), &names()), "{x = 1, y = 2}");
+
+        assert_eq!(eval(&Exp::field(point.clone(), x())).num(), Some(1));
+        assert_eq!(eval(&Exp::field(point, y())).num(), Some(2));
+    }
+
+    #[test]
+    fn a_records_fields_reduce_where_they_stand() {
+        let e = Exp::record([
+            (x(), Exp::bin_op(Op::Add, Exp::num(1), Exp::num(2))),
+            (y(), Exp::bin_op(Op::Concat, Exp::str_("a"), Exp::str_("b"))),
+        ]);
+        assert!(is_well_typed(&e));
+        assert_eq!(
+            render(eval(&e).dyn_result(), &names()),
+            "{x = 3, y = \"ab\"}"
+        );
+    }
+
+    #[test]
+    fn projecting_a_filled_field_of_a_half_written_record_still_answers() {
+        let half = Exp::record([(x(), Exp::num(1)), (y(), Exp::empty_hole(h(0)))]);
+        assert!(is_well_typed(&half));
+
+        let filled = eval(&Exp::field(half.clone(), x()));
+        assert_eq!(
+            filled.num(),
+            Some(1),
+            "the hole in the other field was never needed"
+        );
+
+        let holed = eval(&Exp::field(half.clone(), y()));
+        assert!(holed.is_indeterminate(), "{holed:?}");
+        assert_eq!(holed.blocked().len(), 1);
+        assert_eq!(holed.blocked()[0].hole, h(0));
+
+        let whole = eval(&half);
+        assert!(whole.is_indeterminate(), "a record with a hole is not done");
+        assert_eq!(render(whole.dyn_result(), &names()), "{x = 1, y = ⦇⦈}");
+    }
+
+    #[test]
+    fn projecting_a_field_of_something_that_is_not_a_record_gets_stuck_rather_than_panicking() {
+        let e = Exp::field(Exp::empty_hole(h(0)), x());
+        assert!(is_well_typed(&e));
+        let outcome = eval(&e);
+        assert!(outcome.is_indeterminate());
+        assert_eq!(render(outcome.dyn_result(), &names()), "⦇⦈.x");
+        assert_eq!(outcome.blocked().len(), 1);
+    }
+
+    #[test]
+    fn a_record_flows_through_a_lambda_and_a_let() {
+        let f = Id::from_u128(11);
+        let e = Exp::let_(
+            f,
+            Exp::record([(x(), Exp::num(3)), (y(), Exp::num(4))]),
+            Exp::bin_op(
+                Op::Add,
+                Exp::field(Exp::var(f), x()),
+                Exp::field(Exp::var(f), y()),
+            ),
+        );
+        assert!(is_well_typed(&e));
+        assert_eq!(eval(&e).num(), Some(7));
     }
 
     #[test]

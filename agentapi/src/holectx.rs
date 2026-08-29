@@ -1,6 +1,6 @@
 use nothing_action::act::{Action, EditState, ctx_and_expected_ty_at_in};
 use nothing_action::cursor_render::render_with_cursor;
-use nothing_action::script::action_name;
+use nothing_action::script::{action_name, fields_in_view};
 use nothing_action::zipper::{Frame, arity};
 use nothing_core::exp::{Exp, Id, Op, Side};
 use nothing_core::render::render;
@@ -129,8 +129,19 @@ fn candidate_actions(state: &EditState) -> Vec<Action> {
         Action::ConstructNil,
         Action::ConstructCons,
         Action::ConstructFold,
+        Action::ConstructRecord,
     ]);
+    for field in fields_in_view(state) {
+        out.push(Action::ConstructField(field));
+    }
     out
+}
+
+fn field_resolves_to(state: &EditState, name: &str, id: Id) -> bool {
+    fields_in_view(state)
+        .into_iter()
+        .find(|other| state.names.get(*other) == Some(name))
+        == Some(id)
 }
 
 fn step_for(state: &EditState, action: &Action) -> Option<String> {
@@ -139,6 +150,14 @@ fn step_for(state: &EditState, action: &Action) -> Option<String> {
             let name = state.names.get(*id)?.to_string();
             if resolves_to(state, &name, *id) {
                 Some(format!("construct-var {name}"))
+            } else {
+                None
+            }
+        }
+        Action::ConstructField(id) => {
+            let name = state.names.get(*id)?.to_string();
+            if field_resolves_to(state, &name, *id) {
+                Some(format!("construct-field {name}"))
             } else {
                 None
             }
@@ -543,6 +562,72 @@ mod tests {
             "fold synthesises whatever its accumulator is, so it fits anywhere: {tail_steps:?}"
         );
         assert_constructions_are_clean(&tail);
+    }
+
+    #[test]
+    fn a_hole_offers_a_record_and_only_the_projections_that_typecheck() {
+        let empty = state_from("");
+        let steps: Vec<String> = well_typed_constructions(&empty)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        assert!(
+            steps.iter().any(|s| s == "construct-record"),
+            "an unknown hole must offer a record: {steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.starts_with("construct-field")),
+            "there is no field in this document to project: {steps:?}"
+        );
+        assert_constructions_are_clean(&empty);
+
+        let built = state_from(
+            "construct-record
+rename-field x
+construct-num 1
+             add-field
+rename-field y
+construct-num 2
+             create-definition
+",
+        );
+        let steps: Vec<String> = well_typed_constructions(&built)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        assert!(
+            steps.iter().any(|s| s == "construct-field x"),
+            "a field written in another definition is projectable by name: {steps:?}"
+        );
+        assert!(steps.iter().any(|s| s == "construct-field y"), "{steps:?}");
+        assert_constructions_are_clean(&built);
+
+        let numeric = state_from(
+            "construct-record
+rename-field x
+construct-num 1
+             create-definition
+construct-num 1
+construct-binop add
+",
+        );
+        assert_eq!(
+            ctx_and_expected_ty_at_in(&numeric.scope(), &numeric.zipper).1,
+            Ty::Num
+        );
+        let steps: Vec<String> = well_typed_constructions(&numeric)
+            .into_iter()
+            .filter_map(|c| c.step)
+            .collect();
+        assert!(
+            !steps.iter().any(|s| s == "construct-record"),
+            "a record is not a number: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|s| s == "construct-field x"),
+            "but a projection can be one, because its subject is still a hole: {steps:?}"
+        );
+        assert_constructions_are_clean(&numeric);
     }
 
     #[test]

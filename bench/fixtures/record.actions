@@ -1,27 +1,23 @@
 # 3. Record construct-and-access (bench/references.md §3), as a document.
 #
-#   main : Num * Num -> Num = λr:Num * Num. fst r
-#   mk   : Num -> Num -> Num * Num = λa:Num. λb:Num. (a, b)
+#   mk   : Num -> Num -> ? = λx1:Num. λx2:Num. {x = x1, y = x2}
+#   main : ? -> Num        = λp:?. p.x
 #
-# Through Phase 11 the constructor was a `let` wrapped around the accessor,
-# because a program was one expression and a `let` was the only way to name
-# something. In the document era a top-level name is a definition, which is
-# what this program always meant.
+# Through Phase 11 this was a pair and two positional projections, because a
+# product was the only thing the language had that held two values: `getX`
+# was `fst`, and nothing in the program recorded that component 0 was called
+# `x`. Records arrived in Phase B2, so the fields have names now — one
+# identity each, minted where the record is built and read by name where it
+# is projected, in a different definition.
+#
+# The parameter and result types stay holes on purpose: a record type is a
+# list of field identities, and identities are not spelled (DECISIONS.md,
+# 2026-08-29). The constructor is where they are minted, which is what this
+# program's first definition is for.
 
-# main : Num * Num -> Num = λx0:Num * Num. fst x0
-set-def-ann Num * Num -> Num
-construct-lam
-move-parent
-rename x0
-set-ann Num * Num
-move-child 0
-construct-proj l
-construct-var x0
-
-# mk : Num -> Num -> Num * Num = λx1:Num. λx2:Num. (x1, x2)
-create-definition
+# mk : Num -> Num -> ? = λx1:Num. λx2:Num. {x = x1, y = x2}
 rename-def mk
-set-def-ann Num -> Num -> Num * Num
+set-def-ann Num -> Num -> ?
 construct-lam
 move-parent
 rename x1
@@ -32,7 +28,20 @@ move-parent
 rename x2
 set-ann Num
 move-child 0
-construct-pair
+construct-record
+rename-field x
 construct-var x1
-move-next-sibling
+add-field
+rename-field y
 construct-var x2
+
+# main : ? -> Num = λp:?. p.x
+create-definition
+rename-def main
+set-def-ann ? -> Num
+construct-lam
+move-parent
+rename p
+move-child 0
+construct-field x
+construct-var p

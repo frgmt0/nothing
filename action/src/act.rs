@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 
 use nothing_core::ctx::Ctx;
-use nothing_core::doc::{Def, Doc, MAIN_ID, MAIN_NAME, references, vacate};
+use nothing_core::doc::{
+    Def, Doc, MAIN_ID, MAIN_NAME, projects, quarantine_projections, references, vacate,
+};
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
-use nothing_core::names::{NameTable, fresh_binder_name, fresh_definition_name};
-use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod};
+use nothing_core::names::{NameTable, fresh_binder_name, fresh_definition_name, fresh_field_name};
+use nothing_core::ty::{Ty, matched_arrow, matched_list, matched_prod, matched_record};
 use nothing_core::typing::{ana, is_comparable, operand_expectation, step_ty, syn};
 
 use crate::zipper::{Frame, Zipper, unzip};
@@ -33,7 +35,16 @@ pub enum Action {
     ConstructProj(Side),
     ConstructCons,
     ConstructFold,
+    ConstructRecord,
+    ConstructField(Id),
     ConstructNonEmptyHole,
+
+    AddField,
+    RemoveField,
+    MoveFieldPrev,
+    MoveFieldNext,
+    SetField(Id),
+    SetFieldId(Id),
 
     SetAnn(Ty),
 
@@ -119,6 +130,16 @@ impl Fresh {
                 self.observe(body);
             }
             Exp::Proj(_, e) => self.observe(e),
+            Exp::Field(e, id) => {
+                self.bump_id(*id);
+                self.observe(e);
+            }
+            Exp::Record(fields) => {
+                for (id, e) in fields {
+                    self.bump_id(*id);
+                    self.observe(e);
+                }
+            }
             Exp::EmptyHole(h) => self.bump_hole(*h),
             Exp::NonEmptyHole(h, e) => {
                 self.bump_hole(*h);
@@ -291,6 +312,11 @@ pub fn ctx_and_expected_ty_at_in(scope: &DefScope, zipper: &Zipper) -> (Ctx, Ty)
                 };
             }
 
+            Frame::RecordField(_, _, id) => {
+                expected = matched_record(&expected, *id).unwrap_or(Ty::Hole);
+            }
+            Frame::FieldSubject(_) => expected = Ty::Hole,
+
             Frame::NonEmptyHoleBody(_) => expected = Ty::Hole,
         }
     }
@@ -408,6 +434,33 @@ pub fn apply_with_in(
             },
         ),
 
+        Action::ConstructRecord => construct_record(scope, zipper, fresh, names),
+        Action::ConstructField(field) => construct_wrapping_if(
+            scope,
+            zipper,
+            |ctx, focus| {
+                syn(ctx, focus)
+                    .as_ref()
+                    .and_then(|ty| matched_record(ty, field))
+                    .is_some()
+            },
+            fresh,
+            move |subject, _| Exp::field(subject, field),
+        ),
+
+        Action::AddField => {
+            let id = fresh.id();
+            let hole = fresh.hole();
+            let built = add_field(scope, zipper, id, hole);
+            name_new_field(id, &built, names);
+            built
+        }
+        Action::RemoveField => remove_field(scope, zipper, fresh),
+        Action::MoveFieldPrev => move_field(scope, zipper, -1),
+        Action::MoveFieldNext => move_field(scope, zipper, 1),
+        Action::SetField(field) => set_field(scope, zipper, field),
+        Action::SetFieldId(field) => set_field_id(scope, zipper, field),
+
         Action::ConstructNonEmptyHole => {
             construct_wrapping(scope, zipper, Ty::Hole, fresh, |inner, fresh| {
                 Exp::non_empty_hole(fresh.hole(), inner)
@@ -440,6 +493,142 @@ fn name_new_binder(id: Id, built: &Option<Zipper>, names: &mut NameTable) {
     }
 }
 
+fn name_new_field(id: Id, built: &Option<Zipper>, names: &mut NameTable) {
+    if built.is_some() {
+        let name = fresh_field_name(names);
+        names.set(id, name);
+    }
+}
+
+fn construct_record(
+    scope: &DefScope,
+    zipper: Zipper,
+    fresh: &mut Fresh,
+    names: &mut NameTable,
+) -> Option<Zipper> {
+    let (ctx, expected) = ctx_and_expected_ty_at_in(scope, &zipper);
+    if let Ty::Record(wanted) = &expected {
+        let blank = matches!(zipper.focus, Exp::EmptyHole(_));
+        if blank {
+            let form = Exp::record(
+                wanted
+                    .iter()
+                    .map(|(id, _)| (*id, Exp::empty_hole(fresh.hole()))),
+            );
+            return place(scope, zipper, form, &ctx, &expected, fresh);
+        }
+        if let Some(((head, head_ty), rest)) = wanted.split_first().map(|(h, r)| (h.clone(), r)) {
+            let rest: Vec<Id> = rest.iter().map(|(id, _)| *id).collect();
+            return construct_wrapping_if(
+                scope,
+                zipper,
+                |ctx, focus| ana(ctx, focus, &head_ty),
+                fresh,
+                move |value, fresh| {
+                    let mut fields = vec![(head, value)];
+                    fields.extend(
+                        rest.into_iter()
+                            .map(|id| (id, Exp::empty_hole(fresh.hole()))),
+                    );
+                    Exp::Record(fields)
+                },
+            );
+        }
+    }
+
+    let id = fresh.id();
+    let built = construct_wrapping(scope, zipper, Ty::Hole, fresh, |value, _| {
+        Exp::record([(id, value)])
+    });
+    name_new_field(id, &built, names);
+    built
+}
+
+fn record_frame(zipper: &Zipper) -> Option<(usize, Id)> {
+    match zipper.path.last()? {
+        Frame::RecordField(_, index, id) => Some((*index, *id)),
+        _ => None,
+    }
+}
+
+fn add_field(scope: &DefScope, zipper: Zipper, id: Id, hole: HoleId) -> Option<Zipper> {
+    let zipper = if matches!(zipper.focus, Exp::Record(_)) {
+        zipper
+    } else if record_frame(&zipper).is_some() {
+        zipper.move_parent()?
+    } else {
+        return None;
+    };
+    let Exp::Record(fields) = &zipper.focus else {
+        return None;
+    };
+    let mut fields = fields.clone();
+    let index = fields.len();
+    fields.push((id, Exp::empty_hole(hole)));
+    let placed = zipper.replace_focus(Exp::Record(fields));
+    keep_if_well_typed(scope, placed)?.move_child(index)
+}
+
+fn remove_field(scope: &DefScope, zipper: Zipper, fresh: &mut Fresh) -> Option<Zipper> {
+    let (index, field) = record_frame(&zipper)?;
+    let parent = zipper.move_parent()?;
+    let Exp::Record(fields) = &parent.focus else {
+        return None;
+    };
+    let mut fields = fields.clone();
+    fields.remove(index);
+    let shortened = parent.replace_focus(Exp::Record(fields));
+    let whole = shortened.to_exp();
+    let repaired = if projects(&whole, field) {
+        quarantine_projections(&whole, field, &mut || fresh.hole())
+    } else {
+        whole
+    };
+    let path_len = shortened.path.len();
+    let mut rebuilt = unzip(repaired);
+    for step in shortened.path.iter().take(path_len).map(Frame::child_index) {
+        rebuilt = rebuilt.move_child(step)?;
+    }
+    keep_if_well_typed(scope, rebuilt)
+}
+
+fn move_field(scope: &DefScope, zipper: Zipper, delta: isize) -> Option<Zipper> {
+    let (index, _) = record_frame(&zipper)?;
+    let target = index.checked_add_signed(delta)?;
+    let parent = zipper.move_parent()?;
+    let Exp::Record(fields) = &parent.focus else {
+        return None;
+    };
+    if target >= fields.len() {
+        return None;
+    }
+    let mut fields = fields.clone();
+    let moved = fields.remove(index);
+    fields.insert(target, moved);
+    let placed = parent.replace_focus(Exp::Record(fields));
+    keep_if_well_typed(scope, placed)?.move_child(target)
+}
+
+fn set_field_id(scope: &DefScope, zipper: Zipper, field: Id) -> Option<Zipper> {
+    let (index, _) = record_frame(&zipper)?;
+    let parent = zipper.move_parent()?;
+    let Exp::Record(fields) = &parent.focus else {
+        return None;
+    };
+    let mut fields = fields.clone();
+    fields[index].0 = field;
+    let placed = parent.replace_focus(Exp::Record(fields));
+    keep_if_well_typed(scope, placed)?.move_child(index)
+}
+
+fn set_field(scope: &DefScope, zipper: Zipper, field: Id) -> Option<Zipper> {
+    let updated = match &zipper.focus {
+        Exp::Field(subject, _) => Exp::Field(subject.clone(), field),
+        _ => return None,
+    };
+    keep_if_well_typed(scope, zipper.replace_focus(updated))
+}
+
 fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
     fn first(children: &[&Exp]) -> Option<usize> {
         children.iter().position(|c| matches!(c, Exp::EmptyHole(_)))
@@ -448,7 +637,12 @@ fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
             None
         }
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::NonEmptyHole(_, b) => first(&[b]),
+        Exp::Record(fields) => fields
+            .iter()
+            .position(|(_, e)| matches!(e, Exp::EmptyHole(_))),
+        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) | Exp::NonEmptyHole(_, b) => {
+            first(&[b])
+        }
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
@@ -709,6 +903,10 @@ impl EditState {
         self.doc().ids()
     }
 
+    pub fn field_ids(&self) -> Vec<Id> {
+        self.doc().field_ids()
+    }
+
     pub fn names(&self) -> &NameTable {
         &self.names
     }
@@ -794,8 +992,45 @@ impl EditState {
         }
     }
 
+    fn remove_field_everywhere(&self) -> Option<EditState> {
+        let field = self.zipper.record_field_id()?;
+        let scope = self.scope();
+        let mut fresh = self.fresh.clone();
+        let mut names = self.names.clone();
+        let zipper = apply_with_in(
+            &scope,
+            self.zipper.clone(),
+            Action::RemoveField,
+            &mut fresh,
+            &mut names,
+        )?;
+        let mut rewrite = |def: &Def| Def {
+            id: def.id,
+            ann: def.ann.clone(),
+            body: if projects(&def.body, field) {
+                quarantine_projections(&def.body, field, &mut || fresh.hole())
+            } else {
+                def.body.clone()
+            },
+        };
+        let before: Vec<Def> = self.before.iter().map(&mut rewrite).collect();
+        let after: Vec<Def> = self.after.iter().map(&mut rewrite).collect();
+        let mut next = self.clone();
+        next.zipper = zipper;
+        next.before = before;
+        next.after = after;
+        next.fresh = fresh;
+        next.names = names;
+        if next.is_well_typed() {
+            Some(next)
+        } else {
+            None
+        }
+    }
+
     pub fn apply(&self, action: Action) -> Option<EditState> {
         match action {
+            Action::RemoveField => self.remove_field_everywhere(),
             Action::CreateDefinition => self.create_definition(),
             Action::DeleteDefinition => self.delete_definition(),
             Action::SetDefAnn(ann) => self.set_def_ann(ann),
@@ -1561,7 +1796,8 @@ mod tests {
         match e {
             Exp::EmptyHole(_) | Exp::NonEmptyHole(..) => true,
             Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => false,
-            Exp::Lam(_, _, b) | Exp::Proj(_, b) => contains_a_hole(b),
+            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => contains_a_hole(b),
+            Exp::Record(fields) => fields.iter().any(|(_, e)| contains_a_hole(e)),
             Exp::Ap(a, b)
             | Exp::BinOp(_, a, b)
             | Exp::Let(_, a, b)

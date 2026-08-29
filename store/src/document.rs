@@ -10,11 +10,12 @@ use crate::names::{decode_names, encode_names};
 use crate::nodes::{NodeEntry, build_node_table, content_hash, decode_node_table};
 
 pub const MAGIC: [u8; 4] = *b"NTHG";
-pub const VERSION_MAJOR: u8 = 4;
+pub const VERSION_MAJOR: u8 = 5;
 pub const VERSION_MINOR: u8 = 0;
 pub const VERSION_MAJOR_V1: u8 = 1;
 pub const VERSION_MAJOR_V2: u8 = 2;
 pub const VERSION_MAJOR_V3: u8 = 3;
+pub const VERSION_MAJOR_V4: u8 = 4;
 pub const KIND_DOCUMENT: u8 = 1;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -152,7 +153,7 @@ pub fn decode_document(bytes: &[u8]) -> Result<Document, DecodeError> {
     let (major, minor) = read_header(bytes, &mut pos)?;
     match major {
         VERSION_MAJOR_V1 => return crate::v1::decode_document_v1(bytes),
-        VERSION_MAJOR_V2 | VERSION_MAJOR_V3 | VERSION_MAJOR => {}
+        VERSION_MAJOR_V2 | VERSION_MAJOR_V3 | VERSION_MAJOR_V4 | VERSION_MAJOR => {}
         _ => return Err(DecodeError::UnsupportedVersion(major, minor)),
     }
 

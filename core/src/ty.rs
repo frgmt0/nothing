@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::exp::Id;
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Ty {
     Num,
@@ -8,6 +10,7 @@ pub enum Ty {
     Arrow(Box<Ty>, Box<Ty>),
     Prod(Box<Ty>, Box<Ty>),
     List(Box<Ty>),
+    Record(Vec<(Id, Ty)>),
     Hole,
 }
 
@@ -63,6 +66,17 @@ fn fmt_prec(ty: &Ty, min_prec: u8, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             }
             Ok(())
         }
+        Ty::Record(fields) => {
+            write!(f, "{{")?;
+            for (i, (id, ty)) in fields.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "#{}: ", id.short())?;
+                fmt_prec(ty, 0, f)?;
+            }
+            write!(f, "}}")
+        }
     }
 }
 
@@ -73,6 +87,14 @@ pub fn is_consistent(a: &Ty, b: &Ty) -> bool {
         (Ty::Arrow(a1, a2), Ty::Arrow(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
         (Ty::Prod(a1, a2), Ty::Prod(b1, b2)) => is_consistent(a1, b1) && is_consistent(a2, b2),
         (Ty::List(a), Ty::List(b)) => is_consistent(a, b),
+        (Ty::Record(a), Ty::Record(b)) => {
+            a.len() == b.len()
+                && a.iter().all(|(id, left)| {
+                    b.iter()
+                        .find(|(other, _)| other == id)
+                        .is_some_and(|(_, right)| is_consistent(left, right))
+                })
+        }
         _ => false,
     }
 }
@@ -99,6 +121,32 @@ pub fn matched_list(ty: &Ty) -> Option<Ty> {
         Ty::List(elem) => Some(elem.as_ref().clone()),
         _ => None,
     }
+}
+
+pub fn matched_record(ty: &Ty, field: Id) -> Option<Ty> {
+    match ty {
+        Ty::Hole => Some(Ty::Hole),
+        Ty::Record(fields) => fields
+            .iter()
+            .find(|(id, _)| *id == field)
+            .map(|(_, ty)| ty.clone()),
+        _ => None,
+    }
+}
+
+pub fn matched_record_fields(ty: &Ty, fields: &[Id]) -> Option<Vec<Ty>> {
+    match ty {
+        Ty::Hole => Some(vec![Ty::Hole; fields.len()]),
+        Ty::Record(known) if known.len() == fields.len() => fields
+            .iter()
+            .map(|id| matched_record(ty, *id))
+            .collect::<Option<Vec<Ty>>>(),
+        _ => None,
+    }
+}
+
+pub fn record(fields: impl IntoIterator<Item = (Id, Ty)>) -> Ty {
+    Ty::Record(fields.into_iter().collect())
 }
 
 pub fn list(elem: Ty) -> Ty {
@@ -332,6 +380,93 @@ mod tests {
         assert_eq!(matched_list(&Ty::Hole), Some(Ty::Hole));
         assert_eq!(matched_list(&list(Ty::Num)), Some(Ty::Num));
         assert_eq!(matched_list(&list(list(Ty::Bool))), Some(list(Ty::Bool)));
+    }
+
+    fn f(n: u128) -> Id {
+        Id::from_u128(0xf000 + n)
+    }
+
+    #[test]
+    fn a_record_type_is_consistent_field_wise_and_ignores_field_order() {
+        let a = record([(f(1), Ty::Num), (f(2), Ty::Bool)]);
+        let reordered = record([(f(2), Ty::Bool), (f(1), Ty::Num)]);
+        assert!(is_consistent(&a, &reordered));
+        assert!(is_consistent(&reordered, &a));
+
+        let with_hole = record([(f(1), Ty::Hole), (f(2), Ty::Bool)]);
+        assert!(is_consistent(&a, &with_hole));
+
+        let wrong_field_type = record([(f(1), Ty::Str), (f(2), Ty::Bool)]);
+        assert!(!is_consistent(&a, &wrong_field_type));
+    }
+
+    #[test]
+    fn record_consistency_is_exact_because_there_is_no_width_subtyping() {
+        let wide = record([(f(1), Ty::Num), (f(2), Ty::Bool)]);
+        let narrow = record([(f(1), Ty::Num)]);
+        assert!(!is_consistent(&wide, &narrow));
+        assert!(!is_consistent(&narrow, &wide));
+
+        let renamed_field = record([(f(3), Ty::Num)]);
+        assert!(
+            !is_consistent(&narrow, &renamed_field),
+            "a field is its id, so two records with different field ids differ"
+        );
+
+        assert!(is_consistent(&wide, &Ty::Hole));
+        assert!(is_consistent(&Ty::Hole, &wide));
+        assert!(!is_consistent(&wide, &Ty::Num));
+        assert!(!is_consistent(&wide, &prod(Ty::Num, Ty::Bool)));
+    }
+
+    #[test]
+    fn an_empty_record_is_a_type_of_its_own() {
+        let unit = record([]);
+        assert!(is_consistent(&unit, &unit));
+        assert!(is_consistent(&unit, &Ty::Hole));
+        assert!(!is_consistent(&unit, &record([(f(1), Ty::Num)])));
+        assert_eq!(unit.to_string(), "{}");
+    }
+
+    #[test]
+    fn matched_record_looks_a_field_up_and_fails_open_on_the_unknown_type() {
+        let point = record([(f(1), Ty::Num), (f(2), Ty::Str)]);
+        assert_eq!(matched_record(&point, f(1)), Some(Ty::Num));
+        assert_eq!(matched_record(&point, f(2)), Some(Ty::Str));
+        assert_eq!(matched_record(&point, f(9)), None);
+
+        assert_eq!(matched_record(&Ty::Hole, f(9)), Some(Ty::Hole));
+        assert_eq!(matched_record(&Ty::Num, f(1)), None);
+        assert_eq!(matched_record(&list(Ty::Num), f(1)), None);
+    }
+
+    #[test]
+    fn matched_record_fields_wants_the_whole_field_set() {
+        let point = record([(f(1), Ty::Num), (f(2), Ty::Str)]);
+        assert_eq!(
+            matched_record_fields(&point, &[f(2), f(1)]),
+            Some(vec![Ty::Str, Ty::Num]),
+            "the answer follows the order asked for, not the order stored"
+        );
+        assert_eq!(matched_record_fields(&point, &[f(1)]), None);
+        assert_eq!(matched_record_fields(&point, &[f(1), f(9)]), None);
+        assert_eq!(
+            matched_record_fields(&Ty::Hole, &[f(1), f(2)]),
+            Some(vec![Ty::Hole, Ty::Hole])
+        );
+        assert_eq!(matched_record_fields(&Ty::Num, &[f(1)]), None);
+    }
+
+    #[test]
+    fn a_record_type_displays_its_fields_by_identity_because_names_are_elsewhere() {
+        let point = record([(f(1), Ty::Num)]);
+        let shown = point.to_string();
+        assert!(shown.starts_with("{#"), "{shown}");
+        assert!(shown.ends_with(": Num}"), "{shown}");
+        assert_eq!(
+            record([(f(1), arrow(Ty::Num, Ty::Num))]).to_string(),
+            format!("{{#{}: Num -> Num}}", f(1).short())
+        );
     }
 
     #[test]

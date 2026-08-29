@@ -62,6 +62,23 @@ pub fn ty_json(ty: &Ty) -> Json {
             ("snd", ty_json(b)),
         ]),
         Ty::List(elem) => Json::obj(vec![("ty", Json::str("List")), ("elem", ty_json(elem))]),
+        Ty::Record(fields) => Json::obj(vec![
+            ("ty", Json::str("Record")),
+            (
+                "fields",
+                Json::Arr(
+                    fields
+                        .iter()
+                        .map(|(id, ty)| {
+                            Json::obj(vec![
+                                ("field", Json::str(id.to_string())),
+                                ("ty", ty_json(ty)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
     }
 }
 
@@ -179,6 +196,30 @@ pub fn exp_json(exp: &Exp, names: &NameTable) -> Json {
             ("init", exp_json(init, names)),
             ("step", exp_json(step, names)),
         ]),
+        Exp::Record(fields) => Json::obj(vec![
+            ("exp", Json::str("Record")),
+            (
+                "fields",
+                Json::Arr(
+                    fields
+                        .iter()
+                        .map(|(id, value)| {
+                            Json::obj(vec![
+                                ("field", Json::str(id.to_string())),
+                                ("name", named(*id)),
+                                ("value", exp_json(value, names)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
+        Exp::Field(subject, id) => Json::obj(vec![
+            ("exp", Json::str("Field")),
+            ("subject", exp_json(subject, names)),
+            ("field", Json::str(id.to_string())),
+            ("name", named(*id)),
+        ]),
         Exp::EmptyHole(h) => Json::obj(vec![
             ("exp", Json::str("EmptyHole")),
             ("hole", Json::str(h.to_string())),
@@ -207,6 +248,8 @@ pub fn exp_kind(exp: &Exp) -> &'static str {
         Exp::Nil => "Nil",
         Exp::Cons(..) => "Cons",
         Exp::Fold(..) => "Fold",
+        Exp::Record(..) => "Record",
+        Exp::Field(..) => "Field",
         Exp::EmptyHole(_) => "EmptyHole",
         Exp::NonEmptyHole(..) => "NonEmptyHole",
     }
@@ -279,6 +322,23 @@ pub fn action_json(action: &Action) -> Json {
         Action::MoveToDef(id) => Json::obj(vec![
             ("action", Json::str("MoveToDef")),
             ("id", Json::str(id.to_string())),
+        ]),
+        Action::ConstructRecord => Json::obj(vec![("action", Json::str("ConstructRecord"))]),
+        Action::ConstructField(id) => Json::obj(vec![
+            ("action", Json::str("ConstructField")),
+            ("field", Json::str(id.to_string())),
+        ]),
+        Action::AddField => Json::obj(vec![("action", Json::str("AddField"))]),
+        Action::RemoveField => Json::obj(vec![("action", Json::str("RemoveField"))]),
+        Action::MoveFieldPrev => Json::obj(vec![("action", Json::str("MoveFieldPrev"))]),
+        Action::MoveFieldNext => Json::obj(vec![("action", Json::str("MoveFieldNext"))]),
+        Action::SetField(id) => Json::obj(vec![
+            ("action", Json::str("SetField")),
+            ("field", Json::str(id.to_string())),
+        ]),
+        Action::SetFieldId(id) => Json::obj(vec![
+            ("action", Json::str("SetFieldId")),
+            ("field", Json::str(id.to_string())),
         ]),
     }
 }
@@ -416,7 +476,12 @@ pub fn holes(exp: &Exp) -> (usize, usize) {
                 go(inner, empty, non_empty);
             }
             Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
-            Exp::Lam(_, _, b) | Exp::Proj(_, b) => go(b, empty, non_empty),
+            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => go(b, empty, non_empty),
+            Exp::Record(fields) => {
+                for (_, value) in fields {
+                    go(value, empty, non_empty);
+                }
+            }
             Exp::Ap(a, b)
             | Exp::BinOp(_, a, b)
             | Exp::Let(_, a, b)
@@ -447,7 +512,12 @@ pub fn hole_ids(exp: &Exp) -> Vec<HoleId> {
                 go(inner, out);
             }
             Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => {}
-            Exp::Lam(_, _, b) | Exp::Proj(_, b) => go(b, out),
+            Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => go(b, out),
+            Exp::Record(fields) => {
+                for (_, value) in fields {
+                    go(value, out);
+                }
+            }
             Exp::Ap(a, b)
             | Exp::BinOp(_, a, b)
             | Exp::Let(_, a, b)

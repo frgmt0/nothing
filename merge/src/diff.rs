@@ -54,6 +54,14 @@ pub fn structurally_equal(a: &Exp, b: &Exp) -> bool {
         (Exp::Fold(l1, i1, s1), Exp::Fold(l2, i2, s2)) => {
             structurally_equal(l1, l2) && structurally_equal(i1, i2) && structurally_equal(s1, s2)
         }
+        (Exp::Record(f1), Exp::Record(f2)) => {
+            f1.len() == f2.len()
+                && f1
+                    .iter()
+                    .zip(f2.iter())
+                    .all(|((id1, v1), (id2, v2))| id1 == id2 && structurally_equal(v1, v2))
+        }
+        (Exp::Field(s1, f1), Exp::Field(s2, f2)) => f1 == f2 && structurally_equal(s1, s2),
         _ => false,
     }
 }
@@ -147,7 +155,52 @@ fn diff_exp(a: &Exp, b: &Exp, path: &[usize], out: &mut Vec<Operation>) {
                 out.push(replace(path, a, b));
             }
         }
+        (Exp::Field(_, field_a), Exp::Field(_, field_b)) => {
+            if field_a == field_b {
+                diff_children(a, b, path, 1, out);
+            } else {
+                out.push(replace(path, a, b));
+            }
+        }
+        (Exp::Record(fields_a), Exp::Record(fields_b)) => {
+            diff_record(fields_a, fields_b, a, b, path, out)
+        }
         _ => diff_shapes(a, b, path, out),
+    }
+}
+
+fn diff_record(
+    fields_a: &[(Id, Exp)],
+    fields_b: &[(Id, Exp)],
+    a: &Exp,
+    b: &Exp,
+    path: &[usize],
+    out: &mut Vec<Operation>,
+) {
+    let ids_a: Vec<Id> = fields_a.iter().map(|(id, _)| *id).collect();
+    let ids_b: Vec<Id> = fields_b.iter().map(|(id, _)| *id).collect();
+    let same_set = ids_a.len() == ids_b.len() && {
+        let mut sorted_a = ids_a.clone();
+        let mut sorted_b = ids_b.clone();
+        sorted_a.sort();
+        sorted_b.sort();
+        sorted_a == sorted_b
+    };
+    if !same_set {
+        diff_shapes(a, b, path, out);
+        return;
+    }
+    if ids_a != ids_b {
+        out.push(Operation::ReorderFields {
+            path: path.to_vec(),
+            from: ids_a.clone(),
+            to: ids_b.clone(),
+        });
+    }
+    for (index, (id, value)) in fields_a.iter().enumerate() {
+        if let Some((_, other)) = fields_b.iter().find(|(other_id, _)| other_id == id) {
+            diff_exp(value, other, &extend(path, index), out);
+        }
     }
 }
 

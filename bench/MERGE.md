@@ -1,6 +1,6 @@
 # Structural merge versus `git merge-file`
 
-Measured 2026-08-28.
+Measured 2026-08-29.
 
 Every number below was produced by running the harness, not by hand. Reproduce it with:
 
@@ -28,11 +28,12 @@ A diff is a list of these, never a list of lines. Each one carries a path into t
 | `Delete` | a wrapper was removed and one child promoted | the node at the path |
 | `Move` | a subtree with an unchanged content hash appears at a new path | both endpoints |
 | `MoveBinding` | a `let` binding changed position in its chain | the chain's ordering only |
+| `ReorderFields` | a record's fields were permuted | that record's field order only |
 | `Replace` | a subterm became a structurally different one | the node at the path |
 | `SetAnn` | a lambda's parameter annotation changed | that node's shape, not its body |
 | `Rebind` | binder identities changed, structure did not | the node at the path |
 
-Two operations conflict when their footprints overlap. Two node footprints overlap when one path is a prefix of the other — siblings never collide, which is why two branches editing different fields of the same pair merge with no conflict at all. A shape footprint covers a node but not its children, so retyping a parameter does not fight an edit in the body. A name footprint is a binder identity and touches no part of the tree. An ordering footprint covers a `let` chain's spine but not the expressions bound in it, so reordering bindings does not fight an edit inside one of them.
+Two operations conflict when their footprints overlap. Two node footprints overlap when one path is a prefix of the other — siblings never collide, which is why two branches editing different fields of the same pair merge with no conflict at all. A shape footprint covers a node but not its children, so retyping a parameter does not fight an edit in the body. A name footprint is a binder identity and touches no part of the tree. An ordering footprint covers a `let` chain's spine but not the expressions bound in it, so reordering bindings does not fight an edit inside one of them. A record's field order is the same kind of footprint over a different list: it covers the order of the fields and neither their values nor their names, which is why one branch can rename a field while the other moves it.
 
 `Move` gets a further rule: an edit made inside a subtree that the other branch moved is *rebased* onto the subtree's new path instead of being called a conflict. The two operations do commute; they just need the path rewritten first.
 
@@ -42,17 +43,17 @@ A merge can still land somewhere ill-typed even when every accepted operation wa
 
 | | scenarios | clean | clean and correct | conflicts |
 | --- | ---: | ---: | ---: | ---: |
-| `git merge-file` on rendered text | 16 | 2 | 2 | 14 |
-| structural merge on typed operations | 16 | 13 | 13 | 3 |
+| `git merge-file` on rendered text | 19 | 2 | 2 | 17 |
+| structural merge on typed operations | 19 | 16 | 16 | 3 |
 
-Every structural merge result is well-typed: 16/16.
+Every structural merge result is well-typed: 19/19.
 
 ## By scenario class
 
 | class | scenarios | git clean and correct | git clean but wrong | git conflicts | structural clean |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| reordering | 3 | 0 | 0 | 3 | 3 |
-| renaming | 3 | 0 | 0 | 3 | 3 |
+| reordering | 4 | 0 | 0 | 4 | 4 |
+| renaming | 5 | 0 | 0 | 5 | 5 |
 | reformatting | 4 | 0 | 0 | 4 | 4 |
 | moving | 2 | 1 | 0 | 1 | 2 |
 | control | 4 | 1 | 0 | 3 | 1 |
@@ -76,6 +77,9 @@ Every structural merge result is well-typed: 16/16.
 | moving | move a function into a hole vs edit a binding above it | 1 / 1 | clean | clean |
 | control | both branches move the same function to different places | 1 / 1 | conflict | 1 conflict(s) |
 | control | both branches change the same literal to different values | 1 / 1 | conflict | 1 conflict(s) |
+| renaming | rename the greeted parameter vs reword the greeting itself | 1 / 2 | conflict | clean |
+| reordering | one branch appends to a list, the other inserts into its middle | 1 / 1 | conflict | clean |
+| renaming | two branches rename and reorder the fields of the same record | 1 / 2 | conflict | clean |
 | control | both branches make the identical edit | 1 / 1 | clean | clean |
 
 ## What the line-based merge is given
@@ -133,6 +137,9 @@ conflict (competing renames of one binder) at the name of `square`
 * **move a function into a hole vs edit a binding above it** — one branch moves the lambda across the pair; the other edits `bump`
 * **both branches move the same function to different places** — a genuine conflict: the same subtree is claimed by two destinations
 * **both branches change the same literal to different values** — a genuine conflict: line-based and structural merge should both refuse
+* **rename the greeted parameter vs reword the greeting itself** — one branch renames `x` to `who`; the other rewrites the string literals around it
+* **one branch appends to a list, the other inserts into its middle** — a cons chain is a spine like a let chain, but its cells have no ids: `1 :: 2 :: 3 :: nil` gains a 4 at the end on one side and a 9 after the 1 on the other
+* **two branches rename and reorder the fields of the same record** — one branch renames the field `width`; the other renames `depth` and moves it to the front of the same record. A field is an identity, so a rename is a name-table write with no structural footprint and the reorder is an ordering footprint over the field list — the three edits touch one line of text and three disjoint regions of the tree
 * **both branches make the identical edit** — convergent edits: both merges should be clean
 
 ## Reading the table

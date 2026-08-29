@@ -140,7 +140,7 @@ pub fn scope_of(blocked: &Blocked, names: &NameTable) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::{handle_key, key};
+    use crate::keys::{ctrl, handle_key, key};
     use nothing_core::examples;
     use nothing_core::exp::{HoleId, Id, Op};
     use nothing_core::ty::Ty;
@@ -208,6 +208,44 @@ mod tests {
             live_line(&body),
             "program ⇒ λx0:Num. x0 + 1",
             "`x0 + 1` has a free variable, so the program answers instead"
+        );
+    }
+
+    #[test]
+    fn a_record_is_a_live_value_and_a_projection_reads_one_field_of_it() {
+        let record = handle_key(key(KeyCode::Up), typed("{x=1"));
+        assert_eq!(
+            live_line(&record),
+            "⇒ {x = 1}",
+            "a record of values is a value, and the live line says so by name"
+        );
+
+        let grown = handle_key(ctrl(KeyCode::Char('n')), record.clone());
+        let grown = ['y', '=', '2']
+            .into_iter()
+            .fold(grown, |state, c| handle_key(key(KeyCode::Char(c)), state));
+        let grown = handle_key(key(KeyCode::Up), grown);
+        assert_eq!(live_line(&grown), "⇒ {x = 1, y = 2}");
+
+        let projected = handle_key(key(KeyCode::Char('.')), grown.clone());
+        assert_eq!(
+            live_line(&projected),
+            "⇒ 1",
+            "and projecting it picks the field out, live"
+        );
+
+        let half = handle_key(ctrl(KeyCode::Char('n')), record);
+        let half = ['y', '=']
+            .into_iter()
+            .fold(half, |state, c| handle_key(key(KeyCode::Char(c)), state));
+        let half = handle_key(key(KeyCode::Up), half);
+        assert_eq!(half.text(), "{x = 1, y = ⦇⦈}");
+        let picked = handle_key(key(KeyCode::Char('.')), half);
+        assert_eq!(picked.text(), "{x = 1, y = ⦇⦈}.x");
+        assert_eq!(
+            live_line(&picked),
+            "⇒ 1",
+            "projecting the filled field of a half-written record still answers"
         );
     }
 

@@ -172,12 +172,10 @@ fn dispatch(key: KeyEvent, state: AppState) -> AppState {
             state,
             "this is the first definition",
         ),
-        (KeyCode::Char('n'), true) => new_definition(state),
-        (KeyCode::Char('d'), true) => or_hint(
-            to_node(state.apply_actions(&[Action::DeleteDefinition])),
-            state,
-            "a document keeps at least one definition",
-        ),
+        (KeyCode::Char('n'), true) => add_row(state),
+        (KeyCode::Char('d'), true) => drop_row(state),
+        (KeyCode::Left, true) => move_field(state, Action::MoveFieldPrev, "earlier"),
+        (KeyCode::Right, true) => move_field(state, Action::MoveFieldNext, "later"),
         (KeyCode::Char('l'), true) => to_def_name(state),
         (KeyCode::Char('t'), true) => to_def_ann(state),
 
@@ -208,7 +206,50 @@ fn printable(c: char, state: AppState) -> AppState {
         Slot::Annotation => annotation_key(c, state),
         Slot::DefName => def_name_key(c, state),
         Slot::DefAnn => def_ann_key(c, state),
+        Slot::FieldName => field_name_key(c, state),
+        Slot::FieldPick => field_pick_key(c, state),
         Slot::Node => node_key(c, state),
+    }
+}
+
+fn add_row(state: AppState) -> AppState {
+    if !state.in_record() {
+        return new_definition(state);
+    }
+    match state.apply_actions(&[Action::AddField]) {
+        Some(next) => match next.field_name_target() {
+            Some(named) => named,
+            None => next,
+        },
+        None => state.with_hint("a field cannot be added here"),
+    }
+}
+
+fn drop_row(state: AppState) -> AppState {
+    if state.zipper().record_field_id().is_some() {
+        return or_hint(
+            to_node(state.apply_actions(&[Action::RemoveField])),
+            state,
+            "this field cannot be dropped",
+        );
+    }
+    or_hint(
+        to_node(state.apply_actions(&[Action::DeleteDefinition])),
+        state,
+        "a document keeps at least one definition",
+    )
+}
+
+fn move_field(state: AppState, action: Action, which: &str) -> AppState {
+    let slot = state.slot;
+    match state.apply_actions(&[action]) {
+        Some(mut next) => {
+            if slot == Slot::FieldName {
+                next.slot = Slot::FieldName;
+            }
+            next
+        }
+        None => state.with_hint(format!("this field cannot move any {which}")),
     }
 }
 
@@ -366,8 +407,116 @@ fn node_key(c: char, state: AppState) -> AppState {
         '~' => negate(state),
         ':' if matches!(state.focus(), Exp::Lam(..)) => to_annotation(state),
         ':' => wrap(state, PREC_CONS, Action::ConstructCons, "cons"),
-        '.' => state.with_hint("`.` addresses a binder's body; the cursor is not on a binder"),
+        '{' => record(state),
+        '.' => project(state),
         _ => state.with_hint(format!("`{c}` is not bound here")),
+    }
+}
+
+fn record(state: AppState) -> AppState {
+    let mut actions = state.climb_actions(PREC_ATOM);
+    actions.push(Action::ConstructRecord);
+    let Some(next) = state.apply_actions(&actions) else {
+        return state.with_hint("a record does not fit here");
+    };
+    match next.field_name_target() {
+        Some(named) => named,
+        None => next,
+    }
+}
+
+fn project(state: AppState) -> AppState {
+    let Some((id, name)) = complete::best_field(&state, "") else {
+        return state
+            .with_hint("`.` names a field, and this document has no record to name one in");
+    };
+    match state.apply_actions(&[Action::ConstructField(id)]) {
+        Some(mut next) => {
+            next.slot = Slot::FieldPick;
+            next.entry = String::new();
+            next.entry_committed = false;
+            next
+        }
+        None => state.with_hint(format!("`{name}` cannot be projected from this")),
+    }
+}
+
+fn field_name_key(c: char, state: AppState) -> AppState {
+    match c {
+        '=' => leave_field_slot(state),
+        c if is_name_char(c) => name_field(c.to_string(), state, true),
+        _ => exit_field_and_reprocess(c, state),
+    }
+}
+
+fn field_pick_key(c: char, state: AppState) -> AppState {
+    match c {
+        '=' => leave_field_slot(state),
+        c if is_name_char(c) => pick_field(c.to_string(), state, true),
+        _ => exit_field_and_reprocess(c, state),
+    }
+}
+
+fn leave_field_slot(state: AppState) -> AppState {
+    let mut next = state;
+    next.slot = Slot::Node;
+    next.clear_entry();
+    next
+}
+
+fn exit_field_and_reprocess(c: char, state: AppState) -> AppState {
+    printable(c, leave_field_slot(state))
+}
+
+fn name_field(text: String, state: AppState, append: bool) -> AppState {
+    let mut buffer = if append {
+        state.entry.clone()
+    } else {
+        String::new()
+    };
+    buffer.push_str(&text);
+
+    let Some(id) = state.field_slot_id() else {
+        return state.with_hint("the cursor is not on a field");
+    };
+
+    let mut next = state
+        .apply_actions(&[Action::Rename(id, buffer.clone())])
+        .expect("a rename is a name-table write: it cannot fail");
+    next.slot = Slot::FieldName;
+    next.entry = buffer;
+    next.entry_committed = true;
+    next
+}
+
+fn pick_field(text: String, state: AppState, append: bool) -> AppState {
+    let mut buffer = if append {
+        state.entry.clone()
+    } else {
+        String::new()
+    };
+    buffer.push_str(&text);
+
+    let Some((id, name)) = complete::best_field(&state, &buffer) else {
+        let mut next = state;
+        next.entry = buffer.clone();
+        next.entry_committed = false;
+        return next.with_hint(format!("no field in view starts with `{buffer}`"));
+    };
+
+    match state.apply_actions(&[Action::SetField(id)]) {
+        Some(mut next) => {
+            next.slot = Slot::FieldPick;
+            next.entry = buffer;
+            next.entry_committed = true;
+            next
+        }
+        None => {
+            let mut next = state;
+            next.entry = buffer;
+            next.entry_committed = false;
+            next.with_hint(format!("`{name}` is not a field of this value"))
+        }
     }
 }
 
@@ -619,6 +768,28 @@ fn backspace(state: AppState) -> AppState {
             let mut buffer = state.entry.clone();
             buffer.pop();
             set_ann(buffer, state)
+        }
+        Slot::FieldName => {
+            let mut buffer = state.entry.clone();
+            buffer.pop();
+            if !buffer.is_empty() {
+                return name_field(buffer, state, false);
+            }
+            let mut next = state;
+            next.entry = buffer;
+            next.entry_committed = false;
+            next
+        }
+        Slot::FieldPick => {
+            let mut buffer = state.entry.clone();
+            buffer.pop();
+            if !buffer.is_empty() {
+                return pick_field(buffer, state, false);
+            }
+            let mut next = state;
+            next.entry = buffer;
+            next.entry_committed = false;
+            next
         }
         Slot::Node => {
             if !state.entry.is_empty() {
@@ -1551,5 +1722,202 @@ mod tests {
         assert!(state.hint.is_some());
         let next = handle_key(key(KeyCode::Down), state);
         assert_eq!(next.hint, None);
+    }
+
+    fn record_of_two_fields() -> AppState {
+        let state = type_chars("{x=1", AppState::empty());
+        let state = handle_key(ctrl(KeyCode::Char('n')), state);
+        let state = type_chars("y=2", state);
+        let state = handle_key(key(KeyCode::Up), state);
+        assert!(
+            matches!(state.focus(), Exp::Record(fields) if fields.len() == 2),
+            "the fixture must stand on a two-field record"
+        );
+        state
+    }
+
+    #[test]
+    fn a_brace_writes_a_record_and_lands_in_its_field_name() {
+        let fresh = type_chars("{", AppState::empty());
+        assert_eq!(fresh.text(), "{f0 = ⦇⦈}");
+        assert_eq!(
+            fresh.slot,
+            Slot::FieldName,
+            "a brace leaves the cursor in the new field's name, as a lambda does in its binder's"
+        );
+        assert_eq!(fresh.entry, "", "and the name run starts empty");
+
+        assert_eq!(
+            typed("1{"),
+            "{f0 = 1}",
+            "it wraps what was already there, like every other form key"
+        );
+        assert_eq!(
+            typed("{x=1"),
+            "{x = 1}",
+            "the name slot is free text and `=` leaves it for the value"
+        );
+
+        let wanted = nothing_core::ty::Ty::Record(vec![
+            (
+                nothing_core::exp::Id::from_u128(0x11),
+                nothing_core::ty::Ty::Num,
+            ),
+            (
+                nothing_core::exp::Id::from_u128(0x22),
+                nothing_core::ty::Ty::Bool,
+            ),
+        ]);
+        let annotated = AppState::empty()
+            .apply_actions(&[Action::SetDefAnn(wanted)])
+            .expect("a fresh definition takes any annotation");
+        let laid_out = type_chars("{", annotated);
+        assert_eq!(
+            laid_out.edit.field_ids(),
+            vec![
+                nothing_core::exp::Id::from_u128(0x11),
+                nothing_core::exp::Id::from_u128(0x22)
+            ],
+            "where a record type is expected, a brace lays out that record's fields rather than \
+             minting an identity nothing knows"
+        );
+        assert!(laid_out.edit.is_well_typed());
+        assert_eq!(laid_out.slot, Slot::FieldName);
+    }
+
+    #[test]
+    fn a_dot_projects_and_the_field_slot_picks_by_prefix() {
+        let record = record_of_two_fields();
+
+        let first = type_chars(".", record.clone());
+        assert_eq!(first.text(), "{x = 1, y = 2}.x");
+        assert_eq!(first.slot, Slot::FieldPick);
+
+        let picked = type_chars(".y", record.clone());
+        assert_eq!(
+            picked.text(),
+            "{x = 1, y = 2}.y",
+            "the slot picks a field of the record being projected, by prefix"
+        );
+
+        let unknown = type_chars(".z", record.clone());
+        assert_eq!(
+            unknown.text(),
+            "{x = 1, y = 2}.x",
+            "a prefix that names nothing leaves the projection alone"
+        );
+        assert_eq!(
+            unknown.hint.as_deref(),
+            Some("no field in view starts with `z`")
+        );
+
+        let nowhere = type_chars(".", AppState::empty());
+        assert_eq!(
+            nowhere.text(),
+            "⦇⦈",
+            "a dot with no field to name writes nothing"
+        );
+        assert_eq!(
+            nowhere.hint.as_deref(),
+            Some("`.` names a field, and this document has no record to name one in")
+        );
+
+        let nested = type_chars("{x={y=1", AppState::empty());
+        let nested = handle_key(key(KeyCode::Up), nested);
+        let nested = handle_key(key(KeyCode::Up), nested);
+        assert_eq!(
+            type_chars("..", nested).text(),
+            "{x = {y = 1}}.x.y",
+            "a dot never climbs: a second one wraps the projection in place"
+        );
+
+        let applied = type_chars("\\f:?.f ", AppState::empty());
+        let applied = type_chars("{x=1", applied);
+        let applied = handle_key(key(KeyCode::Up), applied);
+        assert_eq!(
+            type_chars(".", applied).text(),
+            "λf:?. f {x = 1}.x",
+            "and a projection binds tighter than the application it stands in"
+        );
+    }
+
+    #[test]
+    fn control_n_and_d_address_a_field_inside_a_record_and_a_definition_outside_one() {
+        let record = record_of_two_fields();
+        assert_eq!(
+            record.edit.def_count(),
+            1,
+            "two fields were added without adding a definition"
+        );
+
+        let grown = handle_key(ctrl(KeyCode::Char('n')), record.clone());
+        assert_eq!(grown.text(), "{x = 1, y = 2, f0 = ⦇⦈}");
+        assert_eq!(grown.slot, Slot::FieldName);
+
+        let first = handle_key(key(KeyCode::Down), record.clone());
+        let dropped = handle_key(ctrl(KeyCode::Char('d')), first.clone());
+        assert_eq!(
+            dropped.text(),
+            "{y = 2}",
+            "inside a record, C-d drops the field the cursor is in"
+        );
+        assert_eq!(dropped.edit.def_count(), 1);
+
+        let outside = handle_key(ctrl(KeyCode::Char('n')), AppState::empty());
+        assert_eq!(
+            outside.edit.def_count(),
+            2,
+            "outside a record the same key still adds a definition"
+        );
+        let undone = handle_key(ctrl(KeyCode::Char('d')), outside);
+        assert_eq!(undone.edit.def_count(), 1);
+        let last = handle_key(ctrl(KeyCode::Char('d')), AppState::empty());
+        assert_eq!(last.edit.def_count(), 1);
+        assert_eq!(
+            last.hint.as_deref(),
+            Some("a document keeps at least one definition")
+        );
+
+        let moved = handle_key(ctrl(KeyCode::Left), record.clone());
+        assert_eq!(
+            moved.text(),
+            "{x = 1, y = 2}",
+            "C-left needs a field to move, not the record itself"
+        );
+        let moved = handle_key(ctrl(KeyCode::Right), first.clone());
+        assert_eq!(
+            moved.text(),
+            "{y = 2, x = 1}",
+            "and C-right reorders the field where it stands"
+        );
+        assert_eq!(
+            handle_key(ctrl(KeyCode::Left), first).hint.as_deref(),
+            Some("this field cannot move any earlier")
+        );
+    }
+
+    #[test]
+    fn renaming_a_field_renames_every_use_of_it_at_once() {
+        let built = type_chars("{x=1", AppState::empty());
+        let built = handle_key(key(KeyCode::Up), built);
+        let projected = type_chars(".", built);
+        assert_eq!(projected.text(), "{x = 1}.x");
+
+        let name = handle_key(key(KeyCode::Up), projected);
+        let name = handle_key(key(KeyCode::Down), name);
+        let name = handle_key(key(KeyCode::Down), name);
+        assert_eq!(
+            name.slot,
+            Slot::FieldName,
+            "the value of a field is one step below the record, and its name is a slot"
+        );
+
+        let renamed = type_chars("count", name);
+        assert_eq!(
+            renamed.text(),
+            "{count = 1}.count",
+            "one name run renames the construction site and the projection together, because \
+             they are the same identity"
+        );
     }
 }

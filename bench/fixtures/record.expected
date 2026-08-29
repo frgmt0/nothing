@@ -1,2 +1,2 @@
-main : Num * Num -> Num = λx0:Num * Num. fst x0
-mk : Num -> Num -> Num * Num = λx1:Num. λx2:Num. (x1, x2)
+mk : Num -> Num -> ? = λx1:Num. λx2:Num. {x = x1, y = x2}
+main : ? -> Num = λp:?. p.x

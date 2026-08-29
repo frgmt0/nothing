@@ -98,6 +98,18 @@ impl Doc {
             .find(|id| names.get(*id) == Some(MAIN_NAME))
     }
 
+    pub fn field_ids(&self) -> Vec<Id> {
+        let mut out = Vec::new();
+        for def in &self.defs {
+            for id in field_ids(&def.body) {
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
     pub fn render(&self, names: &NameTable) -> String {
         self.defs
             .iter()
@@ -115,7 +127,7 @@ pub fn render_def(def: &Def, names: &NameTable) -> String {
     format!(
         "{} : {} = {}",
         names.display(def.id),
-        def.ann,
+        crate::render::render_ty(&def.ann, names),
         render(&def.body, names)
     )
 }
@@ -136,8 +148,130 @@ pub fn references(exp: &Exp, target: Id) -> bool {
             references(l, target) || references(i, target) || references(s, target)
         }
         Exp::Proj(_, e) => references(e, target),
+        Exp::Field(e, _) => references(e, target),
+        Exp::Record(fields) => fields.iter().any(|(_, e)| references(e, target)),
         Exp::NonEmptyHole(_, e) => references(e, target),
         Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => false,
+    }
+}
+
+pub fn field_ids(exp: &Exp) -> Vec<Id> {
+    fn walk(exp: &Exp, out: &mut Vec<Id>) {
+        match exp {
+            Exp::Record(fields) => {
+                for (id, e) in fields {
+                    if !out.contains(id) {
+                        out.push(*id);
+                    }
+                    walk(e, out);
+                }
+            }
+            Exp::Field(e, id) => {
+                if !out.contains(id) {
+                    out.push(*id);
+                }
+                walk(e, out);
+            }
+            Exp::Lam(_, _, e) | Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => walk(e, out),
+            Exp::Ap(a, b)
+            | Exp::BinOp(_, a, b)
+            | Exp::Pair(a, b)
+            | Exp::Cons(a, b)
+            | Exp::Let(_, a, b) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            Exp::If(a, b, c) | Exp::Fold(a, b, c) => {
+                walk(a, out);
+                walk(b, out);
+                walk(c, out);
+            }
+            Exp::Var(_)
+            | Exp::Num(_)
+            | Exp::Bool(_)
+            | Exp::Str(_)
+            | Exp::Nil
+            | Exp::EmptyHole(_) => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(exp, &mut out);
+    out
+}
+
+pub fn projects(exp: &Exp, field: Id) -> bool {
+    match exp {
+        Exp::Field(e, id) => *id == field || projects(e, field),
+        Exp::Record(fields) => fields.iter().any(|(_, e)| projects(e, field)),
+        Exp::Lam(_, _, e) | Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => projects(e, field),
+        Exp::Ap(a, b) | Exp::BinOp(_, a, b) | Exp::Pair(a, b) | Exp::Cons(a, b) => {
+            projects(a, field) || projects(b, field)
+        }
+        Exp::Let(_, a, b) => projects(a, field) || projects(b, field),
+        Exp::If(a, b, c) | Exp::Fold(a, b, c) => {
+            projects(a, field) || projects(b, field) || projects(c, field)
+        }
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            false
+        }
+    }
+}
+
+pub fn quarantine_projections(exp: &Exp, field: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
+    match exp {
+        Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil | Exp::EmptyHole(_) => {
+            exp.clone()
+        }
+        Exp::Lam(id, ty, body) => {
+            Exp::lam(*id, ty.clone(), quarantine_projections(body, field, fresh))
+        }
+        Exp::Let(id, bound, body) => Exp::let_(
+            *id,
+            quarantine_projections(bound, field, fresh),
+            quarantine_projections(body, field, fresh),
+        ),
+        Exp::Ap(f, a) => Exp::ap(
+            quarantine_projections(f, field, fresh),
+            quarantine_projections(a, field, fresh),
+        ),
+        Exp::BinOp(op, l, r) => Exp::bin_op(
+            *op,
+            quarantine_projections(l, field, fresh),
+            quarantine_projections(r, field, fresh),
+        ),
+        Exp::Pair(l, r) => Exp::pair(
+            quarantine_projections(l, field, fresh),
+            quarantine_projections(r, field, fresh),
+        ),
+        Exp::Cons(l, r) => Exp::cons(
+            quarantine_projections(l, field, fresh),
+            quarantine_projections(r, field, fresh),
+        ),
+        Exp::If(c, t, e) => Exp::if_(
+            quarantine_projections(c, field, fresh),
+            quarantine_projections(t, field, fresh),
+            quarantine_projections(e, field, fresh),
+        ),
+        Exp::Fold(l, i, s) => Exp::fold(
+            quarantine_projections(l, field, fresh),
+            quarantine_projections(i, field, fresh),
+            quarantine_projections(s, field, fresh),
+        ),
+        Exp::Proj(side, e) => Exp::proj(*side, quarantine_projections(e, field, fresh)),
+        Exp::Record(fields) => Exp::record(
+            fields
+                .iter()
+                .map(|(id, e)| (*id, quarantine_projections(e, field, fresh))),
+        ),
+        Exp::NonEmptyHole(h, e) => Exp::non_empty_hole(*h, quarantine_projections(e, field, fresh)),
+        Exp::Field(e, id) => {
+            let subject = quarantine_projections(e, field, fresh);
+            if *id == field {
+                Exp::non_empty_hole(fresh(), subject)
+            } else {
+                Exp::field(subject, *id)
+            }
+        }
     }
 }
 
@@ -180,6 +314,10 @@ pub fn vacate(exp: &Exp, target: Id, fresh: &mut dyn FnMut() -> HoleId) -> Exp {
             vacate(s, target, fresh),
         ),
         Exp::Proj(side, e) => Exp::proj(*side, vacate(e, target, fresh)),
+        Exp::Field(e, id) => Exp::field(vacate(e, target, fresh), *id),
+        Exp::Record(fields) => {
+            Exp::record(fields.iter().map(|(id, e)| (*id, vacate(e, target, fresh))))
+        }
         Exp::NonEmptyHole(h, e) => {
             let inner = vacate(e, target, fresh);
             if matches!(inner, Exp::EmptyHole(_)) {

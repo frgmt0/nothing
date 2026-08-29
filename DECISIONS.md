@@ -739,3 +739,330 @@ notion of a conflict region and the evaluator's stack budget, and both were
 about *sequences* specifically rather than about structure in general. A
 record type — the other thing B4 wants — would pay the zipper and renderer
 costs again and none of the sequence ones.
+
+---
+
+### 2026-08-29 — A record's fields are identities, and that decides everything else
+
+Records are the third Phase B2 feature. The checkbox asks for "named fields
+where field identity is an `Id` and the display name lives in the name
+table — exactly like binders — so renaming a field project-wide is one
+action that cannot fail and cannot conflict in a merge." Every choice below
+falls out of taking that literally.
+
+`Ty::Record(Vec<(Id, Ty)>)` and `Exp::Record(Vec<(Id, Exp)>)` /
+`Exp::Field(Box<Exp>, Id)`. Fields are ordered, because the projection has
+to print them in *some* order and the order the user typed them in is the
+only one that is not a lie. Nothing else depends on the order.
+
+**Consistency is by field set, order-insensitive, and exact.**
+`{x: A, y: B}` is consistent with `{y: B', x: A'}` when the two carry the
+same set of field ids and each pair is consistent. Two decisions in one
+sentence:
+
+- *Order-insensitive* is forced, not chosen. Reordering a record's fields is
+  one of the two operations this feature exists to merge cleanly. If
+  consistency were order-sensitive, a branch that reordered fields would
+  make every use site of that record ill-typed, and the merge would repair
+  by quarantining half the program. Order is display; the type is a set.
+- *Exact* — no width subtyping. A record with more fields than expected is
+  inconsistent. Gradual typing already has one direction of "I know less
+  than you do" (`?`), and adding subtyping gives consistency a second
+  direction with different algebra; the two interact in ways that are a
+  research paper, not a phase. Exactness also keeps `is_consistent`
+  symmetric, which an existing proptest asserts and which the whole
+  quarantine story leans on. The cost is recorded: you cannot pass
+  `{x: Num, y: Num}` where `{x: Num}` is expected, and you will not want to
+  until modules arrive.
+
+`join` follows: same id set or nothing, field-wise, and the result keeps the
+**left** operand's order, because `join` is called from `If` where the
+then-branch is the one the reader met first.
+
+**`matched_record` fails open per field.** `matched_record(?, f) = ?` and
+`matched_record({…, f: τ, …}, f) = τ`; anything else fails. So `p.x` where
+`p : ?` synthesises `?` and is well-typed, which is the gradual rule every
+other `matched_*` judgment already follows, and it is what makes a record
+parameter writable at all: `λp:?. p.x` is a function over records, and the
+annotation slot never had to learn a new grammar for it. Projecting a field
+the record *does* have but at the wrong type is not a special case — the
+field's type is whatever the record says.
+
+**A record type is inferred and displayed, never spelled.** There is no `{`
+in the annotation slot and no record syntax in `script::parse_ty`. A record
+type is a list of field *identities*; an annotation slot is free text
+re-parsed on every keystroke of a commit-live run. To accept `{x: Num}`
+there the slot would have to either resolve `x` against fields that already
+exist — making a *type* depend on program content elsewhere, the thing
+§Rejected item 5 of `KEYS.md` refuses — or mint a fresh id per keystroke,
+strewing the name table with fields no record has and making the annotation
+inconsistent with every construction site by construction. The decisive
+argument is smaller and harder: `action_name`/`parse_step` round-trip is a
+tested property, `SetAnn` carries a `Ty`, and a `Ty` carrying uuids cannot
+round-trip through a name. So `Ty::Record` is a type the checker computes,
+`core::render::render_ty` prints with display names, and `Display for Ty`
+prints with short ids for logs. If a later phase wants record annotations,
+the honest route is a field *picker* in the slot, not a parser.
+
+**Duplicate display names are fine; a duplicate `Id` is not.** Two fields
+called `x` in two different records are two fields, exactly as two binders
+called `x` are two binders (settled item 13 of `KEYS.md`). The same `Id`
+twice in one record is ill-formed: no action can build it (`AddField` mints
+a fresh id), and `syn` returns `None` for it anyway, so a corrupted file
+fails to typecheck rather than typechecking ambiguously.
+
+**`RemoveField` rewrites every projection of that field to `⦇e⦈`.** This is
+B1's delete-definition decision (2026-08-28) with one refinement. B1
+replaces a reference to a dropped definition with an empty hole because a
+`Var` has nothing worth keeping. A projection `e.f` does: `e`. So the field
+goes, the projection becomes a quarantine around the subject, the document
+is well-typed before and after, one `C-z` puts it all back, and the user's
+work is still on screen wearing the editor's own "this does not fit any
+more" marker. This is precise rather than over-eager because a field id
+belongs to exactly one record: no action adds an *existing* field id to a
+second record, so the projections of `f` are exactly the sites the removal
+breaks. Removing the last field leaves `{}`, which is a perfectly good type
+— unlike a document, a record has nothing to be the last of.
+
+**`AddField` appends.** Not "insert after the cursor": append is where you
+can predict it will land without looking, and `C-←`/`C-→` move it from
+there in one keystroke each.
+
+**Field ids are identity-relevant and hash raw.** This is the one place the
+"names are excluded from the hash" principle looks like it should apply and
+does not. Bound variables are canonicalised de-Bruijn-style because a
+binder travels with the term it binds: `λa. a` and `λb. b` are the same
+function. A record's field identity does not travel with anything — it is
+document-global, like a definition's id and like a *free* variable's, which
+`build_rec` already hashes raw. Canonicalising field ids by position would
+make `{x = 1}` and `{y = 1}` hash equal, and the merge engine's move
+detector matches subtrees by content hash: it would cheerfully report that
+one record had *moved* to where a differently-typed record now is, and
+splice two incompatible types together without a conflict. So field ids are
+hashed as they are, a `Field` node hashes its field id, and what is excluded
+is the thing that was always excluded — the display name, which lives in the
+name table and never reaches `hash_node`. That exclusion is the whole
+feature: renaming a field changes no node hash, so a rename has zero
+structural footprint and cannot collide with any structural edit.
+
+**Field order is an `Order`-shaped region of its own.** `Region::FieldOrder(path)`
+overlaps an edit *at or above* the record and nothing inside a field's value,
+overlaps another `FieldOrder` only at the same path, and never overlaps a
+`Name`. So: reorder commutes with rename (different region kinds), reorder
+commutes with edits inside field values (strictly-below paths do not
+overlap), and two branches reordering the same record's fields is a real
+conflict, which it should be. `Operation::ReorderFields { path, from, to }`
+permutes whatever fields are at that path when it is applied, by id, so it
+composes with the other branch's edits to the values rather than overwriting
+them.
+
+Two coarsenesses are recorded rather than hidden. A record whose *field set*
+differs between two versions diffs as a whole-node `Replace`, not as an
+insert-and-delete over the field list, and a projection whose *field id*
+changed does too, exactly as a `Proj` whose side changed already did. Both
+could be finer. Neither is worth being finer yet: a changed field set is a
+changed type, so the values under it are being re-typed anyway, and the
+sites where two branches independently add different fields to the same
+record are sites where the type they agree on is the thing in dispute — a
+conflict is the honest answer there, not a merge. `ReorderFields` is the
+one field-list edit that gets a footprint of its own, because it is the one
+that provably changes nothing about the program.
+
+**Keys.** `KEYS.md` settled item 19 has the full argument. In short: `{`
+constructs, `.` projects and never climbs, `C-n`/`C-d` generalise from "one
+more / one fewer definition" to "one more / one fewer row of the list you
+are in", `C-←`/`C-→` reorder, and there is one field slot that renames a
+record's field and picks a projection's field, because both of those are
+"name a field".
+
+**`ConstructRecord` adopts the expected record's fields.** Every other
+construction action writes a fixed shape and lets the checker quarantine it
+if it does not fit. A record cannot: its shape *is* a set of identities, and
+a freshly minted identity is inconsistent with any record type that is
+already known, so a mint-one-field `ConstructRecord` is quarantined in
+exactly the positions where the user most obviously wants a record — a
+definition annotated with a record type, a field of an enclosing record, the
+hole `AddField` just made. So the action reads the expected type first: a
+record expectation on an empty hole writes that record's field ids with hole
+values and puts the cursor in the first; a record expectation on a filled
+focus wraps the focus as the first field's value if it analyses against that
+field's type and holes the rest; no record expectation mints one fresh field
+and names it. The reachability suite found this, not the design review — the
+"any well-typed program reaches any other" property failed because a record
+in an annotated position was unreachable, which is the strongest possible
+argument that the mint-always version was wrong rather than merely awkward.
+
+---
+
+### 2026-08-29 — What the first *named* type cost
+
+Records are the third and last Phase B2 feature. The lists entry above ends
+on a prediction: "A record type — the other thing B4 wants — would pay the
+zipper and renderer costs again and none of the sequence ones." Here is the
+bill, and the prediction was wrong in both directions.
+
+**Files touched: 62 modified, 19 added** (`store/src/v4.rs`, the seventeen
+`store/fixtures/v4/` artifacts, and one proptest regressions file that is
+itself part of this entry — see *what fought back*, item 1). By layer:
+
+| layer | files | what changed |
+|---|---:|---|
+| type grammar | 1 | `Ty::Record`, `matched_record`, `matched_record_fields`, an order-insensitive consistency row, a field-wise `join`, a `Display` arm |
+| expression grammar | 1 | `Exp::Record`, `Exp::Field`, `Exp::record`/`Exp::field`, `field_ids` |
+| typing | 1 | `syn`/`ana` for both forms, field-wise |
+| document | 3 | `Doc::field_ids`, the name table's field names, examples |
+| zipper | 1 | **two frames, one of them variable-arity** — `RecordField(others, index, id)` carries its siblings |
+| actions | 3 | eight actions, the expected-type rules, the generator, the script vocabulary |
+| rendering | 2 | `{x = e}` and `e.x`, both at `PREC_ATOM`, so **the precedence table did not move** |
+| serialisation | 8 (+1 new) | v4→v5, node tags 16–17, `Ty` tag 7, action tags 30–37, `store/src/v4.rs`, 17 v4 fixtures |
+| evaluation | 3 | `Dyn`/`Value` cases, the projection rule, `step_field`/`step_record` |
+| diff/merge | 9 | `ReorderFields`, `Region::FieldOrder`, `diff_record`, `RepairKind::Reidentified`, the scenario, the harness prose |
+| hole context | 1 | a record construction and one projection per field in view |
+| provenance / encode | 2 | two `shallow_key` rows, two JSON tags, per-field marker paths |
+| text baseline | 1 | a full recursive type parser and record syntax for `measure::text_parse` |
+| TUI | 6 | `{`, `.`, the two field-slot flavours, `C-n`/`C-d`/`C-←`/`C-→`, the beginner voice, the live line |
+| CLI | 1 | an exhaustiveness arm, and a test |
+| benchmark | 6 | reference 3 rebuilt as a real record, both fixtures, the merge scenario, `MERGE.md`, `RESULTS.md`, `references.md` |
+| docs | 3 | `KEYS.md` item 19, `FORMAT.md` v5, this file |
+
+**Tests: 43 added**, 9 honestly adapted, 0 deleted. The count was 775
+before and is 818 after. The action alphabet went
+from 30 variants to 38, the `Exp` grammar from 16 to 18, and sensibility
+still passes at 10 000 cases over the enlarged grammar and at every cursor
+position of a generated *document*.
+
+**Adapted, each for a real reason.** Three were counts asserted rather than
+assumed: the reachability form survey (16 → 18 `Exp` variants), the
+action-variant table (30 → 38), and the v4 fixture inventory. One key-hint
+assertion moved because the hint line gained `{` and `.`; it is still three
+rows at width 60. The keystroke matrix gained a `{` row — one probed
+expectation in each of its eight columns — and its safety alphabet gained
+`{` and `}`; the `.` row already there did not move, because none of the
+eight contexts holds a record for `.` to name a field of. Three benchmark
+assertions moved with reference 3 — the fixture, its expected rendering, and
+its keystroke script — and `reference_three_record_constructs_and_accesses`
+in the evaluator now builds `{x = 3, y = 4}` and reads `.x` where it used to
+build `(3, 4)` and read `fst`, because reference 3 is a record now. One
+migration test lowered a fixture-count floor from 17 to 16, because the v4
+fixture generator now *skips* any program a version-4 build could not have
+written, and the record fixture is one. None of them changed because a claim
+stopped being true.
+
+**What was free.** Undo, redo, the action log's replay, the incremental
+cache's invalidation, the content-addressed node table's *framing* (it has
+always written a varint child count, so the first variable-arity node needed
+no format shape change), the state-machine projection, the agent protocol's
+transport, and auto-quarantine — `place`'s fallback needed no record case.
+The CLI again needed one match arm and a test.
+
+**What fought back, in order of how much:**
+
+1. **The reachability suite, which found a design bug the design review had
+   not.** `any_well_typed_program_reaches_any_other` failed, three seeds
+   deep, because `ConstructRecord` minted a fresh field id unconditionally
+   and a fresh identity is *never* consistent with a record type that is
+   already known — so a record was unreachable in exactly the positions
+   where a user most wants one. The fix is recorded in the entry above:
+   the action reads the expected type first. This is the first time a
+   property test has rejected a *design*, not an implementation, and the
+   five saved seeds in `action/tests/reachability.proptest-regressions` are
+   the receipt.
+2. **The sensibility suite's vacuity check, for a new reason.**
+   `every_action_succeeds_somewhere_in_the_search_space` reported that
+   `SetField` never applied in 867 566 attempts. Nothing was broken: the
+   exhaustive action list was built from constants, and `SetField` carries
+   an *identity*, so the two ids it offered belonged to no record any
+   generated document contained. Every previous action was enumerable from
+   constants because its payload was a number, a bool, an operator or a
+   side. This one is not, and `one_of_every_action_in` now takes the
+   document's real field ids. The general lesson: an action whose payload is
+   an identity cannot be exhaustively enumerated without reading the program
+   it will be applied to, and a suite that does not do that passes
+   vacuously.
+3. **The evaluator's stack budget, again, and for a compounding reason.**
+   `a_definition_that_diverges_runs_out_of_fuel_rather_than_hanging` builds
+   a 500-deep term and began overflowing in debug builds — the same failure
+   the lists entry recorded for `Fold`, with an extra cause: `Ty::Record`'s
+   `Vec` made `Ty` 24 bytes larger, which made `Exp` and `Dyn` larger, which
+   made every `step_in` frame larger *before* the new arms were added. Same
+   fix (`step_field`, `step_record`), but the lists entry's lesson needs
+   strengthening: a small-step interpreter written as one recursive `match`
+   has a frame budget that new grammar spends **twice** — once for the arm
+   and once for the enum growth.
+4. **The text baseline could no longer read what the editor writes.**
+   `agentapi::measure::text_parse` exists to give the "how many keystrokes
+   would this cost in a text editor" comparison a real parser, and it
+   round-trips generated programs through `render`. Records broke it
+   immediately: the renderer prints `{x = 1}` and `λp:{x: Num}. p.x`, and
+   the parser's lambda rule scanned to the first `.` and delegated the
+   annotation to `script::parse_ty`, which by design has no record syntax
+   and never will (see the entry above). So the measure parser grew a full
+   recursive type parser of its own and a name→field-id map, so that the
+   `x` in an annotation and the `x` in a projection are one identity and
+   the reparsed program is well-typed. This is the cost of the "record types
+   are never spelled" decision landing somewhere that *has* to spell them,
+   and it is the right place for it: a measurement baseline is allowed a
+   syntax the editor does not offer.
+5. **One slot, two flavours, and a ranking bug behind it.** `KEYS.md` item
+   19(d) was written claiming one field slot "because it names a field in
+   both places it is reached". The implementation cannot: a projection can
+   itself be the value of a record's field, so the cursor alone does not say
+   whether the buffer should rename that field or pick a different one. The
+   flavour has to follow how the slot was *entered*, which is two internal
+   variants wearing one label, and item 19(d) now says so. The same
+   blindness had a sharper consequence one layer down:
+   `script::fields_in_view` ranks "the fields of the subject of the
+   projection you are on", which is right in the pick slot and wrong at the
+   moment `.` is pressed on a projection — there the subject-to-be is the
+   focus itself. Uncorrected, `p.x` then `.` quarantined instead of reading
+   `p.x.y`, falsifying item 19(b). The TUI's completion layer, which is the
+   only layer that knows the slot, now re-ranks accordingly.
+6. **The 80×12 status line, a third time — and it did not break.** `{` and
+   `.` went onto the key-hint line and it is still three rows at width 60.
+   The lists entry warned the line was "within four characters of full and
+   the next feature should expect to shorten something". It was two
+   characters, and nothing had to be shortened. The warning stands for the
+   feature after this one.
+
+**Verdict on the prediction: wrong twice, in opposite directions.** Lists
+predicted records would "pay the zipper and renderer costs again and none of
+the sequence ones."
+
+- **The renderer cost was not paid at all.** A record is delimited and a
+  projection is postfix, so both are `PREC_ATOM` and the precedence table
+  did not move by one number. The insertion pain lists suffered was about
+  *infix* syntax, not about structure, and nothing in the lists entry
+  noticed that distinction.
+- **The sequence costs were paid in full.** A record's field list is a
+  sequence, so the merge engine needed a new ordering region
+  (`Region::FieldOrder`) for precisely the reason the cons spine needed
+  `Region::Cell`, `ReorderFields` had to be replayed in the same late phase
+  as `MoveBinding`, and the evaluator's stack budget bit again. "None of the
+  sequence ones" was wrong because it treated *sequence* as a property of
+  the list type rather than of any variable-arity node, which a record is —
+  the first one in this language.
+- **The zipper cost was paid, and under-estimated.** Two frames against
+  lists' five sounds cheap until `RecordField` has to carry its siblings and
+  its index, because rebuilding a variable-arity parent needs both. Every
+  fixed-arity frame in this codebase is a tuple of the *other* children;
+  this one is a `Vec` and a position, and every consumer — rebuild, arity,
+  child index, cursor render, beginner voice, expected type — has to do
+  arithmetic instead of pattern matching.
+
+The thing the prediction had no word for is the one that mattered most, and
+it is the checkbox's own claim: **an identity-shaped payload changes what
+"exhaustive" means.** Three of the six things that fought back — the
+reachability failure, the sensibility vacuity, and the field-slot ranking —
+are all the same fact wearing different clothes: a field id is a *reference*
+to something elsewhere in the document, so any code that enumerates,
+generates, or ranks must read the document first. Strings and lists never
+asked that. Definitions did, in B1, which is why `ConstructVar` was already
+handled that way and why the fixes were short once the failures were
+understood. The payoff is the one the checkbox asked for and it is real:
+`action/tests/names.rs::renaming_a_field_renames_its_construction_site_and_every_projection_across_the_document`
+renames a field used in one definition's construction site and five
+projections in another, in **one** log entry, with the document tree
+byte-identical before and after; and the merge benchmark's new scenario has
+one branch renaming a field while the other renames a second field *and*
+reorders all three, merging clean and well-typed while `git merge-file`
+conflicts on the same three versions' rendered text.

@@ -214,6 +214,7 @@ pub fn markdown(rows: &[Row], date: &str) -> String {
          | `Delete` | a wrapper was removed and one child promoted | the node at the path |\n\
          | `Move` | a subtree with an unchanged content hash appears at a new path | both endpoints |\n\
          | `MoveBinding` | a `let` binding changed position in its chain | the chain's ordering only |\n\
+         | `ReorderFields` | a record's fields were permuted | that record's field order only |\n\
          | `Replace` | a subterm became a structurally different one | the node at the path |\n\
          | `SetAnn` | a lambda's parameter annotation changed | that node's shape, not its body |\n\
          | `Rebind` | binder identities changed, structure did not | the node at the path |\n\n\
@@ -223,7 +224,10 @@ pub fn markdown(rows: &[Row], date: &str) -> String {
          footprint covers a node but not its children, so retyping a parameter does not fight an \
          edit in the body. A name footprint is a binder identity and touches no part of the tree. \
          An ordering footprint covers a `let` chain's spine but not the expressions bound in it, \
-         so reordering bindings does not fight an edit inside one of them.\n\n\
+         so reordering bindings does not fight an edit inside one of them. A record's field order \
+         is the same kind of footprint over a different list: it covers the order of the fields \
+         and neither their values nor their names, which is why one branch can rename a field \
+         while the other moves it.\n\n\
          `Move` gets a further rule: an edit made inside a subtree that the other branch moved is \
          *rebased* onto the subtree's new path instead of being called a conflict. The two \
          operations do commute; they just need the path rewritten first.\n\n\

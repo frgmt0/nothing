@@ -12,7 +12,8 @@ fn holes(exp: &Exp) -> usize {
         Exp::EmptyHole(_) => 1,
         Exp::NonEmptyHole(_, inner) => 1 + holes(inner),
         Exp::Var(_) | Exp::Num(_) | Exp::Bool(_) | Exp::Str(_) | Exp::Nil => 0,
-        Exp::Lam(_, _, b) | Exp::Proj(_, b) => holes(b),
+        Exp::Lam(_, _, b) | Exp::Proj(_, b) | Exp::Field(b, _) => holes(b),
+        Exp::Record(fields) => fields.iter().map(|(_, value)| holes(value)).sum(),
         Exp::Ap(a, b)
         | Exp::BinOp(_, a, b)
         | Exp::Let(_, a, b)
@@ -53,7 +54,14 @@ fn free_vars(
             free_vars(t, bound, out);
             free_vars(e, bound, out);
         }
-        Dyn::Proj(_, inner) | Dyn::NonEmptyHole(_, _, inner) => free_vars(inner, bound, out),
+        Dyn::Proj(_, inner) | Dyn::Field(inner, _) | Dyn::NonEmptyHole(_, _, inner) => {
+            free_vars(inner, bound, out)
+        }
+        Dyn::Record(fields) => {
+            for (_, value) in fields {
+                free_vars(value, bound, out);
+            }
+        }
         Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil => {}
         Dyn::EmptyHole(_, env) => {
             for (id, value) in env.iter() {

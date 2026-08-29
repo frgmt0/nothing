@@ -244,7 +244,7 @@ Neovim was charged for.
 
 Still marked `*` (approximate) in the tables, for those two reasons.
 
-### 3. Record constructor + accessor — pairs, positionally
+### 3. Record constructor + accessor — pairs, positionally (superseded)
 
 `type Point = { x: Num, y: Num }` becomes the structural product
 `Num * Num`; the constructor becomes the curried `λx:Num. λy:Num. (x, y)`;
@@ -257,6 +257,53 @@ also defines both and calls neither.
 so `getX` and `getY` are `fst` and `snd`, and nothing in the program records
 that component 0 is called `x`. This is the substitution that gives up the
 most.
+
+### 3. Record constructor + accessor — real records, by name (2026-08-29)
+
+Records arrived with the third feature of Phase B2, and the paragraph above
+is exactly the debt they pay off. The fixture is now two definitions:
+
+```
+mk   : Num -> Num -> ? = λx1:Num. λx2:Num. {x = x1, y = x2}
+main : ? -> Num        = λp:?. p.x
+```
+
+`getX` is `p.x` — the field is named, not counted to — and the name `x` in
+the accessor is the *same identity* as the `x` in the constructor, in a
+different definition. One `Rename` retitles both, which is the whole reason
+fields are ids (`DECISIONS.md`, 2026-08-29).
+
+The denominator is untouched: 65 was computed once on 2026-08-26 from the
+reference text, which has not changed. The numerator went **up**, 46
+keystrokes to 50 and 0.71× to 0.77×, and the +4 is worth taking apart,
+because two of its five parts point the other way:
+
+| part of the program | old | new | Δ |
+|---|---:|---:|---:|
+| definition names | 4 | 10 | +6 |
+| definition annotations | 14 | 10 | −4 |
+| lambdas and their annotations | 20 | 15 | −5 |
+| the bodies (`fst x0`, `(x1, x2)` vs `{x = …}`, `p.x`) | 8 | 13 | +5 |
+| navigation (`up` out of the record) | 0 | 2 | +2 |
+
+The two negatives are the honest cost of the design, not a saving: the
+annotations and the lambdas got shorter because a record type is a list of
+field identities and identities are not spelled, so where the pair fixture
+wrote `Num * Num` twice this one writes `?` twice. The three positives are
+the feature: two field names typed once each, a projection that names its
+field, a second definition that now has to be named because the *first* one
+is the constructor, and two keystrokes of cursor movement to get out of the
+record before `C-n` means "new definition" again rather than "new field".
+
+*What is still lost:* the **nominal type**. `type Point = …` has no
+counterpart: the record type is structural and synthesised, never written,
+so there is no place in the program that says "this shape is called Point".
+And because it is never written, the two parameter positions that the
+reference annotates (`p: Point`, and the constructor's result) are holes.
+Gradual typing makes that safe, not free: the program typechecks and runs,
+and it says less about itself than the reference does.
+
+Still marked `*` (approximate) in the tables, for that reason.
 
 ### 4. State machine — numeric codes and a chain of `if`
 

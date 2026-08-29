@@ -20,6 +20,8 @@ pub enum Dyn {
     Nil,
     Cons(Box<Dyn>, Box<Dyn>),
     Fold(Box<Dyn>, Box<Dyn>, Box<Dyn>),
+    Record(Vec<(Id, Dyn)>),
+    Field(Box<Dyn>, Id),
 
     EmptyHole(HoleId, Env),
     NonEmptyHole(HoleId, Env, Box<Dyn>),
@@ -73,6 +75,13 @@ pub fn elaborate_in(exp: &Exp, sigma: &Env) -> Dyn {
             Box::new(elaborate_in(init, sigma)),
             Box::new(elaborate_in(step, sigma)),
         ),
+        Exp::Record(fields) => Dyn::Record(
+            fields
+                .iter()
+                .map(|(id, value)| (*id, elaborate_in(value, sigma)))
+                .collect(),
+        ),
+        Exp::Field(subject, id) => Dyn::Field(Box::new(elaborate_in(subject, sigma)), *id),
         Exp::EmptyHole(h) => Dyn::EmptyHole(*h, sigma.clone()),
         Exp::NonEmptyHole(h, inner) => {
             Dyn::NonEmptyHole(*h, sigma.clone(), Box::new(elaborate_in(inner, sigma)))
@@ -123,6 +132,13 @@ pub fn subst(x: Id, v: &Dyn, d: &Dyn) -> Dyn {
             Box::new(subst(x, v, init)),
             Box::new(subst(x, v, step)),
         ),
+        Dyn::Record(fields) => Dyn::Record(
+            fields
+                .iter()
+                .map(|(id, value)| (*id, subst(x, v, value)))
+                .collect(),
+        ),
+        Dyn::Field(subject, id) => Dyn::Field(Box::new(subst(x, v, subject)), *id),
         Dyn::EmptyHole(h, env) => Dyn::EmptyHole(*h, subst_env(x, v, env)),
         Dyn::NonEmptyHole(h, env, inner) => {
             Dyn::NonEmptyHole(*h, subst_env(x, v, env), Box::new(subst(x, v, inner)))
@@ -138,6 +154,7 @@ pub fn is_value(d: &Dyn) -> bool {
     match d {
         Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Lam(..) | Dyn::Nil => true,
         Dyn::Pair(fst, snd) | Dyn::Cons(fst, snd) => is_value(fst) && is_value(snd),
+        Dyn::Record(fields) => fields.iter().all(|(_, value)| is_value(value)),
         _ => false,
     }
 }
@@ -166,6 +183,13 @@ pub fn to_exp(d: &Dyn) -> Exp {
             Box::new(to_exp(init)),
             Box::new(to_exp(step)),
         ),
+        Dyn::Record(fields) => Exp::Record(
+            fields
+                .iter()
+                .map(|(id, value)| (*id, to_exp(value)))
+                .collect(),
+        ),
+        Dyn::Field(subject, id) => Exp::Field(Box::new(to_exp(subject)), *id),
         Dyn::EmptyHole(h, _) => Exp::EmptyHole(*h),
         Dyn::NonEmptyHole(h, _, inner) => Exp::NonEmptyHole(*h, Box::new(to_exp(inner))),
     }
@@ -178,7 +202,10 @@ pub fn render(d: &Dyn, names: &NameTable) -> String {
 pub fn size(d: &Dyn) -> usize {
     match d {
         Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Str(_) | Dyn::Nil | Dyn::EmptyHole(..) => 1,
-        Dyn::Lam(_, _, b) | Dyn::Proj(_, b) | Dyn::NonEmptyHole(_, _, b) => 1 + size(b),
+        Dyn::Lam(_, _, b) | Dyn::Proj(_, b) | Dyn::Field(b, _) | Dyn::NonEmptyHole(_, _, b) => {
+            1 + size(b)
+        }
+        Dyn::Record(fields) => 1 + fields.iter().map(|(_, value)| size(value)).sum::<usize>(),
         Dyn::Ap(a, b)
         | Dyn::BinOp(_, a, b)
         | Dyn::Let(_, a, b)

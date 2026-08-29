@@ -168,6 +168,8 @@ pub enum Exp {
     Nil,
     Cons(Box<Exp>, Box<Exp>),
     Fold(Box<Exp>, Box<Exp>, Box<Exp>),
+    Record(Vec<(Id, Exp)>),
+    Field(Box<Exp>, Id),
 
     /// A gap where an expression has not been written yet. It synthesises
     /// type `Hole` so the program stays well-typed mid-edit: an empty hole
@@ -249,6 +251,14 @@ impl Exp {
         Exp::Fold(list.into(), init.into(), step.into())
     }
 
+    pub fn record(fields: impl IntoIterator<Item = (Id, Exp)>) -> Exp {
+        Exp::Record(fields.into_iter().collect())
+    }
+
+    pub fn field(subject: impl Into<Box<Exp>>, id: Id) -> Exp {
+        Exp::Field(subject.into(), id)
+    }
+
     pub fn list(items: impl IntoIterator<Item = Exp>) -> Exp {
         let items: Vec<Exp> = items.into_iter().collect();
         items
@@ -292,11 +302,13 @@ mod tests {
             Exp::nil(),
             Exp::cons(Exp::num(1), Exp::nil()),
             Exp::fold(Exp::nil(), Exp::num(0), Exp::var(x)),
+            Exp::record([(x, Exp::num(1))]),
+            Exp::field(Exp::record([(x, Exp::num(1))]), x),
             Exp::empty_hole(h0),
             Exp::non_empty_hole(h1, Exp::bool_(true)),
         ];
 
-        assert_eq!(exps.len(), 16);
+        assert_eq!(exps.len(), 18);
     }
 
     #[test]

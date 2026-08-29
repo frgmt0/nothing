@@ -42,6 +42,11 @@ fn walk(exp: &Exp, counts: &mut HoleCounts) {
             walk(l, counts);
             walk(r, counts);
         }
-        Exp::Proj(_, inner) => walk(inner, counts),
+        Exp::Proj(_, inner) | Exp::Field(inner, _) => walk(inner, counts),
+        Exp::Record(fields) => {
+            for (_, value) in fields {
+                walk(value, counts);
+            }
+        }
     }
 }

@@ -117,6 +117,16 @@ fn go(exp: &Exp, next: &mut u128, seen: &mut Vec<Id>) -> Exp {
             let init = go(init, next, seen);
             Exp::fold(list, init, go(step, next, seen))
         }
+        Exp::Record(fields) => Exp::record(
+            fields
+                .iter()
+                .map(|(id, value)| (canonical(*id, seen), go(value, next, seen)))
+                .collect::<Vec<_>>(),
+        ),
+        Exp::Field(subject, id) => {
+            let subject = go(subject, next, seen);
+            Exp::field(subject, canonical(*id, seen))
+        }
         Exp::EmptyHole(_) => Exp::empty_hole(fresh()),
         Exp::NonEmptyHole(_, inner) => {
             let id = fresh();

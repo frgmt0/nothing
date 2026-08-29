@@ -34,7 +34,12 @@ fn binders(exp: &Exp, out: &mut Vec<Id>) {
             binders(t, out);
             binders(e, out);
         }
-        Exp::Proj(_, e) | Exp::NonEmptyHole(_, e) => binders(e, out),
+        Exp::Proj(_, e) | Exp::Field(e, _) | Exp::NonEmptyHole(_, e) => binders(e, out),
+        Exp::Record(fields) => {
+            for (_, value) in fields {
+                binders(value, out);
+            }
+        }
     }
 }
 
@@ -70,6 +75,11 @@ fn pool(base: &Exp) -> Vec<Action> {
         Action::ConstructProj(Side::R),
         Action::ConstructAp,
         Action::ConstructLam,
+        Action::ConstructRecord,
+        Action::AddField,
+        Action::RemoveField,
+        Action::MoveFieldPrev,
+        Action::MoveFieldNext,
         Action::Finish,
         Action::Delete,
         Action::MoveChild(0),
@@ -81,6 +91,16 @@ fn pool(base: &Exp) -> Vec<Action> {
     for (n, id) in ids.into_iter().enumerate().take(4) {
         actions.push(Action::ConstructVar(id));
         actions.push(Action::Rename(id, format!("branch{n}")));
+    }
+    for (n, id) in nothing_core::doc::field_ids(base)
+        .into_iter()
+        .enumerate()
+        .take(4)
+    {
+        actions.push(Action::ConstructField(id));
+        actions.push(Action::SetField(id));
+        actions.push(Action::SetFieldId(id));
+        actions.push(Action::Rename(id, format!("field{n}")));
     }
     actions
 }

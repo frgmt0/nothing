@@ -63,6 +63,9 @@ const A: u128 = 10;
 const B: u128 = 11;
 const C: u128 = 12;
 const X: u128 = 13;
+const WIDTH: u128 = 20;
+const HEIGHT: u128 = 21;
+const DEPTH: u128 = 22;
 
 fn names() -> NameTable {
     let mut names = NameTable::new();
@@ -73,6 +76,9 @@ fn names() -> NameTable {
     names.set(id(B), "b");
     names.set(id(C), "c");
     names.set(id(X), "x");
+    names.set(id(WIDTH), "width");
+    names.set(id(HEIGHT), "height");
+    names.set(id(DEPTH), "depth");
     names
 }
 
@@ -176,6 +182,22 @@ fn list_program(items: &[i64]) -> Version {
             [F, G, H],
             stock(),
             Exp::list(items.iter().copied().map(Exp::num)),
+        ),
+        names(),
+    )
+}
+
+fn record_program(order: [u128; 3]) -> Version {
+    let value = |which: u128| match which {
+        WIDTH => Exp::num(3),
+        HEIGHT => Exp::num(4),
+        _ => Exp::num(5),
+    };
+    Version::new(
+        program(
+            [F, G, H],
+            stock(),
+            Exp::record(order.iter().map(|which| (id(*which), value(*which)))),
         ),
         names(),
     )
@@ -396,6 +418,21 @@ pub fn all() -> Vec<Scenario> {
             base: list_program(&[1, 2, 3]),
             ours: list_program(&[1, 2, 3, 4]),
             theirs: list_program(&[1, 9, 2, 3]),
+            base_style: CANONICAL,
+            ours_style: CANONICAL,
+            theirs_style: CANONICAL,
+        },
+        Scenario {
+            name: "two branches rename and reorder the fields of the same record",
+            category: Category::Renaming,
+            note: "one branch renames the field `width`; the other renames `depth` and moves it \
+                   to the front of the same record. A field is an identity, so a rename is a \
+                   name-table write with no structural footprint and the reorder is an ordering \
+                   footprint over the field list — the three edits touch one line of text and \
+                   three disjoint regions of the tree",
+            base: record_program([WIDTH, HEIGHT, DEPTH]),
+            ours: renamed(&record_program([WIDTH, HEIGHT, DEPTH]), WIDTH, "span"),
+            theirs: renamed(&record_program([DEPTH, WIDTH, HEIGHT]), DEPTH, "thickness"),
             base_style: CANONICAL,
             ours_style: CANONICAL,
             theirs_style: CANONICAL,
