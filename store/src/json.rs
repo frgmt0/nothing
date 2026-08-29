@@ -168,6 +168,15 @@ fn action_json(action: &Action) -> String {
             escape(name)
         ),
         Action::Finish => "{\"action\":\"Finish\"}".to_string(),
+        Action::CreateDefinition => "{\"action\":\"CreateDefinition\"}".to_string(),
+        Action::DeleteDefinition => "{\"action\":\"DeleteDefinition\"}".to_string(),
+        Action::SetDefAnn(ty) => format!("{{\"action\":\"SetDefAnn\",\"ty\":{}}}", ty_json(ty)),
+        Action::MoveNextDef => "{\"action\":\"MoveNextDef\"}".to_string(),
+        Action::MovePrevDef => "{\"action\":\"MovePrevDef\"}".to_string(),
+        Action::MoveToDef(id) => format!(
+            "{{\"action\":\"MoveToDef\",\"id\":{}}}",
+            escape(&id.to_string())
+        ),
     }
 }
 
@@ -187,10 +196,26 @@ fn log_json(log: &ActionLog) -> String {
     format!("[{}]", items.join(","))
 }
 
+fn defs_json(doc: &nothing_core::doc::Doc) -> String {
+    let items: Vec<String> = doc
+        .defs()
+        .iter()
+        .map(|def| {
+            format!(
+                "{{\"id\":{},\"ann\":{},\"body\":{}}}",
+                escape(&def.id.to_string()),
+                ty_json(&def.ann),
+                exp_json(&def.body)
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 pub fn to_debug_json(doc: &Document) -> String {
     format!(
-        "{{\"exp\":{},\"names\":{},\"log\":{}}}",
-        exp_json(&doc.exp),
+        "{{\"defs\":{},\"names\":{},\"log\":{}}}",
+        defs_json(&doc.doc),
         names_json(&doc.names),
         log_json(&doc.log)
     )

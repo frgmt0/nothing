@@ -58,6 +58,18 @@ fn encode_action_body(buf: &mut Vec<u8>, action: &Action) {
             write_string(buf, name);
         }
         Action::Finish => buf.push(19),
+        Action::CreateDefinition => buf.push(20),
+        Action::DeleteDefinition => buf.push(21),
+        Action::SetDefAnn(ty) => {
+            buf.push(22);
+            encode_ty(buf, ty);
+        }
+        Action::MoveNextDef => buf.push(23),
+        Action::MovePrevDef => buf.push(24),
+        Action::MoveToDef(id) => {
+            buf.push(25);
+            write_id(buf, *id);
+        }
     }
 }
 
@@ -111,6 +123,18 @@ fn decode_action_body(bytes: &[u8], pos: &mut usize) -> Result<Action, DecodeErr
             Ok(Action::Rename(id, name))
         }
         19 => Ok(Action::Finish),
+        20 => Ok(Action::CreateDefinition),
+        21 => Ok(Action::DeleteDefinition),
+        22 => {
+            let ty = decode_ty(bytes, pos)?;
+            Ok(Action::SetDefAnn(ty))
+        }
+        23 => Ok(Action::MoveNextDef),
+        24 => Ok(Action::MovePrevDef),
+        25 => {
+            let id = read_id(bytes, pos)?;
+            Ok(Action::MoveToDef(id))
+        }
         other => Err(DecodeError::BadTag(other)),
     }
 }

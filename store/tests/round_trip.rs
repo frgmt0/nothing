@@ -52,7 +52,8 @@ fn every_example_program_round_trips_byte_identically() {
 
         assert_eq!(first, second, "{name} did not round-trip byte-identically");
         assert_eq!(
-            decoded.exp, doc.exp,
+            decoded.exp(),
+            doc.exp(),
             "{name} lost structure across the round trip"
         );
     }

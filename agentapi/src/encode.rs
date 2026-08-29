@@ -230,6 +230,18 @@ pub fn action_json(action: &Action) -> Json {
             ("name", Json::str(name.clone())),
         ]),
         Action::Finish => Json::obj(vec![("action", Json::str("Finish"))]),
+        Action::CreateDefinition => Json::obj(vec![("action", Json::str("CreateDefinition"))]),
+        Action::DeleteDefinition => Json::obj(vec![("action", Json::str("DeleteDefinition"))]),
+        Action::SetDefAnn(ty) => Json::obj(vec![
+            ("action", Json::str("SetDefAnn")),
+            ("ty", ty_json(ty)),
+        ]),
+        Action::MoveNextDef => Json::obj(vec![("action", Json::str("MoveNextDef"))]),
+        Action::MovePrevDef => Json::obj(vec![("action", Json::str("MovePrevDef"))]),
+        Action::MoveToDef(id) => Json::obj(vec![
+            ("action", Json::str("MoveToDef")),
+            ("id", Json::str(id.to_string())),
+        ]),
     }
 }
 
@@ -309,6 +321,12 @@ pub fn action_from_json(value: &Json) -> Result<Action, String> {
             ))
         }
         "Finish" => Ok(Action::Finish),
+        "CreateDefinition" => Ok(Action::CreateDefinition),
+        "DeleteDefinition" => Ok(Action::DeleteDefinition),
+        "SetDefAnn" => Ok(Action::SetDefAnn(ty_from_json(field(value, "ty", tag)?)?)),
+        "MoveNextDef" => Ok(Action::MoveNextDef),
+        "MovePrevDef" => Ok(Action::MovePrevDef),
+        "MoveToDef" => Ok(Action::MoveToDef(id_field(value, "id", tag)?)),
         other => Err(format!("unknown action `{other}`")),
     }
 }

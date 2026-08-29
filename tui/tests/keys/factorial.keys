@@ -1,10 +1,15 @@
-# 1. Factorial — bench/references.md §1, Phase-1 surface:
+# 1. Factorial — bench/references.md §1, definition era:
 #
-#   λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈
+#   main : Num -> Num = λx0:Num. if x0 == 0 then 1 else x0 * main (x0 - 1)
 #
 # The same program bench/fixtures/factorial.actions builds, typed instead of
 # scripted. One keystroke per line; `#` starts a comment. The line count that
 # is not blank or a comment IS the keystroke count.
+#
+# The recursive call is real now: `main` is the definition the cursor is in,
+# so it is in scope in its own body. The annotation goes on last — announcing
+# `Num -> Num` first would make the half-written `x0 == ⦇⦈` inconsistent with
+# it and quarantine the body on the way through.
 
 # λ⦇⦈:?. ⦇⦈, cursor in the binder-name slot
 \
@@ -16,7 +21,7 @@ n          # SetAnn Num
 
 # if x0 == 0 then ⦇⦈ else ⦇⦈
 x
-0          # commit-live: the sole in-scope name
+0          # commit-live: the sole in-scope binder
 =          # ends the run, then wraps: x0 == ⦇⦈
 0
 ?          # climbs out of the `==`, then wraps it as the scrutinee
@@ -25,7 +30,26 @@ x
 1
 tab        # → the else branch, the next empty hole
 
-# else x0 * ⦇⦈ — the recursive call Phase 1 cannot write
+# else x0 * ⦇⦈
 x
 0
 *
+
+# main ⦇⦈ — `main` is the definition being written
+m          # the only name in scope starting with m
+space      # ends the run, then wraps: main ⦇⦈
+
+# (x0 - 1) — `!` fences the argument so `-` cannot climb out of the
+# application the way an unfenced operator would
+!
+x
+0
+-
+1
+enter      # the fence has served its purpose; drop it
+
+# main : Num -> Num
+C-t        # → the definition-type slot
+n
+>
+n

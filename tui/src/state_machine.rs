@@ -26,10 +26,7 @@ pub fn recognize(program: &Exp) -> Option<Shape> {
     let var = *id;
     let mut rows = Vec::new();
     let mut z = unzip(program.clone()).move_child(0)?;
-    loop {
-        let Exp::If(cond, _, _) = z.focus.clone() else {
-            break;
-        };
+    while let Exp::If(cond, _, _) = z.focus.clone() {
         let Exp::BinOp(Op::Eq, l, r) = *cond else {
             break;
         };

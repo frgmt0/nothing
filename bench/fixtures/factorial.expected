@@ -1,1 +1,1 @@
-λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈
+main : Num -> Num = λx0:Num. if x0 == 0 then 1 else x0 * main (x0 - 1)

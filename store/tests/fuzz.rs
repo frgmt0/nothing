@@ -16,11 +16,12 @@ fn ten_thousand_random_well_typed_programs_round_trip_through_serialisation() {
         });
 
         assert_eq!(
-            decoded.exp, exp,
+            decoded.exp(),
+            exp,
             "seed {seed} did not round-trip structurally"
         );
         assert_eq!(
-            content_hash(&decoded.exp),
+            content_hash(&decoded.exp()),
             content_hash(&exp),
             "seed {seed} changed content hash across the round trip"
         );

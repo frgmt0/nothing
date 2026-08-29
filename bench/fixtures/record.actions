@@ -1,50 +1,38 @@
-# 3. Two-field record constructor plus accessor (bench/references.md §3),
-#    as the nearest Phase-1 program.
+# 3. Record construct-and-access (bench/references.md §3), as a document.
 #
-#   let mkPoint = λx:Num. λy:Num. (x, y) in λp:Num * Num. fst p
+#   main : Num * Num -> Num = λr:Num * Num. fst r
+#   mk   : Num -> Num -> Num * Num = λa:Num. λb:Num. (a, b)
 #
-# Phase 1 has no records and no nominal types, so `{ x: Num, y: Num }`
-# becomes the structural product `Num * Num`, the constructor becomes a
-# curried lambda building the pair, and the accessor `p.x` becomes `fst p`.
-# Field *names* are lost — a product's components are positional — which is
-# the one thing this encoding genuinely cannot express.
+# Through Phase 11 the constructor was a `let` wrapped around the accessor,
+# because a program was one expression and a `let` was the only way to name
+# something. In the document era a top-level name is a definition, which is
+# what this program always meant.
 
-# let mkPoint = ⦇⦈ in ⦇⦈
-construct-let
+# main : Num * Num -> Num = λx0:Num * Num. fst x0
+set-def-ann Num * Num -> Num
+construct-lam
 move-parent
 rename x0
+set-ann Num * Num
 move-child 0
+construct-proj l
+construct-var x0
 
-# λx:Num. ⦇⦈
+# mk : Num -> Num -> Num * Num = λx1:Num. λx2:Num. (x1, x2)
+create-definition
+rename-def mk
+set-def-ann Num -> Num -> Num * Num
 construct-lam
 move-parent
 rename x1
 set-ann Num
 move-child 0
-
-# λy:Num. ⦇⦈
 construct-lam
 move-parent
 rename x2
 set-ann Num
 move-child 0
-
-# (x, y)
 construct-pair
 construct-var x1
 move-next-sibling
 construct-var x2
-
-# in λp:Num * Num. fst p
-move-parent
-move-parent
-move-parent
-move-parent
-move-child 1
-construct-lam
-move-parent
-rename x3
-set-ann Num * Num
-move-child 0
-construct-proj fst
-construct-var x3

@@ -42,9 +42,18 @@ without them.
 
 | node | slot 0 | slot 1 | slot 2 |
 |---|---|---|---|
+| the **definition** | definition **name** | definition **annotation** | body |
 | `Lam` | binder **name** | **annotation** | body |
 | `Let` | binder **name** | bound expression | body |
 | everything else | child 0 | child 1 | child 2 |
+
+Since Phase B1 a program is a *document* of named top-level definitions, and
+the definition itself is the outermost row of that table: `↑` off the root of
+a body reaches the definition's name, `↓` from there its annotation, `↓`
+again the body. The alphabets are the ones already defined — the definition
+name slot is a binder-name slot (free text, `Rename`) and the definition
+annotation slot is an annotation slot (`SetDefAnn`, same type grammar).
+Nothing new to learn; two more rows of the same table.
 
 Arrows move over this editor-level child list, so binder parts cost no new
 bindings. A slot is not a mode: the cursor is visibly sitting on the thing
@@ -91,9 +100,15 @@ IN AN ANNOTATION SLOT (re-issues SetAnn)    Enter Finish the ⦇e⦈ on or aroun
   n Num  b Bool  ? unknown  > arrow               the cursor, else next hole
   * product  ( ) grouping  Bksp drop tok    Esc   end the name run (no-op else)
   .  → body     Tab/Enter → next hole       C-z / C-r  undo / redo · C-q quit
+
+DEFINITIONS  (the document is a list of them; a body may call any of them)
+  C-↓  next definition      MoveNextDef      C-l  → definition-name slot
+  C-↑  previous definition  MovePrevDef      C-t  → definition-type slot
+  C-n  new definition, cursor in its name    CreateDefinition
+  C-d  drop this definition (never the last) DeleteDefinition
 ```
 
-31 bindings. Deliberately unbound and held in reserve for Phase 6+:
+37 bindings. Deliberately unbound and held in reserve for Phase 6+:
 `( ) { } / | & ^ % $ # @ ' " . >` outside the slots, and `` ` ``.
 
 ---
@@ -231,6 +246,8 @@ things can decline, each with visible feedback:
 |---|---|---|
 | annotation slot (`SetAnn`) | the annotation would break the body (`λx:?. x + 1` as `Bool`) — a type is not an expression, there is nothing to quarantine | slot stays open, offending type marked, status line says why |
 | `Enter` (`Finish`) | the contents of `⦇e⦈` still do not fit | hole marked "does not fit yet: expected τ" |
+| definition annotation slot (`SetDefAnn`) | the annotation would break this definition's body, or a *caller's* — a definition's type is the only thing its callers know about it | slot stays open, status line says why |
+| `C-d` (`DeleteDefinition`) | there is one definition left | "a document keeps at least one definition" |
 
 The binder-name slot used to be a third row, declining a name that would
 capture or orphan a reference (settled item 13, `FRICTION.md` #7). Phase 5
@@ -400,6 +417,10 @@ the same reason it was worst in Phase 3 (deep nesting, four binders).
 | `ConstructLam` | `\` | undo / redo | `C-z` / `C-r` |
 | `ConstructAp` | `space` | quit | `C-q` |
 | `ConstructBinOp(Op)` | `+ - * < =` | | |
+| `CreateDefinition` | `C-n` | `MoveNextDef` | `C-↓` |
+| `DeleteDefinition` | `C-d` | `MovePrevDef` | `C-↑` |
+| `SetDefAnn(Ty)` | `C-t` + annotation slot | `MoveToDef(Id)` | `C-↑`/`C-↓` repeated (the pane shows how far); the protocol has it by name |
+| `Rename(Id, String)` of a definition | typing in the `C-l` slot | | |
 
 Editor-level, backed by the action log: `Tab`/`S-Tab` (next/previous hole,
 either kind), undo as truncate-and-replay **per keystroke** (one `C-z` undoes
@@ -563,20 +584,50 @@ Item 15 is dated **2026-08-28** and belongs to Phase 6.
    `live::tests::editing_an_expression_updates_its_displayed_value_with_no_run_command`
    and `render::tests::the_live_value_is_on_screen_under_the_program_and_follows_every_edit`.
 
+Item 16 is dated **2026-08-28** and belongs to Phase B1.
+
+16. **Definitions reuse the slot grammar rather than adding one.** A
+   document's definition head is two more rows of the §Slots table, so the
+   only genuinely new bindings are the four that have no positional
+   equivalent: `C-n`/`C-d` to add and drop, `C-↑`/`C-↓` to walk the list.
+   `C-l` and `C-t` are shortcuts, not new grammar — `↑` off the root of a
+   body reaches the name slot and `↓` reaches the type slot, exactly as `:`
+   and `.` reach a lambda's. Three consequences worth pinning:
+   **(a)** the definition the cursor is in is in its own scope, so writing a
+   recursive call is a name run like any other (`m` completes to `main`) and
+   costs no keystroke of ceremony — this is what took factorial from a
+   fixture with a hole in it to the reference program, at the price of
+   twelve keystrokes recorded in `bench/RESULTS.md`.
+   **(b)** `C-d` never leaves a dangling reference: every call to the dropped
+   definition becomes an empty hole in the same action, so the document is
+   well-typed before and after and one `C-z` puts it all back
+   (`DECISIONS.md`, 2026-08-28).
+   **(c)** the definition list is a pane beside the program, not a mode: it
+   only appears when there is more than one definition and the terminal is
+   wide enough for both, and it is never focusable — `C-↑`/`C-↓` move the
+   real cursor, and the pane is showing you where it went. Pinned by
+   `tui/tests/definitions.rs`.
+
 Measured, replacing the predicted table's middle column (`tui/tests/keys/`,
-one keystroke per line):
+one keystroke per line). The 2026-08-28 column is the definition era: the
+programs are documents now, and `factorial` and `record` were rebuilt to say
+what they always meant rather than what Phase 1 could express.
 
-| # | program | Neovim | keystrokes | actions | ratio |
-|---|---|---:|---:|---:|---:|
-| 1 | factorial | 84 | 16 | 19 | 0.19× |
-| 2 | list_map | 114 | 29 | 33 | 0.25× |
-| 3 | record | 65 | 33 | 37 | 0.51× |
-| 4 | state_machine | 151 | 24 | 32 | 0.16× |
-| 5 | nested_conditional | 146 | 31 | 41 | 0.21× |
+| # | program | Neovim | keystrokes | actions | ratio | was (2026-08-27) |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | factorial | 84 | 28 | 33 | 0.33× | 16 / 0.19× |
+| 2 | list_map | 114 | 29 | 35 | 0.25× | unchanged |
+| 3 | record | 65 | 46 | 40 | 0.71× | 33 / 0.51× |
+| 4 | state_machine | 151 | 24 | 33 | 0.16× | unchanged |
+| 5 | nested_conditional | 146 | 31 | 42 | 0.21× | unchanged |
 
-Within one or two keystrokes of the hand-counted predictions everywhere, and
-`record` is still the number to watch. These are the editor's own numbers;
-the dated ratios in `bench/RESULTS.md` are written by the benchmark re-run.
+`record` is still the number to watch, and it got worse for a good reason:
+its constructor is a named, annotated top-level definition instead of a
+`let`, which is thirteen more keystrokes and five *fewer* primitive actions.
+The three unchanged rows are the control — the definition bindings cost
+nothing in a program that does not use them. These are the editor's own
+numbers; the dated ratios in `bench/RESULTS.md` are written by the benchmark
+re-run.
 
 ---
 

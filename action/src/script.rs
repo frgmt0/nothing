@@ -10,6 +10,8 @@ pub enum Step {
     Act(Action),
     Var(String),
     Rename(String),
+    RenameDef(String),
+    Def(String),
 }
 
 impl Step {
@@ -26,6 +28,11 @@ impl Step {
                     "`rename` needs the cursor on a lambda or a let".to_string(),
                 )),
             },
+            Step::RenameDef(name) => Ok(Action::Rename(state.def_id(), name.clone())),
+            Step::Def(name) => match lookup_definition(state, name) {
+                Some(id) => Ok(Action::MoveToDef(id)),
+                None => Err(ParseError(format!("no definition named `{name}`"))),
+            },
         }
     }
 }
@@ -36,6 +43,14 @@ fn lookup_in_scope(state: &EditState, name: &str) -> Option<Id> {
         .binders()
         .into_iter()
         .rev()
+        .find(|id| state.names.get(*id) == Some(name))
+        .or_else(|| lookup_definition(state, name))
+}
+
+fn lookup_definition(state: &EditState, name: &str) -> Option<Id> {
+    state
+        .definition_ids()
+        .into_iter()
         .find(|id| state.names.get(*id) == Some(name))
 }
 
@@ -84,7 +99,7 @@ editing:
   delete                  replace the focus with an empty hole
   construct-num N         write a numeric literal
   construct-bool BOOL     write true or false
-  construct-var NAME      reference the in-scope binder displayed as NAME
+  construct-var NAME      reference the in-scope binder or definition NAME
   construct-lam           e becomes λx:?. e
   construct-ap            e becomes e ⦇⦈
   construct-binop OP      e becomes e OP ⦇⦈   (add|sub|mul|lt|eq, or + - * < ==)
@@ -98,6 +113,14 @@ editing:
   set-binder-id UUID      re-identify the focused lambda or let binder
   rename NAME             give the focused binder the display name NAME
   finish                  unwrap a non-empty hole whose contents now fit
+definitions:
+  create-definition       add a definition after this one and move to it
+  delete-definition       remove this definition; references to it become holes
+  set-def-ann TY          set this definition's type annotation
+  move-next-def           move the cursor to the next definition
+  move-prev-def           move the cursor to the previous definition
+  move-to-def NAME        move the cursor to the definition displayed as NAME
+  rename-def NAME         give this definition the display name NAME
 harness:
   show                    re-print the current program
   reset                   start again from ⦇⦈
@@ -164,6 +187,14 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
         "rename" => Ok(Step::Rename(parse_name(head, rest)?)),
         "finish" => no_arg(Action::Finish),
 
+        "create-definition" => no_arg(Action::CreateDefinition),
+        "delete-definition" => no_arg(Action::DeleteDefinition),
+        "set-def-ann" => act(Action::SetDefAnn(parse_ty(rest)?)),
+        "move-next-def" => no_arg(Action::MoveNextDef),
+        "move-prev-def" => no_arg(Action::MovePrevDef),
+        "move-to-def" => Ok(Step::Def(parse_name(head, rest)?)),
+        "rename-def" => Ok(Step::RenameDef(parse_name(head, rest)?)),
+
         "" => Err(ParseError("empty command".to_string())),
         other => Err(ParseError(format!("unknown action `{other}`"))),
     }
@@ -174,6 +205,8 @@ pub fn step_name(step: &Step) -> String {
         Step::Act(action) => action_name(action),
         Step::Var(name) => format!("construct-var {name}"),
         Step::Rename(name) => format!("rename {name}"),
+        Step::RenameDef(name) => format!("rename-def {name}"),
+        Step::Def(name) => format!("move-to-def {name}"),
     }
 }
 
@@ -199,6 +232,12 @@ pub fn action_name(action: &Action) -> String {
         Action::SetBinderId(id) => format!("set-binder-id {id}"),
         Action::Rename(id, name) => format!("rename {name} {id}"),
         Action::Finish => "finish".to_string(),
+        Action::CreateDefinition => "create-definition".to_string(),
+        Action::DeleteDefinition => "delete-definition".to_string(),
+        Action::SetDefAnn(ty) => format!("set-def-ann {ty}"),
+        Action::MoveNextDef => "move-next-def".to_string(),
+        Action::MovePrevDef => "move-prev-def".to_string(),
+        Action::MoveToDef(id) => format!("move-to-def {id}"),
     }
 }
 

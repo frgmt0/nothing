@@ -1,6 +1,9 @@
+use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 
 use crate::dynamic::{Dyn, Env, elaborate, is_value, subst};
+
+pub type Defs = im::HashMap<Id, Dyn>;
 
 pub const DEFAULT_FUEL: usize = 200_000;
 
@@ -91,8 +94,15 @@ impl Outcome {
 }
 
 pub fn step(d: &Dyn) -> Option<Dyn> {
+    step_in(&Defs::new(), d)
+}
+
+pub fn step_in(defs: &Defs, d: &Dyn) -> Option<Dyn> {
+    let step = |d: &Dyn| step_in(defs, d);
     match d {
-        Dyn::Var(_) | Dyn::Num(_) | Dyn::Bool(_) | Dyn::Lam(..) | Dyn::EmptyHole(..) => None,
+        Dyn::Var(id) => defs.get(id).cloned(),
+
+        Dyn::Num(_) | Dyn::Bool(_) | Dyn::Lam(..) | Dyn::EmptyHole(..) => None,
 
         Dyn::Ap(fun, arg) => {
             if let Some(fun) = step(fun) {
@@ -174,6 +184,13 @@ fn apply_op(op: Op, a: i64, b: i64) -> Option<Dyn> {
     })
 }
 
+pub fn defs_of(doc: &Doc) -> Defs {
+    doc.defs()
+        .iter()
+        .map(|def| (def.id, elaborate(&def.body)))
+        .collect()
+}
+
 pub fn eval(exp: &Exp) -> Outcome {
     eval_with_fuel(exp, DEFAULT_FUEL)
 }
@@ -182,11 +199,28 @@ pub fn eval_with_fuel(exp: &Exp, fuel: usize) -> Outcome {
     run(elaborate(exp), fuel)
 }
 
+pub fn eval_doc(doc: &Doc, main: Id) -> Outcome {
+    eval_doc_with_fuel(doc, main, DEFAULT_FUEL)
+}
+
+pub fn eval_doc_with_fuel(doc: &Doc, main: Id, fuel: usize) -> Outcome {
+    let defs = defs_of(doc);
+    let start = match doc.get(main) {
+        Some(def) => elaborate(&def.body),
+        None => Dyn::Var(main),
+    };
+    run_in(&defs, start, fuel)
+}
+
 pub fn run(start: Dyn, fuel: usize) -> Outcome {
+    run_in(&Defs::new(), start, fuel)
+}
+
+pub fn run_in(defs: &Defs, start: Dyn, fuel: usize) -> Outcome {
     let mut d = start;
     let mut steps = 0;
     while steps < fuel {
-        match step(&d) {
+        match step_in(defs, &d) {
             None => return settle(d),
             Some(next) => {
                 d = next;
@@ -194,7 +228,7 @@ pub fn run(start: Dyn, fuel: usize) -> Outcome {
             }
         }
     }
-    match step(&d) {
+    match step_in(defs, &d) {
         None => settle(d),
         Some(_) => Outcome::OutOfFuel { partial: d, steps },
     }

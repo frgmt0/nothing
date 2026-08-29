@@ -112,6 +112,19 @@ impl NameTable {
     }
 }
 
+pub fn fresh_definition_name(names: &NameTable) -> String {
+    (0u64..)
+        .map(|n| {
+            if n == 0 {
+                "def".to_string()
+            } else {
+                format!("def{n}")
+            }
+        })
+        .find(|candidate| !names.holds_name(candidate))
+        .expect("the candidate stream is unbounded")
+}
+
 pub fn fresh_binder_name(names: &NameTable) -> String {
     (0u64..)
         .map(|n| format!("x{n}"))

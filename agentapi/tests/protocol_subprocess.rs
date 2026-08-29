@@ -86,6 +86,15 @@ fn render_of(reply: &Json) -> String {
         .to_string()
 }
 
+fn document_of(reply: &Json) -> String {
+    reply
+        .get("state")
+        .and_then(|s| s.get("render_document"))
+        .and_then(Json::as_str)
+        .expect("every response carries the re-rendered document")
+        .to_string()
+}
+
 fn drive_fixture(name: &str) -> String {
     let mut driver = Driver::start();
     let steps = fixture_steps(name);
@@ -103,10 +112,10 @@ fn drive_fixture(name: &str) -> String {
             Some(true),
             "`{step}` did not apply: {reply}"
         );
-        render = render_of(&reply);
+        render = document_of(&reply);
     }
     let state = driver.request(r#"{"method":"state"}"#);
-    assert_eq!(render_of(&state), render);
+    assert_eq!(document_of(&state), render);
     assert_eq!(
         state
             .get("state")
@@ -162,7 +171,7 @@ fn a_whole_fixture_can_be_sent_as_one_script_request() {
     let reply = driver.request(&request.to_string());
     assert_eq!(reply.get("id").and_then(Json::as_i64), Some(1));
     assert_eq!(reply.get("applied").and_then(Json::as_bool), Some(true));
-    assert_eq!(render_of(&reply), fixture_expected("factorial"));
+    assert_eq!(document_of(&reply), fixture_expected("factorial"));
     driver.finish();
 }
 
@@ -283,7 +292,7 @@ fn save_and_load_work_over_the_wire() {
         Some(true),
         "{reply}"
     );
-    assert_eq!(render_of(&reply), fixture_expected("factorial"));
+    assert_eq!(document_of(&reply), fixture_expected("factorial"));
     reader.finish();
     std::fs::remove_file(&path).ok();
 }

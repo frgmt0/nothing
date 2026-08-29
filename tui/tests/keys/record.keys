@@ -1,39 +1,16 @@
 # 3. Two-field record constructor plus accessor — bench/references.md §3,
-#    Phase-1 surface:
+#    definition era:
 #
-#   let x0 = (λx1:Num. λx2:Num. (x1, x2)) in λx3:Num * Num. fst x3
+#   main : Num * Num -> Num = λx0:Num * Num. fst x0
+#   mk : Num -> Num -> Num * Num = λx1:Num. λx2:Num. (x1, x2)
+#
+# What Phase 1 had to smuggle through a `let` is now what it always was: two
+# top-level definitions. The constructor gets a name and a type of its own.
 
-;          # let ⦇⦈ = ⦇⦈ in ⦇⦈, cursor in the binder-name slot
+# main = λx0:Num * Num. fst x0
+\
 x
 0
-=          # → the bound expression
-
-\
-x
-1
-:
-n
-.
-
-\
-x
-2
-:
-n
-.
-
-# (x1, x2)
-x
-1
-,
-x
-2
-
-tab        # → the let body, the only empty hole left
-
-\
-x
-3
 :
 n
 *
@@ -41,4 +18,49 @@ n
 .
 [          # fst
 x
-3
+0
+
+# main : Num * Num -> Num
+C-t
+n
+*
+n
+>
+n
+
+# a second definition, cursor in its name slot
+C-n
+m
+k
+.          # → the body
+
+# λx1:Num. λx2:Num. (x1, x2)
+\
+x
+1
+:
+n
+.
+
+\
+x
+2
+:
+n
+.
+
+x
+1
+,
+x
+2
+
+# mk : Num -> Num -> Num * Num
+C-t
+n
+>
+n
+>
+n
+*
+n

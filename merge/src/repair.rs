@@ -4,7 +4,7 @@ use nothing_core::exp::Exp;
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
 use nothing_core::ty::{Ty, matched_arrow, matched_prod};
-use nothing_core::typing::{ana, is_well_typed, join, syn};
+use nothing_core::typing::{ana, is_well_typed_in, join, syn};
 
 use crate::path::{Path, extend, label};
 
@@ -29,7 +29,11 @@ pub struct Repaired {
 }
 
 pub fn repair(exp: &Exp, names: &NameTable) -> Repaired {
-    if is_well_typed(exp) {
+    repair_in(&Ctx::empty(), exp, names)
+}
+
+pub fn repair_in(base: &Ctx, exp: &Exp, names: &NameTable) -> Repaired {
+    if is_well_typed_in(base, exp) {
         return Repaired {
             exp: exp.clone(),
             repairs: Vec::new(),
@@ -41,7 +45,7 @@ pub fn repair(exp: &Exp, names: &NameTable) -> Repaired {
         root: exp.clone(),
         repairs: Vec::new(),
     };
-    let rebuilt = state.go(&Ctx::empty(), exp, &[]);
+    let rebuilt = state.go(base, exp, &[]);
     Repaired {
         exp: rebuilt,
         repairs: state.repairs,
@@ -210,6 +214,7 @@ impl State {
 mod tests {
     use super::*;
     use nothing_core::exp::{HoleId, Id, Op};
+    use nothing_core::typing::is_well_typed;
 
     #[test]
     fn a_well_typed_program_is_left_exactly_alone() {

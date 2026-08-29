@@ -38,6 +38,8 @@ fn observe(state: &AppState) -> String {
         Slot::Node => {}
         Slot::BinderName => out.push_str("name: "),
         Slot::Annotation => out.push_str("ann: "),
+        Slot::DefName => out.push_str("def: "),
+        Slot::DefAnn => out.push_str("def ann: "),
     }
     out.push_str(&program_line(state));
     if !state.entry.is_empty() {

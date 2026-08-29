@@ -6,8 +6,13 @@ the other way around. A hand-rolled binary codec, not JSON — see
 `DECISIONS.md`, 2026-08-28, on why `nothing` is the name that appears in the
 magic bytes below.
 
-A "document" is the three things a saved program needs: the expression tree,
+A "document" is the three things a saved program needs: the **definitions**,
 the name table, and the action log that produced it.
+
+**Format version 2** (this revision) replaces version 1's single expression
+with an ordered list of top-level definitions. Version 1 files still open —
+see §11, which is normative: a migrating reader for the previous version
+ships with every format change from here on.
 
 ---
 
@@ -44,7 +49,7 @@ raw bytes.
 ```
 offset  size  field
 0       4     magic:   4E 54 48 47   ("NTHG", ASCII)
-4       1     version_major:  0x01
+4       1     version_major:  0x02
 5       1     version_minor:  0x00
 6       1     kind:    0x01 (Document — the only kind this version defines)
 ```
@@ -58,8 +63,68 @@ reject a file whose `version_major` it does not recognise, and may ignore
 node-table-only export); this version of the format only ever writes
 `0x01`.
 
-Everything after the 7-byte header is, in order: the **node table**, the
-**root index**, the **name table**, the **action log**.
+Everything after the 7-byte header is, in order: the **definition list**
+(§3.1), the **name table**, the **action log**. A `version_major` of `0x01`
+selects the version-1 layout instead (**node table**, **root index**, name
+table, action log) and is decoded through the migrating reader in §11.
+
+## 3.1 The definition list
+
+A document is an *ordered, non-empty* set of top-level definitions. A
+definition is four things:
+
+- an **id**, drawn from the same `Id` (uuid) space as every binder in the
+  language — a definition is a binder, and its identity is a uuid nothing
+  ever types;
+- a **display name**, which is *not* stored here: it lives in the name
+  table (§7) keyed by the definition's id, exactly like a lambda's binder
+  name. Renaming a definition is a name-table write and nothing else;
+- a **type annotation**, a `Ty` (§5.1), which may be `Hole` (`?`);
+- a **body**, an `Exp`, encoded as a node table exactly as in version 1.
+
+A body refers to another definition with `Var(id)` — the ordinary variable
+form — because the top level *is* a mutually recursive binding group and
+its members are variables like any other (see `DECISIONS.md`, 2026-08-28,
+"Definition references are `Var`"). The consequence for this format is
+that no new node tag is needed: a cross-definition reference is a `Var`
+node whose `Id` happens to name a definition, and a self-reference — the
+way recursion is written now — is the same thing.
+
+```
+definition_list:
+  def_count: varint                 (>= 1; a document with no definitions is invalid)
+  def_count × definition
+
+definition:
+  def_len:     varint               (byte length of everything below, for skippability)
+  id:          16 bytes
+  ann:         Ty (§5.1)
+  node_table:  as §4
+  root_index:  varint               (always node_count - 1)
+```
+
+Order is significant and preserved: it is the order the editor lists
+definitions in, and the merge engine treats a change of order as a move
+(`merge::document`). Order has no effect on typing or evaluation — every
+definition is in scope in every body, including its own, which is what
+makes mutual recursion expressible without a keyword.
+
+**Typing a document.** The definition context is `{id ↦ ann}` for every
+definition in the list; each body is checked in that context extended by
+its own local binders. So a definition's annotation is what its *callers*
+see — an unannotated (`?`) definition is usable everywhere, gradually, and
+an annotated one is checked precisely. A body that mentions an id which is
+not a definition and not a local binder does not synthesise, so a
+**dangling reference makes the document ill-typed**: "well-typed" implies
+"every reference resolves", and the editor never writes such a file (see
+`DECISIONS.md`, 2026-08-28, "Deleting a definition rewrites its
+references to empty holes").
+
+**`main`.** `nothing run` evaluates the definition displayed as `main`.
+That is a name-table lookup, not a structural property: any definition can
+be `main` and renaming is all it takes. A document with no `main` is a
+perfectly good document; `nothing run` refuses it and lists what is
+there.
 
 ## 4. Content-addressed node table
 
@@ -287,17 +352,44 @@ log_entry:
 | 17 | `SetBinderId(id)` | 16 bytes |
 | 18 | `Rename(id, name)` | 16 bytes, then a string (§1) |
 | 19 | `Finish` | empty |
+| 20 | `CreateDefinition` | empty |
+| 21 | `DeleteDefinition` | empty |
+| 22 | `SetDefAnn(ty)` | `Ty` (§5.1) |
+| 23 | `MoveNextDef` | empty |
+| 24 | `MovePrevDef` | empty |
+| 25 | `MoveToDef(id)` | 16 bytes |
 
-This table is exhaustive over the twenty `Action` variants as of Phase 6.
-The same rule as §5 applies to a future twenty-first variant: next tag,
-new row, hard decode error on an unrecognised tag rather than a silent
-skip.
+This table is exhaustive over the twenty-six `Action` variants as of
+format version 2. Tags 0–19 are unchanged from version 1, so a version-1
+log decodes under the version-2 reader without translation. The same rule
+as §5 applies to a future twenty-seventh variant: next tag, new row, hard
+decode error on an unrecognised tag rather than a silent skip.
+
+Note that renaming a *definition* uses tag 18, `Rename` — the same action
+that renames a lambda binder, because a definition's display name lives in
+the same name table keyed by the same kind of `Id`. There is no separate
+rename-definition action, and there is deliberately no
+`DeleteDefinition(id)` payload: the action deletes the definition the
+cursor is in, and its effect on other definitions (rewriting references to
+the deleted id into fresh empty holes) is derived at replay time from the
+document the log has built so far, which keeps replay deterministic
+without storing the rewrite.
 
 `Id`s inside actions (`ConstructVar`, `SetBinderId`, `Rename`) are written
 literally, not de-Bruijn-canonicalised — the action log is a replayable
 history of concrete edits against concrete `Id`s (some freshly generated at
 apply time by `action::act::Fresh`), not a content-addressed structure, and
 replaying it must reproduce the exact same `Id`s the original session used.
+
+## 8.1 The `Fresh` stream and replay
+
+Actions that need new `Id`s (`ConstructLam`, `ConstructLet`,
+`CreateDefinition`, and the empty holes minted by `Delete`,
+`DeleteDefinition` and the auto-wrapping constructions) draw them from
+`action::act::Fresh`, a deterministic uuid stream seeded per session.
+Replaying a log from the same starting document with a fresh `Fresh`
+reproduces the same ids, which is what makes the log a faithful history
+rather than an approximation.
 
 ## 9. What "round-trips byte-identically" means
 
@@ -319,3 +411,42 @@ else. It is export-only: there is no JSON importer, and the binary format
 in §§3–8 is the only format this crate reads. Its shape is not specified
 byte-for-byte here the way the binary format is; it is not a wire format,
 and Phase 7 only asks that it exist.
+
+
+## 11. Migration from version 1
+
+Format stability starts at version 1, so version 1 files open. The reader
+dispatches on `version_major` in the header (§3):
+
+- `0x01` → `store::v1::decode_document_v1`, the version-1 layout: node
+  table, root index, name table, action log. It is a complete, separate
+  reader kept for exactly this purpose; it is never used to *write*
+  except by the migration test's fixture builder
+  (`store::v1::encode_document_v1`, which exists so the migration path is
+  exercised against real v1 bytes rather than a hypothesis).
+- `0x02` → the version-2 layout in §3.1.
+- anything else → `DecodeError::UnsupportedVersion`.
+
+A version-1 file is a single expression. It becomes a version-2 document
+with exactly one definition:
+
+| field | value |
+|-------|-------|
+| id | `6d61696e-0000-0000-0000-000000000000` (`"main"` in ASCII, then zeros) |
+| annotation | `Ty::Hole` |
+| body | the version-1 root expression, unchanged |
+| display name | `main`, written into the migrated document's name table |
+
+The id is a **fixed constant**, `core::doc::MAIN_ID`, not a freshly
+generated uuid. That matters for two reasons. Re-migrating the same file
+twice produces the same document, so migration is idempotent and content
+hashes are stable. And two people who migrate the *same* v1 file
+independently get the same definition id, so the merge engine matches
+their definitions instead of seeing an add-and-delete pair.
+
+Migration is read-only and lossless in the direction that matters: the
+name table and the action log carry across untouched (§8's tags 0–19 are
+version-stable), and the expression is byte-identical after re-encoding
+as the single definition's node table. There is no v2 → v1 writer;
+saving a migrated file writes version 2, and the version-1 bytes on disk
+are only replaced when the user saves.

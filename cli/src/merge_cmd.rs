@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use nothing_action::log::ActionLog;
-use nothing_merge::{Version, merge};
+use nothing_merge::{DocVersion, merge_documents};
 use nothing_store::Document;
 
 use crate::fileio::{read_document, write_document};
@@ -42,11 +42,11 @@ pub fn run(base: &Path, a: &Path, b: &Path, out: Option<&Path>) -> i32 {
         }
     };
 
-    let base_v = Version::new(base_doc.exp, base_doc.names);
-    let a_v = Version::new(a_doc.exp, a_doc.names);
-    let b_v = Version::new(b_doc.exp, b_doc.names);
+    let base_v = DocVersion::new(base_doc.doc, base_doc.names);
+    let a_v = DocVersion::new(a_doc.doc, a_doc.names);
+    let b_v = DocVersion::new(b_doc.doc, b_doc.names);
 
-    let outcome = merge(&base_v, &a_v, &b_v);
+    let outcome = merge_documents(&base_v, &a_v, &b_v);
 
     if !outcome.is_clean() {
         for conflict in &outcome.conflicts {
@@ -58,7 +58,8 @@ pub fn run(base: &Path, a: &Path, b: &Path, out: Option<&Path>) -> i32 {
 
     match out {
         Some(path) => {
-            let doc = Document::new(outcome.merged.exp, outcome.merged.names, ActionLog::new());
+            let doc =
+                Document::from_doc(outcome.merged.doc, outcome.merged.names, ActionLog::new());
             if let Err(err) = write_document(path, &doc) {
                 eprintln!("error: {err}");
                 return 1;

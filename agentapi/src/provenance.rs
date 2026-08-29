@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use nothing_action::act::{Action, EditState};
 use nothing_action::log::{AuthorId, LogEntry};
+use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, Id, Side};
 use nothing_core::names::NameTable;
 use nothing_core::render::{
@@ -18,15 +19,40 @@ pub struct NodeProvenance {
     pub entry: usize,
 }
 
+type Nodes = HashMap<Path, Option<NodeProvenance>>;
+
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Provenance {
-    nodes: HashMap<Path, Option<NodeProvenance>>,
+    nodes: Nodes,
+    per_def: HashMap<Id, Nodes>,
     names: HashMap<Id, NodeProvenance>,
 }
 
 impl Provenance {
     pub fn get(&self, path: &[usize]) -> Option<NodeProvenance> {
         self.nodes.get(path).copied().flatten()
+    }
+
+    pub fn get_in(&self, definition: Id, path: &[usize]) -> Option<NodeProvenance> {
+        self.per_def
+            .get(&definition)
+            .and_then(|nodes| nodes.get(path))
+            .copied()
+            .flatten()
+    }
+
+    pub fn in_definition(&self, definition: Id) -> Provenance {
+        Provenance {
+            nodes: self.per_def.get(&definition).cloned().unwrap_or_default(),
+            per_def: self.per_def.clone(),
+            names: self.names.clone(),
+        }
+    }
+
+    pub fn definitions(&self) -> Vec<Id> {
+        let mut out: Vec<Id> = self.per_def.keys().copied().collect();
+        out.sort();
+        out
     }
 
     pub fn name_provenance(&self, id: Id) -> Option<NodeProvenance> {
@@ -117,11 +143,7 @@ fn stayed_put(old: &Exp, new: &Exp, path: &[usize]) -> bool {
     }
 }
 
-fn displaced(
-    old: &Exp,
-    new: &Exp,
-    nodes: &HashMap<Path, Option<NodeProvenance>>,
-) -> HashMap<String, Vec<Option<NodeProvenance>>> {
+fn displaced(old: &Exp, new: &Exp, nodes: &Nodes) -> HashMap<String, Vec<Option<NodeProvenance>>> {
     let mut index: HashMap<String, Vec<Option<NodeProvenance>>> = HashMap::new();
     for path in paths_of(old) {
         if stayed_put(old, new, &path) {
@@ -137,16 +159,62 @@ fn displaced(
     index
 }
 
-pub fn provenance_of(base: &EditState, entries: &[LogEntry]) -> Provenance {
-    let mut state = base.clone();
-    let mut nodes: HashMap<Path, Option<NodeProvenance>> = HashMap::new();
-    let mut names: HashMap<Id, NodeProvenance> = HashMap::new();
-    for path in paths_of(&state.exp()) {
-        nodes.insert(path, None);
+fn carry(old: &Exp, new: &Exp, nodes: &Nodes, stamp: NodeProvenance) -> Nodes {
+    let mut orphans = displaced(old, new, nodes);
+    let mut next: Nodes = HashMap::new();
+    let mut unresolved: Vec<Path> = Vec::new();
+
+    for path in paths_of(new) {
+        if stayed_put(old, new, &path) {
+            next.insert(path.clone(), nodes.get(&path).copied().flatten());
+        } else {
+            unresolved.push(path);
+        }
     }
 
+    for path in unresolved {
+        let Some(node) = at(new, &path) else {
+            continue;
+        };
+        let carried = orphans
+            .get_mut(&deep_key(node))
+            .and_then(|available| available.pop());
+        next.insert(path, carried.unwrap_or(Some(stamp)));
+    }
+
+    next
+}
+
+fn untouched(exp: &Exp) -> Nodes {
+    paths_of(exp).into_iter().map(|path| (path, None)).collect()
+}
+
+fn authored(exp: &Exp, stamp: NodeProvenance) -> Nodes {
+    paths_of(exp)
+        .into_iter()
+        .map(|path| (path, Some(stamp)))
+        .collect()
+}
+
+fn bodies(state: &EditState) -> Vec<(Id, Exp)> {
+    state
+        .doc()
+        .defs()
+        .iter()
+        .map(|def| (def.id, def.body.clone()))
+        .collect()
+}
+
+pub fn provenance_of(base: &EditState, entries: &[LogEntry]) -> Provenance {
+    let mut state = base.clone();
+    let mut per_def: HashMap<Id, Nodes> = bodies(&state)
+        .into_iter()
+        .map(|(id, body)| (id, untouched(&body)))
+        .collect();
+    let mut names: HashMap<Id, NodeProvenance> = HashMap::new();
+
     for (index, entry) in entries.iter().enumerate() {
-        let old = state.exp();
+        let old: HashMap<Id, Exp> = bodies(&state).into_iter().collect();
         if !state.apply_mut(entry.action.clone()) {
             continue;
         }
@@ -159,33 +227,23 @@ pub fn provenance_of(base: &EditState, entries: &[LogEntry]) -> Provenance {
             names.insert(*id, stamp);
         }
 
-        let new = state.exp();
-        let mut orphans = displaced(&old, &new, &nodes);
-        let mut next: HashMap<Path, Option<NodeProvenance>> = HashMap::new();
-        let mut unresolved: Vec<Path> = Vec::new();
-
-        for path in paths_of(&new) {
-            if stayed_put(&old, &new, &path) {
-                next.insert(path.clone(), nodes.get(&path).copied().flatten());
-            } else {
-                unresolved.push(path);
-            }
-        }
-
-        for path in unresolved {
-            let Some(node) = at(&new, &path) else {
-                continue;
+        let mut next: HashMap<Id, Nodes> = HashMap::new();
+        for (id, body) in bodies(&state) {
+            let updated = match (old.get(&id), per_def.get(&id)) {
+                (Some(before), Some(nodes)) => carry(before, &body, nodes, stamp),
+                _ => authored(&body, stamp),
             };
-            let carried = orphans
-                .get_mut(&deep_key(node))
-                .and_then(|available| available.pop());
-            next.insert(path, carried.unwrap_or(Some(stamp)));
+            next.insert(id, updated);
         }
-
-        nodes = next;
+        per_def = next;
     }
 
-    Provenance { nodes, names }
+    let nodes = per_def.get(&state.def_id()).cloned().unwrap_or_default();
+    Provenance {
+        nodes,
+        per_def,
+        names,
+    }
 }
 
 pub fn provenance_json(map: &Provenance) -> Json {
@@ -410,6 +468,33 @@ pub fn annotate(
     out
 }
 
+pub fn annotate_document(
+    doc: &Doc,
+    names: &NameTable,
+    map: &Provenance,
+    agents: &[AuthorId],
+    palette: &Palette,
+) -> String {
+    doc.defs()
+        .iter()
+        .map(|def| {
+            format!(
+                "{} : {} = {}",
+                render_id(def.id, names),
+                def.ann,
+                annotate(
+                    &def.body,
+                    names,
+                    &map.in_definition(def.id),
+                    agents,
+                    palette
+                )
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
 pub fn legend(palette: &Palette) -> String {
     format!(
         "{}model-authored{}   {}human-authored{}",
@@ -528,11 +613,7 @@ mod tests {
         );
         assert_eq!(marked, "λn:Num. ⟦n * 2⟧");
 
-        let stripped = marked
-            .replace('⟦', "")
-            .replace('⟧', "")
-            .replace('⟨', "")
-            .replace('⟩', "");
+        let stripped = marked.replace(['⟦', '⟧', '⟨', '⟩'], "");
         assert_eq!(stripped, render(&session.exp(), session.names()));
     }
 
@@ -587,6 +668,64 @@ mod tests {
             .replace("\u{1b}[36m", "")
             .replace("\u{1b}[0m", "");
         assert_eq!(stripped, render(&session.exp(), session.names()));
+    }
+
+    fn two_definitions() -> AgentSession {
+        let mut session = AgentSession::new(HUMAN);
+        assert!(session.apply_text("construct-num 1").unwrap());
+        session.set_author(MODEL);
+        for step in ["create-definition", "rename-def helper", "construct-num 2"] {
+            assert!(session.apply_text(step).unwrap(), "{step}");
+        }
+        session
+    }
+
+    #[test]
+    fn every_definition_keeps_its_own_provenance() {
+        let session = two_definitions();
+        let ids = session.state().definition_ids();
+        assert_eq!(ids.len(), 2);
+        let map = provenance_of(session.base(), &session.applied_entries());
+
+        assert_eq!(map.definitions(), {
+            let mut sorted = ids.clone();
+            sorted.sort();
+            sorted
+        });
+        assert_eq!(map.get_in(ids[0], &[]).map(|v| v.author), Some(HUMAN));
+        assert_eq!(map.get_in(ids[1], &[]).map(|v| v.author), Some(MODEL));
+    }
+
+    #[test]
+    fn editing_one_definition_does_not_reattribute_another() {
+        let mut session = two_definitions();
+        let ids = session.state().definition_ids();
+        session.set_author(HUMAN);
+        assert!(session.apply_text("construct-binop add").unwrap());
+        assert!(session.apply_text("construct-num 5").unwrap());
+
+        let map = provenance_of(session.base(), &session.applied_entries());
+        assert_eq!(
+            map.get_in(ids[0], &[]).map(|v| v.author),
+            Some(HUMAN),
+            "the untouched definition changed hands"
+        );
+        assert_eq!(map.get_in(ids[1], &[0]).map(|v| v.author), Some(MODEL));
+        assert_eq!(map.get_in(ids[1], &[1]).map(|v| v.author), Some(HUMAN));
+    }
+
+    #[test]
+    fn the_whole_document_annotates_definition_by_definition() {
+        let session = two_definitions();
+        let map = provenance_of(session.base(), &session.applied_entries());
+        let marked = annotate_document(
+            &session.state().doc(),
+            session.names(),
+            &map,
+            &[MODEL],
+            &Palette::brackets(),
+        );
+        assert_eq!(marked, "main : ? = 1\nhelper : ? = ⟦2⟧");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use nothing_action::act::{Action, EditState};
 use nothing_action::generate;
 use nothing_action::zipper::{Zipper, all_positions};
+use nothing_core::doc::{Def, Doc};
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::ty::Ty;
 use nothing_core::typing::is_well_typed;
@@ -196,6 +197,64 @@ proptest! {
             }
             prop_assert!(eq_up_to_hole_ids(&state.exp(), &b));
         }
+    }
+
+    #[test]
+    fn every_document_body_is_reachable_from_holes(seed in any::<u64>()) {
+        let (target, names) = generate::well_typed_doc(seed);
+        prop_assert!(target.is_well_typed());
+
+        let skeleton = Doc::new(
+            target
+                .defs()
+                .iter()
+                .enumerate()
+                .map(|(i, def)| Def::new(def.id, def.ann.clone(), Exp::empty_hole(HoleId::from_u128(i as u128))))
+                .collect(),
+        )
+        .expect("the skeleton keeps the target's definition ids");
+        prop_assert!(skeleton.is_well_typed());
+
+        let mut state = EditState::with_doc(&skeleton, names, 0)
+            .expect("the skeleton has a first definition");
+
+        for def in target.defs() {
+            prop_assert!(state.apply_mut(Action::MoveToDef(def.id)));
+            for (j, action) in path_to(&Exp::EmptyHole(HoleId::from_u128(0)), &def.body)
+                .into_iter()
+                .enumerate()
+            {
+                prop_assert!(
+                    state.apply_mut(action.clone()),
+                    "action {j} ({action:?}) did not apply while building a definition"
+                );
+                prop_assert!(state.is_well_typed());
+            }
+        }
+
+        let reached = state.doc();
+        prop_assert_eq!(reached.ids(), target.ids());
+        for def in target.defs() {
+            let got = reached.get(def.id).expect("the definition still exists");
+            prop_assert_eq!(&got.ann, &def.ann);
+            prop_assert!(
+                eq_up_to_hole_ids(&got.body, &def.body),
+                "built {:?} instead of {:?}",
+                got.body,
+                def.body
+            );
+        }
+    }
+
+    #[test]
+    fn a_created_definition_can_be_deleted_back_to_where_it_started(seed in any::<u64>()) {
+        let (doc, names) = generate::well_typed_doc(seed);
+        let before = EditState::with_doc(&doc, names, 0).expect("a first definition");
+        let after = before
+            .apply(Action::CreateDefinition)
+            .and_then(|s| s.apply(Action::DeleteDefinition))
+            .expect("create then delete always applies");
+        prop_assert_eq!(after.doc(), before.doc());
     }
 
     #[test]

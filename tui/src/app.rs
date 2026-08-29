@@ -1,4 +1,4 @@
-use nothing_action::act::{Action, EditState, ctx_and_expected_ty_at};
+use nothing_action::act::{Action, EditState, ctx_and_expected_ty_at_in};
 use nothing_action::script::replay_script;
 use nothing_action::zipper::{Frame, Zipper, all_positions};
 use nothing_core::ctx::Ctx;
@@ -19,6 +19,8 @@ pub enum Slot {
     Node,
     BinderName,
     Annotation,
+    DefName,
+    DefAnn,
 }
 
 impl Slot {
@@ -27,6 +29,8 @@ impl Slot {
             Slot::Node => "node",
             Slot::BinderName => "binder name",
             Slot::Annotation => "annotation",
+            Slot::DefName => "definition name",
+            Slot::DefAnn => "definition type",
         }
     }
 }
@@ -80,7 +84,39 @@ impl AppState {
     }
 
     pub fn binders_in_scope(&self) -> Vec<Id> {
-        self.edit.zipper.binders()
+        let binders = self.edit.zipper.binders();
+        let mut out: Vec<Id> = self
+            .edit
+            .definition_ids()
+            .into_iter()
+            .filter(|id| !binders.contains(id))
+            .collect();
+        out.extend(binders);
+        out
+    }
+
+    pub fn definitions(&self) -> Vec<Id> {
+        self.edit.definition_ids()
+    }
+
+    pub fn definition_id(&self) -> Id {
+        self.edit.def_id()
+    }
+
+    pub fn definition_index(&self) -> usize {
+        self.edit.def_index()
+    }
+
+    pub fn definition_count(&self) -> usize {
+        self.edit.def_count()
+    }
+
+    pub fn definition_ann(&self) -> Ty {
+        self.edit.def_ann().clone()
+    }
+
+    pub fn definition_name(&self) -> String {
+        self.edit.names.display(self.edit.def_id())
     }
 
     pub fn names(&self) -> &NameTable {
@@ -112,7 +148,7 @@ impl AppState {
     }
 
     pub fn ctx(&self) -> Ctx {
-        ctx_and_expected_ty_at(&self.edit.zipper).0
+        ctx_and_expected_ty_at_in(&self.edit.scope(), &self.edit.zipper).0
     }
 
     pub fn finishes(&self) -> bool {
@@ -145,7 +181,7 @@ impl AppState {
     }
 
     pub fn expected_ty(&self) -> Ty {
-        ctx_and_expected_ty_at(&self.edit.zipper).1
+        ctx_and_expected_ty_at_in(&self.edit.scope(), &self.edit.zipper).1
     }
 
     pub fn with_hint(mut self, hint: impl Into<String>) -> AppState {
@@ -248,6 +284,8 @@ impl AppState {
     pub fn move_down(&self) -> Option<AppState> {
         match self.slot {
             Slot::BinderName | Slot::Annotation => None,
+            Slot::DefName => Some(self.in_slot(Slot::DefAnn)),
+            Slot::DefAnn => Some(self.in_slot(Slot::Node)),
             Slot::Node => match self.binder_kind() {
                 Some(_) => Some(self.in_slot(Slot::BinderName)),
                 None => self.apply_actions(&[Action::MoveChild(0)]),
@@ -258,12 +296,19 @@ impl AppState {
     pub fn move_up(&self) -> Option<AppState> {
         match self.slot {
             Slot::BinderName | Slot::Annotation => Some(self.in_slot(Slot::Node)),
-            Slot::Node => self.apply_actions(&[Action::MoveParent]),
+            Slot::DefName => None,
+            Slot::DefAnn => Some(self.in_slot(Slot::DefName)),
+            Slot::Node => match self.apply_actions(&[Action::MoveParent]) {
+                Some(next) => Some(next),
+                None => Some(self.in_slot(Slot::DefName)),
+            },
         }
     }
 
     pub fn move_next(&self) -> Option<AppState> {
         match (self.slot, self.binder_kind()) {
+            (Slot::DefName, _) => Some(self.in_slot(Slot::DefAnn)),
+            (Slot::DefAnn, _) => Some(self.in_slot(Slot::Node)),
             (Slot::BinderName, Some(BinderKind::Lam)) => Some(self.in_slot(Slot::Annotation)),
             (Slot::BinderName, Some(BinderKind::Let)) => {
                 self.apply_actions(&[Action::MoveChild(0)])
@@ -281,6 +326,8 @@ impl AppState {
 
     pub fn move_prev(&self) -> Option<AppState> {
         match self.slot {
+            Slot::DefName => None,
+            Slot::DefAnn => Some(self.in_slot(Slot::DefName)),
             Slot::Annotation => Some(self.in_slot(Slot::BinderName)),
 
             Slot::BinderName => None,
@@ -451,7 +498,10 @@ mod tests {
     #[test]
     fn factorial_demo_renders_the_reference_program() {
         let state = AppState::factorial();
-        assert_eq!(state.text(), "λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈");
+        assert_eq!(
+            state.text(),
+            "λx0:Num. if x0 == 0 then 1 else x0 * main (x0 - 1)"
+        );
         assert!(state.edit.zipper.is_root());
         assert_eq!(state.slot, Slot::Node);
     }
@@ -585,11 +635,11 @@ mod tests {
             vec![Action::MoveParent, Action::MoveParent, Action::MoveChild(2)]
         );
 
-        let arrived = AppState::from_edit(EditState {
-            zipper: from.clone(),
-            fresh: nothing_action::act::Fresh::from_program(&program),
-            names: examples::names(),
-        })
+        let arrived = AppState::from_edit(EditState::at(
+            from.clone(),
+            nothing_action::act::Fresh::from_program(&program),
+            examples::names(),
+        ))
         .apply_actions(&moves_between(from, to))
         .expect("the expansion applies");
         assert_eq!(index_path(arrived.zipper()), vec![0, 2]);

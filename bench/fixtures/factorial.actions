@@ -1,12 +1,15 @@
-# 1. Factorial (bench/references.md §1), as the nearest Phase-1 program.
+# 1. Factorial (bench/references.md §1), now a real recursive definition.
 #
-#   λn:Num. if n == 0 then 1 else n * ⦇⦈
+#   main : Num -> Num = λn:Num. if n == 0 then 1 else n * main (n - 1)
 #
-# The recursive call `factorial(n - 1)` is an empty hole: Phase 1 has no
-# recursion (it arrives in Phase 6), and a hole is exactly the honest way to
-# say "an expression belongs here that cannot be written yet".
+# Phase B1 gave the document top-level definitions, and a definition is in
+# scope in its own body, so the recursive call is an ordinary `construct-var`
+# naming `main`. The hole that stood in for it through Phases 1-11 is gone.
 
-# λn:Num. ⦇⦈
+# main : Num -> Num
+set-def-ann Num -> Num
+
+# λx0:Num. ⦇⦈
 construct-lam
 move-parent
 rename x0
@@ -25,7 +28,13 @@ move-parent
 move-next-sibling
 construct-num 1
 
-# else n * ⦇⦈
+# else x0 * main (x0 - 1)
 move-next-sibling
 construct-var x0
 construct-binop mul
+construct-ap
+construct-var main
+move-next-sibling
+construct-var x0
+construct-binop sub
+construct-num 1

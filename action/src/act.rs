@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
 use nothing_core::ctx::Ctx;
+use nothing_core::doc::{Def, Doc, MAIN_ID, MAIN_NAME, references, vacate};
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
-use nothing_core::names::{NameTable, fresh_binder_name};
+use nothing_core::names::{NameTable, fresh_binder_name, fresh_definition_name};
 use nothing_core::ty::{Ty, matched_arrow, matched_prod};
-use nothing_core::typing::{ana, is_well_typed, syn};
+use nothing_core::typing::{ana, syn};
 
 use crate::zipper::{Frame, Zipper, unzip};
 
@@ -37,6 +38,13 @@ pub enum Action {
     Rename(Id, String),
 
     Finish,
+
+    CreateDefinition,
+    DeleteDefinition,
+    SetDefAnn(Ty),
+    MoveNextDef,
+    MovePrevDef,
+    MoveToDef(Id),
 }
 
 const FRESH_SEED: u128 = 0x1234_5678_9abc_def0_0f1e_2d3c_4b5a_6978;
@@ -65,6 +73,19 @@ impl Fresh {
         let mut f = Fresh::default();
         f.observe(exp);
         f
+    }
+
+    pub fn from_doc(doc: &Doc) -> Fresh {
+        let mut f = Fresh::default();
+        f.observe_doc(doc);
+        f
+    }
+
+    pub fn observe_doc(&mut self, doc: &Doc) {
+        for def in doc.defs() {
+            self.bump_id(def.id);
+            self.observe(&def.body);
+        }
     }
 
     pub fn observe(&mut self, exp: &Exp) {
@@ -134,18 +155,53 @@ impl Fresh {
     }
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub struct DefScope {
+    pub ctx: Ctx,
+    pub ann: Ty,
+}
+
+impl DefScope {
+    pub fn top() -> DefScope {
+        DefScope {
+            ctx: Ctx::empty(),
+            ann: Ty::Hole,
+        }
+    }
+
+    pub fn new(ctx: Ctx, ann: Ty) -> DefScope {
+        DefScope { ctx, ann }
+    }
+
+    pub fn accepts(&self, exp: &Exp) -> bool {
+        syn(&self.ctx, exp).is_some() && ana(&self.ctx, exp, &self.ann)
+    }
+}
+
 pub fn ctx_at(zipper: &Zipper) -> Ctx {
     zipper.ctx()
+}
+
+pub fn ctx_at_in(scope: &DefScope, zipper: &Zipper) -> Ctx {
+    zipper.ctx_in(&scope.ctx)
 }
 
 pub fn expected_ty_at(zipper: &Zipper) -> Ty {
     ctx_and_expected_ty_at(zipper).1
 }
 
-pub fn ctx_and_expected_ty_at(zipper: &Zipper) -> (Ctx, Ty) {
-    let mut ctx = Ctx::empty();
+pub fn expected_ty_at_in(scope: &DefScope, zipper: &Zipper) -> Ty {
+    ctx_and_expected_ty_at_in(scope, zipper).1
+}
 
-    let mut expected = Ty::Hole;
+pub fn ctx_and_expected_ty_at(zipper: &Zipper) -> (Ctx, Ty) {
+    ctx_and_expected_ty_at_in(&DefScope::top(), zipper)
+}
+
+pub fn ctx_and_expected_ty_at_in(scope: &DefScope, zipper: &Zipper) -> (Ctx, Ty) {
+    let mut ctx = scope.ctx.clone();
+
+    let mut expected = scope.ann.clone();
 
     for frame in &zipper.path {
         match frame {
@@ -209,6 +265,16 @@ pub fn apply_with(
     fresh: &mut Fresh,
     names: &mut NameTable,
 ) -> Option<Zipper> {
+    apply_with_in(&DefScope::top(), zipper, action, fresh, names)
+}
+
+pub fn apply_with_in(
+    scope: &DefScope,
+    zipper: Zipper,
+    action: Action,
+    fresh: &mut Fresh,
+    names: &mut NameTable,
+) -> Option<Zipper> {
     match action {
         Action::MoveChild(n) => zipper.move_child(n),
         Action::MoveParent => zipper.move_parent(),
@@ -220,34 +286,37 @@ pub fn apply_with(
             Some(zipper.replace_focus(Exp::empty_hole(hole)))
         }
 
-        Action::ConstructNum(n) => construct_leaf(zipper, Exp::num(n), fresh),
-        Action::ConstructBool(b) => construct_leaf(zipper, Exp::bool_(b), fresh),
+        Action::ConstructNum(n) => construct_leaf(scope, zipper, Exp::num(n), fresh),
+        Action::ConstructBool(b) => construct_leaf(scope, zipper, Exp::bool_(b), fresh),
         Action::ConstructVar(id) => {
-            if ctx_at(&zipper).lookup(&id).is_none() {
+            if ctx_at_in(scope, &zipper).lookup(&id).is_none() {
                 None
             } else {
-                construct_leaf(zipper, Exp::var(id), fresh)
+                construct_leaf(scope, zipper, Exp::var(id), fresh)
             }
         }
 
         Action::ConstructLam => {
             let id = fresh.id();
-            let built = construct_wrapping(zipper, Ty::Hole, fresh, |body, _| {
+            let built = construct_wrapping(scope, zipper, Ty::Hole, fresh, |body, _| {
                 Exp::lam(id, Ty::Hole, body)
             });
             name_new_binder(id, &built, names);
             built
         }
         Action::ConstructAp => construct_wrapping(
+            scope,
             zipper,
             Ty::Arrow(Box::new(Ty::Hole), Box::new(Ty::Hole)),
             fresh,
             |fun, fresh| Exp::ap(fun, Exp::empty_hole(fresh.hole())),
         ),
-        Action::ConstructBinOp(op) => construct_wrapping(zipper, Ty::Num, fresh, |lhs, fresh| {
-            Exp::bin_op(op, lhs, Exp::empty_hole(fresh.hole()))
-        }),
-        Action::ConstructIf => construct_wrapping(zipper, Ty::Bool, fresh, |cond, fresh| {
+        Action::ConstructBinOp(op) => {
+            construct_wrapping(scope, zipper, Ty::Num, fresh, |lhs, fresh| {
+                Exp::bin_op(op, lhs, Exp::empty_hole(fresh.hole()))
+            })
+        }
+        Action::ConstructIf => construct_wrapping(scope, zipper, Ty::Bool, fresh, |cond, fresh| {
             Exp::if_(
                 cond,
                 Exp::empty_hole(fresh.hole()),
@@ -256,16 +325,19 @@ pub fn apply_with(
         }),
         Action::ConstructLet => {
             let id = fresh.id();
-            let built = construct_wrapping(zipper, Ty::Hole, fresh, |bound, fresh| {
+            let built = construct_wrapping(scope, zipper, Ty::Hole, fresh, |bound, fresh| {
                 Exp::let_(id, bound, Exp::empty_hole(fresh.hole()))
             });
             name_new_binder(id, &built, names);
             built
         }
-        Action::ConstructPair => construct_wrapping(zipper, Ty::Hole, fresh, |fst, fresh| {
-            Exp::pair(fst, Exp::empty_hole(fresh.hole()))
-        }),
+        Action::ConstructPair => {
+            construct_wrapping(scope, zipper, Ty::Hole, fresh, |fst, fresh| {
+                Exp::pair(fst, Exp::empty_hole(fresh.hole()))
+            })
+        }
         Action::ConstructProj(side) => construct_wrapping(
+            scope,
             zipper,
             Ty::Prod(Box::new(Ty::Hole), Box::new(Ty::Hole)),
             fresh,
@@ -273,20 +345,27 @@ pub fn apply_with(
         ),
 
         Action::ConstructNonEmptyHole => {
-            construct_wrapping(zipper, Ty::Hole, fresh, |inner, fresh| {
+            construct_wrapping(scope, zipper, Ty::Hole, fresh, |inner, fresh| {
                 Exp::non_empty_hole(fresh.hole(), inner)
             })
         }
 
-        Action::SetAnn(ann) => set_ann(zipper, ann),
-        Action::SetBinderId(id) => set_binder_id(zipper, id),
+        Action::SetAnn(ann) => set_ann(scope, zipper, ann),
+        Action::SetBinderId(id) => set_binder_id(scope, zipper, id),
 
         Action::Rename(id, name) => {
             names.rename(id, name);
             Some(zipper)
         }
 
-        Action::Finish => finish(zipper),
+        Action::Finish => finish(scope, zipper),
+
+        Action::CreateDefinition
+        | Action::DeleteDefinition
+        | Action::SetDefAnn(_)
+        | Action::MoveNextDef
+        | Action::MovePrevDef
+        | Action::MoveToDef(_) => None,
     }
 }
 
@@ -309,18 +388,24 @@ fn first_empty_hole_child(exp: &Exp) -> Option<usize> {
     }
 }
 
-fn construct_leaf(zipper: Zipper, leaf: Exp, fresh: &mut Fresh) -> Option<Zipper> {
-    let (ctx, expected) = ctx_and_expected_ty_at(&zipper);
-    place(zipper, leaf, &ctx, &expected, fresh)
+fn construct_leaf(
+    scope: &DefScope,
+    zipper: Zipper,
+    leaf: Exp,
+    fresh: &mut Fresh,
+) -> Option<Zipper> {
+    let (ctx, expected) = ctx_and_expected_ty_at_in(scope, &zipper);
+    place(scope, zipper, leaf, &ctx, &expected, fresh)
 }
 
 fn construct_wrapping(
+    scope: &DefScope,
     zipper: Zipper,
     inner_expected: Ty,
     fresh: &mut Fresh,
     build: impl FnOnce(Exp, &mut Fresh) -> Exp,
 ) -> Option<Zipper> {
-    let (ctx, expected) = ctx_and_expected_ty_at(&zipper);
+    let (ctx, expected) = ctx_and_expected_ty_at_in(scope, &zipper);
     let focus = zipper.focus.clone();
     let fits = syn(&ctx, &focus).is_some() && ana(&ctx, &focus, &inner_expected);
     let principal = if fits {
@@ -329,22 +414,29 @@ fn construct_wrapping(
         Exp::non_empty_hole(fresh.hole(), focus)
     };
     let form = build(principal, fresh);
-    place(zipper, form, &ctx, &expected, fresh)
+    place(scope, zipper, form, &ctx, &expected, fresh)
 }
 
-fn place(zipper: Zipper, form: Exp, ctx: &Ctx, expected: &Ty, fresh: &mut Fresh) -> Option<Zipper> {
+fn place(
+    scope: &DefScope,
+    zipper: Zipper,
+    form: Exp,
+    ctx: &Ctx,
+    expected: &Ty,
+    fresh: &mut Fresh,
+) -> Option<Zipper> {
     let target = first_empty_hole_child(&form);
 
     if ana(ctx, &form, expected) {
         let candidate = zipper.clone().replace_focus(form.clone());
-        if is_well_typed(&candidate.to_exp()) {
+        if scope.accepts(&candidate.to_exp()) {
             return descend_into_form(candidate, target, false);
         }
     }
 
     let quarantined = Exp::non_empty_hole(fresh.hole(), form);
     let candidate = zipper.replace_focus(quarantined);
-    if is_well_typed(&candidate.to_exp()) {
+    if scope.accepts(&candidate.to_exp()) {
         descend_into_form(candidate, target, true)
     } else {
         None
@@ -369,42 +461,42 @@ fn descend_into_form(
     }
 }
 
-fn keep_if_well_typed(zipper: Zipper) -> Option<Zipper> {
-    if is_well_typed(&zipper.to_exp()) {
+fn keep_if_well_typed(scope: &DefScope, zipper: Zipper) -> Option<Zipper> {
+    if scope.accepts(&zipper.to_exp()) {
         Some(zipper)
     } else {
         None
     }
 }
 
-fn set_ann(zipper: Zipper, ann: Ty) -> Option<Zipper> {
+fn set_ann(scope: &DefScope, zipper: Zipper, ann: Ty) -> Option<Zipper> {
     let updated = match &zipper.focus {
         Exp::Lam(id, _, body) => Exp::Lam(*id, ann, body.clone()),
         _ => return None,
     };
-    keep_if_well_typed(zipper.replace_focus(updated))
+    keep_if_well_typed(scope, zipper.replace_focus(updated))
 }
 
-fn set_binder_id(zipper: Zipper, id: Id) -> Option<Zipper> {
+fn set_binder_id(scope: &DefScope, zipper: Zipper, id: Id) -> Option<Zipper> {
     let updated = match &zipper.focus {
         Exp::Lam(_, ann, body) => Exp::Lam(id, ann.clone(), body.clone()),
         Exp::Let(_, bound, body) => Exp::Let(id, bound.clone(), body.clone()),
         _ => return None,
     };
-    keep_if_well_typed(zipper.replace_focus(updated))
+    keep_if_well_typed(scope, zipper.replace_focus(updated))
 }
 
-fn finish(zipper: Zipper) -> Option<Zipper> {
+fn finish(scope: &DefScope, zipper: Zipper) -> Option<Zipper> {
     let inner = match &zipper.focus {
         Exp::NonEmptyHole(_, inner) => (**inner).clone(),
         _ => return None,
     };
-    let (ctx, expected) = ctx_and_expected_ty_at(&zipper);
+    let (ctx, expected) = ctx_and_expected_ty_at_in(scope, &zipper);
     if !ana(&ctx, &inner, &expected) {
         return None;
     }
     let candidate = zipper.replace_focus(inner);
-    if is_well_typed(&candidate.to_exp()) {
+    if scope.accepts(&candidate.to_exp()) {
         Some(candidate)
     } else {
         None
@@ -422,6 +514,10 @@ pub struct EditState {
     pub zipper: Zipper,
     pub fresh: Fresh,
     pub names: NameTable,
+    before: Vec<Def>,
+    def_id: Id,
+    def_ann: Ty,
+    after: Vec<Def>,
 }
 
 impl EditState {
@@ -430,26 +526,93 @@ impl EditState {
     }
 
     pub fn with_names(exp: Exp, names: NameTable) -> EditState {
-        let fresh = Fresh::from_program(&exp);
+        let mut names = names;
+        if names.get(MAIN_ID).is_none() {
+            names.set(MAIN_ID, MAIN_NAME);
+        }
+        EditState::with_doc(&Doc::single(exp), names, 0)
+            .expect("a single-definition document always has index 0")
+    }
+
+    pub fn with_doc(doc: &Doc, names: NameTable, index: usize) -> Option<EditState> {
+        let defs = doc.defs();
+        let current = defs.get(index)?;
+        Some(EditState {
+            zipper: unzip(current.body.clone()),
+            fresh: Fresh::from_doc(doc),
+            names,
+            before: defs[..index].to_vec(),
+            def_id: current.id,
+            def_ann: current.ann.clone(),
+            after: defs[index + 1..].to_vec(),
+        })
+    }
+
+    pub fn at(zipper: Zipper, fresh: Fresh, names: NameTable) -> EditState {
         EditState {
-            zipper: unzip(exp),
+            zipper,
             fresh,
             names,
+            before: Vec::new(),
+            def_id: MAIN_ID,
+            def_ann: Ty::Hole,
+            after: Vec::new(),
         }
     }
 
     pub fn empty() -> EditState {
         let mut fresh = Fresh::new();
         let hole = fresh.hole();
+        let mut names = NameTable::new();
+        names.set(MAIN_ID, MAIN_NAME);
         EditState {
             zipper: unzip(Exp::empty_hole(hole)),
             fresh,
-            names: NameTable::new(),
+            names,
+            before: Vec::new(),
+            def_id: MAIN_ID,
+            def_ann: Ty::Hole,
+            after: Vec::new(),
         }
     }
 
     pub fn exp(&self) -> Exp {
         self.zipper.to_exp()
+    }
+
+    pub fn def_id(&self) -> Id {
+        self.def_id
+    }
+
+    pub fn def_ann(&self) -> &Ty {
+        &self.def_ann
+    }
+
+    pub fn def_index(&self) -> usize {
+        self.before.len()
+    }
+
+    pub fn def_count(&self) -> usize {
+        self.before.len() + 1 + self.after.len()
+    }
+
+    pub fn current_def(&self) -> Def {
+        Def::new(self.def_id, self.def_ann.clone(), self.exp())
+    }
+
+    pub fn doc(&self) -> Doc {
+        let mut defs = self.before.clone();
+        defs.push(self.current_def());
+        defs.extend(self.after.iter().cloned());
+        Doc::new(defs).expect("an edit state always holds at least its current definition")
+    }
+
+    pub fn scope(&self) -> DefScope {
+        DefScope::new(self.doc().ctx(), self.def_ann.clone())
+    }
+
+    pub fn definition_ids(&self) -> Vec<Id> {
+        self.doc().ids()
     }
 
     pub fn names(&self) -> &NameTable {
@@ -460,15 +623,109 @@ impl EditState {
         nothing_core::render::render(&self.exp(), &self.names)
     }
 
-    pub fn apply(&self, action: Action) -> Option<EditState> {
+    pub fn render_document(&self) -> String {
+        self.doc().render(&self.names)
+    }
+
+    pub fn is_well_typed(&self) -> bool {
+        self.doc().is_well_typed()
+    }
+
+    fn moved_to(&self, index: usize) -> Option<EditState> {
+        let doc = self.doc();
+        let mut next = EditState::with_doc(&doc, self.names.clone(), index)?;
+        next.fresh = self.fresh.clone();
+        Some(next)
+    }
+
+    fn create_definition(&self) -> Option<EditState> {
         let mut fresh = self.fresh.clone();
+        let id = fresh.id();
+        let hole = fresh.hole();
         let mut names = self.names.clone();
-        let zipper = apply_with(self.zipper.clone(), action, &mut fresh, &mut names)?;
+        names.set(id, fresh_definition_name(&names));
+        let mut before = self.before.clone();
+        before.push(self.current_def());
         Some(EditState {
-            zipper,
+            zipper: unzip(Exp::empty_hole(hole)),
             fresh,
             names,
+            before,
+            def_id: id,
+            def_ann: Ty::Hole,
+            after: self.after.clone(),
         })
+    }
+
+    fn delete_definition(&self) -> Option<EditState> {
+        if self.def_count() < 2 {
+            return None;
+        }
+        let gone = self.def_id;
+        let mut fresh = self.fresh.clone();
+        let mut rewrite = |def: &Def| Def {
+            id: def.id,
+            ann: def.ann.clone(),
+            body: if references(&def.body, gone) {
+                vacate(&def.body, gone, &mut || fresh.hole())
+            } else {
+                def.body.clone()
+            },
+        };
+        let before: Vec<Def> = self.before.iter().map(&mut rewrite).collect();
+        let after: Vec<Def> = self.after.iter().map(&mut rewrite).collect();
+        let index = if before.is_empty() {
+            0
+        } else {
+            before.len() - 1
+        };
+        let mut defs = before;
+        defs.extend(after);
+        let doc = Doc::new(defs)?;
+        if !doc.is_well_typed() {
+            return None;
+        }
+        let mut next = EditState::with_doc(&doc, self.names.clone(), index)?;
+        next.fresh = fresh;
+        Some(next)
+    }
+
+    fn set_def_ann(&self, ann: Ty) -> Option<EditState> {
+        let mut next = self.clone();
+        next.def_ann = ann;
+        if next.is_well_typed() {
+            Some(next)
+        } else {
+            None
+        }
+    }
+
+    pub fn apply(&self, action: Action) -> Option<EditState> {
+        match action {
+            Action::CreateDefinition => self.create_definition(),
+            Action::DeleteDefinition => self.delete_definition(),
+            Action::SetDefAnn(ann) => self.set_def_ann(ann),
+            Action::MoveNextDef => self.moved_to(self.def_index().checked_add(1)?),
+            Action::MovePrevDef => self.moved_to(self.def_index().checked_sub(1)?),
+            Action::MoveToDef(id) => self.moved_to(self.doc().index_of(id)?),
+            Action::Rename(id, name) => {
+                let mut next = self.clone();
+                next.names.rename(id, name);
+                Some(next)
+            }
+            _ => {
+                let scope = self.scope();
+                let mut fresh = self.fresh.clone();
+                let mut names = self.names.clone();
+                let zipper =
+                    apply_with_in(&scope, self.zipper.clone(), action, &mut fresh, &mut names)?;
+                let mut next = self.clone();
+                next.zipper = zipper;
+                next.fresh = fresh;
+                next.names = names;
+                Some(next)
+            }
+        }
     }
 
     pub fn apply_mut(&mut self, action: Action) -> bool {
@@ -482,12 +739,29 @@ impl EditState {
     }
 }
 
+pub fn all_document_positions(state: &EditState) -> Vec<EditState> {
+    let doc = state.doc();
+    let mut out = Vec::new();
+    for (index, def) in doc.defs().iter().enumerate() {
+        let base = EditState::with_doc(&doc, state.names.clone(), index)
+            .expect("index is in range by construction");
+        for zipper in crate::zipper::all_positions(&def.body) {
+            let mut at = base.clone();
+            at.zipper = zipper;
+            at.fresh = state.fresh.clone();
+            out.push(at);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::generate;
     use crate::zipper::{all_positions, arity};
     use nothing_core::examples;
+    use nothing_core::typing::is_well_typed;
     use proptest::prelude::*;
 
     fn all_examples() -> Vec<(&'static str, Exp)> {

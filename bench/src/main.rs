@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use nothing_action::script::{parse_script, replay_script};
-use nothing_core::typing::is_well_typed;
 
 struct ReferenceProgram {
     name: &'static str,
@@ -96,11 +95,10 @@ impl ReferenceProgram {
     fn replay(&self) -> Result<String, String> {
         let text = self.read()?;
         let state = replay_script(&text).map_err(|e| e.to_string())?;
-        let exp = state.exp();
-        if !is_well_typed(&exp) {
-            return Err(format!("{}: replayed to an ill-typed program", self.name));
+        if !state.is_well_typed() {
+            return Err(format!("{}: replayed to an ill-typed document", self.name));
         }
-        Ok(state.render())
+        Ok(state.render_document())
     }
 
     fn ratio(&self, actions: usize) -> f64 {
@@ -307,13 +305,11 @@ mod tests {
     }
 
     #[test]
-    fn only_factorial_is_left_unfinished() {
+    fn no_reference_program_is_left_unfinished() {
         for program in reference_programs() {
             let rendered = program.replay().unwrap();
-            let has_hole = rendered.contains('⦇');
-            assert_eq!(
-                has_hole,
-                program.name == "factorial",
+            assert!(
+                !rendered.contains('⦇'),
                 "{} renders as `{rendered}`",
                 program.name
             );
@@ -395,6 +391,10 @@ mod tests {
         assert!(
             text.contains("2026-08-27"),
             "RESULTS.md is not dated with the Phase 4 keystroke run date"
+        );
+        assert!(
+            text.contains("2026-08-28"),
+            "RESULTS.md is not dated with the Phase B1 definition-era run date"
         );
     }
 }

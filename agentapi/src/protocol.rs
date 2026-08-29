@@ -1,13 +1,12 @@
-use nothing_action::act::{Action, ctx_and_expected_ty_at};
+use nothing_action::act::{Action, ctx_and_expected_ty_at_in};
 use nothing_action::cursor_render::render_with_cursor;
 use nothing_action::log::AuthorId;
 use nothing_action::script::{HELP, parse_step};
-use nothing_core::typing::is_well_typed;
 
 use crate::encode::{action_json, entry_json, exp_json, exp_kind, holes, names_json, ty_json};
 use crate::holectx::hole_context;
 use crate::json::{Json, parse};
-use crate::provenance::{Palette, annotate, provenance_json, provenance_of};
+use crate::provenance::{Palette, annotate, annotate_document, provenance_json, provenance_of};
 use crate::session::AgentSession;
 
 pub const PROTOCOL_VERSION: &str = "1";
@@ -39,9 +38,36 @@ fn state_json(session: &AgentSession) -> Json {
     let state = session.state();
     let exp = state.exp();
     let (empty, non_empty) = holes(&exp);
-    let (_, expected) = ctx_and_expected_ty_at(&state.zipper);
+    let (_, expected) = ctx_and_expected_ty_at_in(&state.scope(), &state.zipper);
+    let doc = state.doc();
     Json::obj(vec![
         ("render", Json::str(state.render())),
+        ("render_document", Json::str(state.render_document())),
+        (
+            "definitions",
+            Json::arr(
+                doc.defs()
+                    .iter()
+                    .map(|def| {
+                        Json::obj(vec![
+                            ("id", Json::str(def.id.to_string())),
+                            ("name", Json::str(session.names().display(def.id))),
+                            ("ann", ty_json(&def.ann)),
+                            ("ann_text", Json::str(def.ann.to_string())),
+                            ("current", Json::Bool(def.id == state.def_id())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        ("definition", Json::str(state.def_id().to_string())),
+        (
+            "definition_name",
+            Json::str(session.names().display(state.def_id())),
+        ),
+        ("definition_index", Json::Int(state.def_index() as i64)),
+        ("definition_count", Json::Int(state.def_count() as i64)),
+        ("definition_ann", ty_json(state.def_ann())),
         (
             "render_with_cursor",
             Json::str(render_with_cursor(&state.zipper, &state.names)),
@@ -59,7 +85,7 @@ fn state_json(session: &AgentSession) -> Json {
         ("focus_kind", Json::str(exp_kind(&state.zipper.focus))),
         ("expected_ty", ty_json(&expected)),
         ("expected_ty_text", Json::str(expected.to_string())),
-        ("well_typed", Json::Bool(is_well_typed(&exp))),
+        ("well_typed", Json::Bool(state.is_well_typed())),
         ("empty_holes", Json::Int(empty as i64)),
         ("non_empty_holes", Json::Int(non_empty as i64)),
         ("complete", Json::Bool(empty == 0 && non_empty == 0)),
@@ -303,16 +329,28 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
                 id,
                 false,
                 session,
-                vec![(
-                    "annotated",
-                    Json::str(annotate(
-                        &session.exp(),
-                        session.names(),
-                        &map,
-                        &agents,
-                        &palette,
-                    )),
-                )],
+                vec![
+                    (
+                        "annotated",
+                        Json::str(annotate(
+                            &session.exp(),
+                            session.names(),
+                            &map.in_definition(session.state().def_id()),
+                            &agents,
+                            &palette,
+                        )),
+                    ),
+                    (
+                        "annotated_document",
+                        Json::str(annotate_document(
+                            &session.state().doc(),
+                            session.names(),
+                            &map,
+                            &agents,
+                            &palette,
+                        )),
+                    ),
+                ],
             )
         }
 

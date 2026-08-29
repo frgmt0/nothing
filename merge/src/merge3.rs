@@ -1,3 +1,4 @@
+use nothing_core::ctx::Ctx;
 use nothing_core::exp::Exp;
 use nothing_core::names::NameTable;
 use nothing_core::render::render;
@@ -6,7 +7,7 @@ use crate::apply::apply_one;
 use crate::diff::diff;
 use crate::ops::{Operation, regions_overlap};
 use crate::path::{at, label};
-use crate::repair::{Repair, repair};
+use crate::repair::{Repair, repair_in};
 use crate::version::Version;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -146,6 +147,10 @@ fn undo_rebases(blocked: &[bool], riders: &mut [Planned]) {
 }
 
 pub fn merge(base: &Version, ours: &Version, theirs: &Version) -> MergeOutcome {
+    merge_in(&Ctx::empty(), base, ours, theirs)
+}
+
+pub fn merge_in(ctx: &Ctx, base: &Version, ours: &Version, theirs: &Version) -> MergeOutcome {
     let ours_ops = diff(base, ours);
     let theirs_ops = diff(base, theirs);
 
@@ -228,7 +233,7 @@ pub fn merge(base: &Version, ours: &Version, theirs: &Version) -> MergeOutcome {
         }
     }
 
-    let repaired = repair(&exp, &names);
+    let repaired = repair_in(ctx, &exp, &names);
     let commuted: Vec<Operation> = schedule
         .iter()
         .filter(|item| item.phase == PHASE_REBASED)

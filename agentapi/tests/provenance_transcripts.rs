@@ -77,10 +77,7 @@ fn replay(setup: &[String], model: &[String]) -> AgentSession {
 }
 
 fn strip(text: &str) -> String {
-    text.replace('⟦', "")
-        .replace('⟧', "")
-        .replace('⟨', "")
-        .replace('⟩', "")
+    text.replace(['⟦', '⟧', '⟨', '⟩'], "")
 }
 
 #[test]

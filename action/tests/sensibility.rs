@@ -1,4 +1,4 @@
-use nothing_action::act::{Action, apply};
+use nothing_action::act::{Action, EditState, all_document_positions, apply};
 use nothing_action::generate::{self, Gen};
 use nothing_action::zipper::{Zipper, all_positions};
 use nothing_core::exp::{Exp, Id, Op, Side};
@@ -30,10 +30,16 @@ fn variant_name(action: &Action) -> &'static str {
         Action::SetBinderId(_) => "SetBinderId",
         Action::Rename(..) => "Rename",
         Action::Finish => "Finish",
+        Action::CreateDefinition => "CreateDefinition",
+        Action::DeleteDefinition => "DeleteDefinition",
+        Action::SetDefAnn(_) => "SetDefAnn",
+        Action::MoveNextDef => "MoveNextDef",
+        Action::MovePrevDef => "MovePrevDef",
+        Action::MoveToDef(_) => "MoveToDef",
     }
 }
 
-const ALL_VARIANTS: [&str; 20] = [
+const ALL_VARIANTS: [&str; 26] = [
     "MoveChild",
     "MoveParent",
     "MoveNextSibling",
@@ -54,6 +60,12 @@ const ALL_VARIANTS: [&str; 20] = [
     "SetBinderId",
     "Rename",
     "Finish",
+    "CreateDefinition",
+    "DeleteDefinition",
+    "SetDefAnn",
+    "MoveNextDef",
+    "MovePrevDef",
+    "MoveToDef",
 ];
 
 fn arb_op() -> impl Strategy<Value = Op> {
@@ -111,6 +123,12 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
             .prop_map(|(id, name)| Action::Rename(id, name))
             .boxed(),
         Just(Action::Finish).boxed(),
+        Just(Action::CreateDefinition).boxed(),
+        Just(Action::DeleteDefinition).boxed(),
+        arb_ty().prop_map(Action::SetDefAnn).boxed(),
+        Just(Action::MoveNextDef).boxed(),
+        Just(Action::MovePrevDef).boxed(),
+        arb_id().prop_map(Action::MoveToDef).boxed(),
     ])
 }
 
@@ -150,9 +168,17 @@ fn one_of_every_action_in(scope: &[Id]) -> Vec<Action> {
         Action::Rename(Id::from_u128(0), "x".to_string()),
         Action::Rename(Id::from_u128(9), "items".to_string()),
         Action::Finish,
+        Action::CreateDefinition,
+        Action::DeleteDefinition,
+        Action::SetDefAnn(Ty::Num),
+        Action::SetDefAnn(Ty::Hole),
+        Action::MoveNextDef,
+        Action::MovePrevDef,
+        Action::MoveToDef(Id::from_u128(0)),
     ];
     actions.extend(scope.iter().copied().map(Action::ConstructVar));
-    actions.sort_by_key(|a| variant_name(a));
+    actions.extend(scope.iter().copied().map(Action::MoveToDef));
+    actions.sort_by_key(variant_name);
     actions
 }
 
@@ -224,6 +250,31 @@ fn the_position_quantifier_reaches_more_than_the_root() {
     );
 }
 
+fn check_document_sensible(state: &EditState, action: &Action) -> Result<bool, TestCaseError> {
+    let before = state.render_document();
+    match state.apply(action.clone()) {
+        None => Ok(false),
+        Some(after) => {
+            prop_assert!(
+                after.is_well_typed(),
+                "{action:?} turned the well-typed document\n{before}\ninto\n{}",
+                after.render_document()
+            );
+            prop_assert!(
+                after.def_count() >= 1,
+                "{action:?} left a document with no definitions"
+            );
+            for def in after.doc().defs() {
+                prop_assert!(
+                    after.doc().get(def.id).is_some(),
+                    "a definition vanished from its own document"
+                );
+            }
+            Ok(true)
+        }
+    }
+}
+
 fn check_sensible(z: Zipper, action: &Action) -> Result<bool, TestCaseError> {
     let before = z.to_exp();
     match apply(z, action.clone()) {
@@ -248,19 +299,19 @@ proptest! {
     })]
 
     #[test]
-    fn any_action_at_any_cursor_position_of_any_well_typed_program_is_sensible(
+    fn any_action_at_any_cursor_position_of_any_well_typed_document_is_sensible(
         seed in any::<u64>(),
         position in any::<prop::sample::Index>(),
         action in arb_action(),
     ) {
-        let program = generate::well_typed_exp(seed);
+        let (doc, names) = generate::well_typed_doc(seed);
+        prop_assert!(doc.is_well_typed(), "the generator produced {doc:?}");
 
-
-        prop_assert!(is_well_typed(&program), "the generator produced {program:?}");
-
-        let positions = all_positions(&program);
+        let root = EditState::with_doc(&doc, names, 0)
+            .expect("a generated document always has a first definition");
+        let positions = all_document_positions(&root);
         let cursor = positions[position.index(positions.len())].clone();
-        check_sensible(cursor, &action)?;
+        check_document_sensible(&cursor, &action)?;
     }
 }
 
@@ -278,6 +329,44 @@ proptest! {
         for cursor in all_positions(&program) {
             for action in one_of_every_action() {
                 check_sensible(cursor.clone(), &action)?;
+            }
+        }
+    }
+
+    #[test]
+    fn every_action_at_every_document_position_is_sensible(seed in any::<u64>()) {
+        let (doc, names) = generate::well_typed_doc(seed);
+        prop_assert!(doc.is_well_typed());
+        let root = EditState::with_doc(&doc, names, 0)
+            .expect("a generated document always has a first definition");
+        for cursor in all_document_positions(&root) {
+            let scope: Vec<Id> = cursor
+                .definition_ids()
+                .into_iter()
+                .chain(cursor.zipper.binders())
+                .collect();
+            for action in one_of_every_action_in(&scope) {
+                check_document_sensible(&cursor, &action)?;
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_random_document_session_never_leaves_the_language(
+        seed in any::<u64>(),
+        actions in prop::collection::vec(arb_action(), 1..80),
+    ) {
+        let (doc, names) = generate::well_typed_doc(seed);
+        let mut state = EditState::with_doc(&doc, names, 0)
+            .expect("a generated document always has a first definition");
+        for action in actions {
+            if let Some(next) = state.apply(action.clone()) {
+                prop_assert!(
+                    next.is_well_typed(),
+                    "{action:?} produced\n{}",
+                    next.render_document()
+                );
+                state = next;
             }
         }
     }
@@ -310,17 +399,23 @@ fn every_action_succeeds_somewhere_in_the_search_space() {
     let mut total_applications = 0usize;
 
     for seed in 0..300u64 {
-        let program = generate::well_typed_exp(seed);
-        assert!(is_well_typed(&program));
-        for cursor in all_positions(&program) {
-            for action in one_of_every_action_in(&cursor.binders()) {
+        let (doc, names) = generate::well_typed_doc(seed);
+        assert!(doc.is_well_typed());
+        let root = EditState::with_doc(&doc, names, 0).expect("a first definition");
+        for cursor in all_document_positions(&root) {
+            let scope: Vec<Id> = cursor
+                .definition_ids()
+                .into_iter()
+                .chain(cursor.zipper.binders())
+                .collect();
+            for action in one_of_every_action_in(&scope) {
                 total_applications += 1;
                 let name = variant_name(&action);
-                if let Some(after) = apply(cursor.clone(), action.clone()) {
+                if let Some(after) = cursor.apply(action.clone()) {
                     assert!(
-                        is_well_typed(&after.to_exp()),
-                        "{action:?} produced {:?}",
-                        after.to_exp()
+                        after.is_well_typed(),
+                        "{action:?} produced {}",
+                        after.render_document()
                     );
                     let slot = applied
                         .iter_mut()
@@ -349,14 +444,20 @@ fn every_action_succeeds_somewhere_in_the_search_space() {
 fn actions_that_do_not_apply_leave_the_program_untouched() {
     let mut refusals = 0usize;
     for seed in 0..200u64 {
-        let program = generate::well_typed_exp(seed);
-        for cursor in all_positions(&program) {
-            for action in one_of_every_action_in(&cursor.binders()) {
-                let before = cursor.to_exp();
-                if apply(cursor.clone(), action.clone()).is_none() {
+        let (doc, names) = generate::well_typed_doc(seed);
+        let root = EditState::with_doc(&doc, names, 0).expect("a first definition");
+        for cursor in all_document_positions(&root) {
+            let scope: Vec<Id> = cursor
+                .definition_ids()
+                .into_iter()
+                .chain(cursor.zipper.binders())
+                .collect();
+            for action in one_of_every_action_in(&scope) {
+                let before = cursor.render_document();
+                if cursor.apply(action.clone()).is_none() {
                     refusals += 1;
 
-                    assert_eq!(cursor.to_exp(), before);
+                    assert_eq!(cursor.render_document(), before);
                 }
             }
         }

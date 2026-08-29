@@ -1,4 +1,6 @@
+use nothing_core::doc::{Def, Doc, MAIN_NAME};
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
+use nothing_core::names::NameTable;
 use nothing_core::ty::Ty;
 
 #[derive(Clone, Debug)]
@@ -86,6 +88,35 @@ impl Gen {
             3 => Ty::Arrow(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
             _ => Ty::Prod(Box::new(self.ty(depth - 1)), Box::new(self.ty(depth - 1))),
         }
+    }
+
+    pub fn document(&mut self, count: usize, depth: u32) -> (Doc, NameTable) {
+        let count = count.max(1);
+        let heads: Vec<(Id, Ty)> = (0..count)
+            .map(|_| {
+                let id = self.fresh_id();
+                let ty = self.ty(2);
+                (id, ty)
+            })
+            .collect();
+        let ctx: Vec<(Id, Ty)> = heads.clone();
+        let defs: Vec<Def> = heads
+            .iter()
+            .map(|(id, ty)| {
+                let body = self.exp_syn(&ctx, ty, depth);
+                Def::new(*id, ty.clone(), body)
+            })
+            .collect();
+        let mut names = NameTable::new();
+        for (i, (id, _)) in heads.iter().enumerate() {
+            if i == 0 {
+                names.set(*id, MAIN_NAME);
+            } else {
+                names.set(*id, format!("d{i}"));
+            }
+        }
+        let doc = Doc::new(defs).expect("the generator never repeats a definition id");
+        (doc, names)
     }
 
     pub fn program(&mut self, depth: u32) -> Exp {
@@ -219,6 +250,12 @@ pub fn well_typed_exp(seed: u64) -> Exp {
 
 pub fn well_typed_exp_with_depth(seed: u64, depth: u32) -> Exp {
     Gen::new(seed).program(depth)
+}
+
+pub fn well_typed_doc(seed: u64) -> (Doc, NameTable) {
+    let mut g = Gen::new(seed);
+    let count = 1 + g.rng().below(4);
+    g.document(count, DEFAULT_DEPTH)
 }
 
 pub fn well_typed_exp_of_ty(seed: u64, ty: &Ty, depth: u32) -> Exp {

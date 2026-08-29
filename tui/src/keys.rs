@@ -36,6 +36,25 @@ fn dispatch(key: KeyEvent, state: AppState) -> AppState {
     match (key.code, ctrl) {
         (KeyCode::Char('q'), true) => quit(state),
 
+        (KeyCode::Down, true) => or_hint(
+            to_node(state.apply_actions(&[Action::MoveNextDef])),
+            state,
+            "this is the last definition",
+        ),
+        (KeyCode::Up, true) => or_hint(
+            to_node(state.apply_actions(&[Action::MovePrevDef])),
+            state,
+            "this is the first definition",
+        ),
+        (KeyCode::Char('n'), true) => new_definition(state),
+        (KeyCode::Char('d'), true) => or_hint(
+            to_node(state.apply_actions(&[Action::DeleteDefinition])),
+            state,
+            "a document keeps at least one definition",
+        ),
+        (KeyCode::Char('l'), true) => to_def_name(state),
+        (KeyCode::Char('t'), true) => to_def_ann(state),
+
         (KeyCode::Down, false) => {
             or_hint(state.move_down(), state, "nothing below: this is a leaf")
         }
@@ -61,8 +80,112 @@ fn printable(c: char, state: AppState) -> AppState {
     match state.slot {
         Slot::BinderName => binder_name_key(c, state),
         Slot::Annotation => annotation_key(c, state),
+        Slot::DefName => def_name_key(c, state),
+        Slot::DefAnn => def_ann_key(c, state),
         Slot::Node => node_key(c, state),
     }
+}
+
+fn to_node(next: Option<AppState>) -> Option<AppState> {
+    next.map(|mut state| {
+        state.slot = Slot::Node;
+        state.clear_entry();
+        state
+    })
+}
+
+fn new_definition(state: AppState) -> AppState {
+    match to_node(state.apply_actions(&[Action::CreateDefinition])) {
+        Some(next) => to_def_name(next),
+        None => state.with_hint("a definition cannot be created here"),
+    }
+}
+
+fn to_def_name(state: AppState) -> AppState {
+    let mut next = state;
+    next.slot = Slot::DefName;
+    next.entry = String::new();
+    next.entry_committed = false;
+    next
+}
+
+fn to_def_ann(state: AppState) -> AppState {
+    let mut next = state;
+    next.slot = Slot::DefAnn;
+    next.entry = String::new();
+    next.entry_committed = false;
+    next
+}
+
+fn name_definition(text: String, state: AppState, append: bool) -> AppState {
+    let mut buffer = if append {
+        state.entry.clone()
+    } else {
+        String::new()
+    };
+    buffer.push_str(&text);
+    let id = state.definition_id();
+    let mut next = state
+        .apply_actions(&[Action::Rename(id, buffer.clone())])
+        .expect("a rename is a name-table write: it cannot fail");
+    next.slot = Slot::DefName;
+    next.entry = buffer;
+    next.entry_committed = true;
+    next
+}
+
+fn set_def_ann(buffer: String, state: AppState) -> AppState {
+    let ty = annot::parse(&buffer);
+    match state.apply_actions(&[Action::SetDefAnn(ty.clone())]) {
+        Some(mut next) => {
+            next.slot = Slot::DefAnn;
+            next.entry = buffer;
+            next.entry_committed = true;
+            next
+        }
+        None => {
+            let mut next = state;
+            next.entry = buffer;
+            next.entry_committed = false;
+            next.with_hint(format!("`{ty}` does not describe this definition"))
+        }
+    }
+}
+
+fn def_name_key(c: char, state: AppState) -> AppState {
+    match c {
+        ':' => to_def_ann(state),
+        '.' => leave_def_slot(state),
+        c if is_name_char(c) => name_definition(c.to_string(), state, true),
+        _ => leave_def_slot(state).with_hint(format!("`{c}` means nothing in a definition name")),
+    }
+}
+
+fn def_ann_key(c: char, state: AppState) -> AppState {
+    if c == '.' {
+        return leave_def_slot(state);
+    }
+    if c == ':' {
+        return state.with_hint("already in the definition type slot");
+    }
+    match annot::accept(&state.entry, c) {
+        Accept::Ignore => state.with_hint("there is no `(` to close"),
+        Accept::Exit => {
+            leave_def_slot(state).with_hint(format!("`{c}` means nothing in a definition type"))
+        }
+        Accept::Append | Accept::Swallow => {
+            let mut buffer = state.entry.clone();
+            buffer.push(c);
+            set_def_ann(buffer, state)
+        }
+    }
+}
+
+fn leave_def_slot(state: AppState) -> AppState {
+    let mut next = state;
+    next.slot = Slot::Node;
+    next.clear_entry();
+    next
 }
 
 fn node_key(c: char, state: AppState) -> AppState {
@@ -334,6 +457,22 @@ fn exit_and_reprocess(c: char, state: AppState) -> AppState {
 
 fn backspace(state: AppState) -> AppState {
     match state.slot {
+        Slot::DefName => {
+            let mut buffer = state.entry.clone();
+            buffer.pop();
+            if !buffer.is_empty() {
+                return name_definition(buffer, state, false);
+            }
+            let mut next = state;
+            next.entry = buffer;
+            next.entry_committed = false;
+            next
+        }
+        Slot::DefAnn => {
+            let mut buffer = state.entry.clone();
+            buffer.pop();
+            set_def_ann(buffer, state)
+        }
         Slot::BinderName => {
             let mut buffer = state.entry.clone();
             buffer.pop();
@@ -946,7 +1085,6 @@ mod tests {
 
     #[test]
     fn every_printable_key_leaves_a_well_typed_program() {
-        use nothing_core::typing::is_well_typed;
         let alphabet: Vec<char> = "0123456789abnxtf_+-*<= \\?;,[]!~:.".chars().collect();
 
         for start in [
@@ -957,9 +1095,9 @@ mod tests {
             for &c in &alphabet {
                 let after = handle_key(key(KeyCode::Char(c)), start.clone());
                 assert!(
-                    is_well_typed(&after.program()),
+                    after.edit.is_well_typed(),
                     "`{c}` produced {:?}",
-                    after.program()
+                    after.edit.doc()
                 );
             }
         }
@@ -1019,9 +1157,14 @@ mod tests {
     #[test]
     fn a_declining_motion_changes_nothing_and_explains() {
         let root = AppState::factorial();
-        let after = handle_key(key(KeyCode::Up), root.clone());
-        assert_eq!(after.edit, root.edit);
-        assert_eq!(after.slot, root.slot);
+
+        let head = handle_key(key(KeyCode::Up), root.clone());
+        assert_eq!(head.edit, root.edit);
+        assert_eq!(head.slot, Slot::DefName);
+
+        let after = handle_key(key(KeyCode::Up), head.clone());
+        assert_eq!(after.edit, head.edit);
+        assert_eq!(after.slot, head.slot);
         assert_eq!(after.hint.as_deref(), Some("already at the root"));
     }
 
@@ -1081,7 +1224,8 @@ mod tests {
 
     #[test]
     fn the_hint_lasts_exactly_one_keystroke() {
-        let state = handle_key(key(KeyCode::Up), AppState::factorial());
+        let head = handle_key(key(KeyCode::Up), AppState::factorial());
+        let state = handle_key(key(KeyCode::Up), head);
         assert!(state.hint.is_some());
         let next = handle_key(key(KeyCode::Down), state);
         assert_eq!(next.hint, None);

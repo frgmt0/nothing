@@ -1,29 +1,51 @@
 use nothing_action::log::ActionLog;
+use nothing_core::doc::{Def, Doc, MAIN_ID, MAIN_NAME};
 use nothing_core::exp::Exp;
 use nothing_core::names::NameTable;
 
 use crate::actionlog::{decode_log, encode_log};
-use crate::codec::{read_u8, read_varint, write_varint};
+use crate::codec::{decode_ty, encode_ty, read_id, read_u8, read_varint, write_id, write_varint};
 use crate::error::DecodeError;
 use crate::names::{decode_names, encode_names};
 use crate::nodes::{NodeEntry, build_node_table, content_hash, decode_node_table};
 
 pub const MAGIC: [u8; 4] = *b"NTHG";
-pub const VERSION_MAJOR: u8 = 1;
+pub const VERSION_MAJOR: u8 = 2;
 pub const VERSION_MINOR: u8 = 0;
+pub const VERSION_MAJOR_V1: u8 = 1;
 pub const KIND_DOCUMENT: u8 = 1;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Document {
-    pub exp: Exp,
+    pub doc: Doc,
     pub names: NameTable,
     pub log: ActionLog,
 }
 
 impl Document {
     pub fn new(exp: Exp, names: NameTable, log: ActionLog) -> Document {
-        Document { exp, names, log }
+        Document::from_doc(Doc::single(exp), name_main(names, MAIN_ID), log)
     }
+
+    pub fn from_doc(doc: Doc, names: NameTable, log: ActionLog) -> Document {
+        Document { doc, names, log }
+    }
+
+    pub fn exp(&self) -> Exp {
+        self.doc.defs()[0].body.clone()
+    }
+
+    pub fn main_id(&self) -> Option<nothing_core::exp::Id> {
+        self.doc.main_id(&self.names)
+    }
+}
+
+fn name_main(names: NameTable, id: nothing_core::exp::Id) -> NameTable {
+    let mut names = names;
+    if names.get(id).is_none() {
+        names.set(id, MAIN_NAME);
+    }
+    names
 }
 
 fn encode_node_table(buf: &mut Vec<u8>, table: &[NodeEntry]) {
@@ -65,6 +87,39 @@ fn decode_node_table_bytes(bytes: &[u8], pos: &mut usize) -> Result<Vec<NodeEntr
     Ok(table)
 }
 
+pub(crate) fn encode_body(buf: &mut Vec<u8>, exp: &Exp) {
+    let table = build_node_table(exp);
+    encode_node_table(buf, &table);
+    write_varint(buf, (table.len() - 1) as u64);
+}
+
+pub(crate) fn decode_body(bytes: &[u8], pos: &mut usize) -> Result<Exp, DecodeError> {
+    let table = decode_node_table_bytes(bytes, pos)?;
+    let root_index = read_varint(bytes, pos)? as usize;
+    if table.is_empty() || root_index != table.len() - 1 {
+        return Err(DecodeError::BadRootIndex);
+    }
+    let exp = decode_node_table(&table)?;
+    if content_hash(&exp) != table[root_index].hash {
+        return Err(DecodeError::HashMismatch);
+    }
+    Ok(exp)
+}
+
+pub(crate) fn read_header(bytes: &[u8], pos: &mut usize) -> Result<(u8, u8), DecodeError> {
+    let magic = crate::codec::read_bytes(bytes, pos, 4)?;
+    if magic != MAGIC {
+        return Err(DecodeError::BadMagic);
+    }
+    let major = read_u8(bytes, pos)?;
+    let minor = read_u8(bytes, pos)?;
+    let kind = read_u8(bytes, pos)?;
+    if kind != KIND_DOCUMENT {
+        return Err(DecodeError::UnsupportedKind(kind));
+    }
+    Ok((major, minor))
+}
+
 pub fn encode_document(doc: &Document) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&MAGIC);
@@ -72,9 +127,15 @@ pub fn encode_document(doc: &Document) -> Vec<u8> {
     buf.push(VERSION_MINOR);
     buf.push(KIND_DOCUMENT);
 
-    let table = build_node_table(&doc.exp);
-    encode_node_table(&mut buf, &table);
-    write_varint(&mut buf, (table.len() - 1) as u64);
+    write_varint(&mut buf, doc.doc.len() as u64);
+    for def in doc.doc.defs() {
+        let mut body = Vec::new();
+        write_id(&mut body, def.id);
+        encode_ty(&mut body, &def.ann);
+        encode_body(&mut body, &def.body);
+        write_varint(&mut buf, body.len() as u64);
+        buf.extend_from_slice(&body);
+    }
 
     encode_names(&mut buf, &doc.names);
     encode_log(&mut buf, &doc.log);
@@ -84,31 +145,30 @@ pub fn encode_document(doc: &Document) -> Vec<u8> {
 
 pub fn decode_document(bytes: &[u8]) -> Result<Document, DecodeError> {
     let mut pos = 0usize;
-
-    let magic = crate::codec::read_bytes(bytes, &mut pos, 4)?;
-    if magic != MAGIC {
-        return Err(DecodeError::BadMagic);
-    }
-    let major = read_u8(bytes, &mut pos)?;
-    let minor = read_u8(bytes, &mut pos)?;
-    if major != VERSION_MAJOR {
-        return Err(DecodeError::UnsupportedVersion(major, minor));
-    }
-    let kind = read_u8(bytes, &mut pos)?;
-    if kind != KIND_DOCUMENT {
-        return Err(DecodeError::UnsupportedKind(kind));
+    let (major, minor) = read_header(bytes, &mut pos)?;
+    match major {
+        VERSION_MAJOR_V1 => return crate::v1::decode_document_v1(bytes),
+        VERSION_MAJOR => {}
+        _ => return Err(DecodeError::UnsupportedVersion(major, minor)),
     }
 
-    let table = decode_node_table_bytes(bytes, &mut pos)?;
-    let root_index = read_varint(bytes, &mut pos)? as usize;
-    if table.is_empty() || root_index != table.len() - 1 {
-        return Err(DecodeError::BadRootIndex);
+    let def_count = read_varint(bytes, &mut pos)?;
+    if def_count == 0 {
+        return Err(DecodeError::EmptyDocument);
     }
-
-    let exp = decode_node_table(&table)?;
-    if content_hash(&exp) != table[root_index].hash {
-        return Err(DecodeError::HashMismatch);
+    let mut defs = Vec::with_capacity(def_count as usize);
+    for _ in 0..def_count {
+        let def_len = read_varint(bytes, &mut pos)? as usize;
+        let start = pos;
+        let id = read_id(bytes, &mut pos)?;
+        let ann = decode_ty(bytes, &mut pos)?;
+        let body = decode_body(bytes, &mut pos)?;
+        if pos - start != def_len {
+            return Err(DecodeError::TrailingBytes);
+        }
+        defs.push(Def::new(id, ann, body));
     }
+    let doc = Doc::new(defs).ok_or(DecodeError::DuplicateDefinition)?;
 
     let names = decode_names(bytes, &mut pos)?;
     let log = decode_log(bytes, &mut pos)?;
@@ -117,7 +177,7 @@ pub fn decode_document(bytes: &[u8]) -> Result<Document, DecodeError> {
         return Err(DecodeError::TrailingBytes);
     }
 
-    Ok(Document::new(exp, names, log))
+    Ok(Document::from_doc(doc, names, log))
 }
 
 #[cfg(test)]
@@ -139,7 +199,7 @@ mod tests {
         let bytes = encode_document(&doc);
         let decoded = decode_document(&bytes).unwrap();
 
-        assert_eq!(decoded.exp, doc.exp);
+        assert_eq!(decoded.doc, doc.doc);
         assert_eq!(decoded.log, doc.log);
         let mut decoded_entries = decoded.names.entries();
         let mut expected_entries = doc.names.flatten().entries();

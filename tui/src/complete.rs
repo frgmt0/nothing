@@ -189,7 +189,11 @@ mod tests {
         let state = function_bool_and_caller();
         assert_eq!(state.expected_ty(), Ty::Hole);
 
-        assert_eq!(names(&state, ""), vec!["x2", "x1", "x0", "true", "false"]);
+        assert_eq!(
+            names(&state, ""),
+            vec!["x2", "x1", "x0", "main", "true", "false"],
+            "the definition the cursor is in is a name like any other"
+        );
 
         assert_eq!(names(&state, "x"), vec!["x2", "x1", "x0"]);
         assert!(best(&state, "x").is_some());
@@ -197,7 +201,7 @@ mod tests {
         let empty = AppState::empty();
         assert_eq!(empty.expected_ty(), Ty::Hole);
         assert!(candidates(&empty, "x").is_empty());
-        assert_eq!(names(&empty, ""), vec!["true", "false"]);
+        assert_eq!(names(&empty, ""), vec!["main", "true", "false"]);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 pub mod ctx;
+pub mod doc;
 pub mod examples;
 pub mod exp;
 pub mod names;

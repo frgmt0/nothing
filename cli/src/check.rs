@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use nothing_core::typing::is_well_typed;
-
 use crate::fileio::read_document;
 use crate::holes::count_holes;
 
@@ -24,11 +22,18 @@ pub fn run(path: &Path) -> i32 {
         }
     };
 
-    let well_typed = is_well_typed(&doc.exp);
-    let counts = count_holes(&doc.exp);
+    let well_typed = doc.doc.is_well_typed();
+    let mut empty = 0usize;
+    let mut non_empty = 0usize;
+    for def in doc.doc.defs() {
+        let counts = count_holes(&def.body);
+        empty += counts.empty;
+        non_empty += counts.non_empty;
+    }
     println!("well-typed: {well_typed}");
-    println!("empty holes: {}", counts.empty);
-    println!("non-empty holes: {}", counts.non_empty);
+    println!("definitions: {}", doc.doc.len());
+    println!("empty holes: {empty}");
+    println!("non-empty holes: {non_empty}");
 
     if well_typed { 0 } else { 1 }
 }

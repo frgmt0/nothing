@@ -1,4 +1,4 @@
-use nothing_action::act::{Action, EditState, ctx_and_expected_ty_at};
+use nothing_action::act::{Action, EditState, ctx_and_expected_ty_at_in};
 use nothing_action::cursor_render::render_with_cursor;
 use nothing_action::script::action_name;
 use nothing_action::zipper::{Frame, arity};
@@ -16,6 +16,7 @@ pub struct Binding {
     pub ty: Ty,
     pub consistent_with_expected: bool,
     pub shadowed: bool,
+    pub definition: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -29,6 +30,9 @@ pub struct Construction {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct HoleContext {
+    pub definition: Id,
+    pub definition_name: String,
+    pub definition_ann: Ty,
     pub cursor_path: Vec<usize>,
     pub focus_kind: &'static str,
     pub focus_render: String,
@@ -52,10 +56,17 @@ fn path_of(state: &EditState) -> Vec<usize> {
 }
 
 pub fn in_scope(state: &EditState) -> Vec<Binding> {
-    let (ctx, expected) = ctx_and_expected_ty_at(&state.zipper);
-    let ids = state.zipper.binders();
+    let (ctx, expected) = ctx_and_expected_ty_at_in(&state.scope(), &state.zipper);
+    let definitions = state.definition_ids();
+    let binders = state.zipper.binders();
+    let ids: Vec<(Id, bool)> = definitions
+        .iter()
+        .filter(|id| !binders.contains(id))
+        .map(|id| (*id, true))
+        .chain(binders.iter().map(|id| (*id, false)))
+        .collect();
     let mut out: Vec<Binding> = Vec::new();
-    for id in &ids {
+    for (id, definition) in &ids {
         let Some(ty) = ctx.lookup(id) else { continue };
         let name = state.names.display(*id);
         out.push(Binding {
@@ -64,6 +75,7 @@ pub fn in_scope(state: &EditState) -> Vec<Binding> {
             consistent_with_expected: is_consistent(&ty, &expected),
             ty,
             shadowed: false,
+            definition: *definition,
         });
     }
     for i in 0..out.len() {
@@ -74,13 +86,19 @@ pub fn in_scope(state: &EditState) -> Vec<Binding> {
 }
 
 fn resolves_to(state: &EditState, name: &str, id: Id) -> bool {
-    state
+    let found = state
         .zipper
         .binders()
         .into_iter()
         .rev()
         .find(|other| state.names.get(*other) == Some(name))
-        == Some(id)
+        .or_else(|| {
+            state
+                .definition_ids()
+                .into_iter()
+                .find(|other| state.names.get(*other) == Some(name))
+        });
+    found == Some(id)
 }
 
 fn candidate_actions(state: &EditState) -> Vec<Action> {
@@ -168,6 +186,8 @@ fn movements(state: &EditState) -> Vec<String> {
         (Action::MoveParent, "move-parent"),
         (Action::MoveNextSibling, "move-next-sibling"),
         (Action::MovePrevSibling, "move-prev-sibling"),
+        (Action::MoveNextDef, "move-next-def"),
+        (Action::MovePrevDef, "move-prev-def"),
     ] {
         if state.apply(action).is_some() {
             out.push(name.to_string());
@@ -190,12 +210,21 @@ fn other_actions(state: &EditState) -> Vec<String> {
     if state.zipper.binder_id().is_some() {
         out.push("rename <name>".to_string());
     }
+    out.push("create-definition".to_string());
+    if state.apply(Action::DeleteDefinition).is_some() {
+        out.push("delete-definition".to_string());
+    }
+    out.push("set-def-ann <type>".to_string());
+    out.push("rename-def <name>".to_string());
     out
 }
 
 pub fn hole_context(state: &EditState) -> HoleContext {
-    let (_, expected) = ctx_and_expected_ty_at(&state.zipper);
+    let (_, expected) = ctx_and_expected_ty_at_in(&state.scope(), &state.zipper);
     HoleContext {
+        definition: state.def_id(),
+        definition_name: state.names.display(state.def_id()),
+        definition_ann: state.def_ann().clone(),
         cursor_path: path_of(state),
         focus_kind: exp_kind(&state.zipper.focus),
         focus_render: render(&state.zipper.focus, &state.names),
@@ -220,6 +249,7 @@ impl Binding {
                 Json::Bool(self.consistent_with_expected),
             ),
             ("shadowed", Json::Bool(self.shadowed)),
+            ("definition", Json::Bool(self.definition)),
         ])
     }
 }
@@ -259,6 +289,13 @@ impl Construction {
 impl HoleContext {
     pub fn to_json(&self) -> Json {
         Json::obj(vec![
+            ("definition", Json::str(self.definition.to_string())),
+            ("definition_name", Json::str(self.definition_name.clone())),
+            ("definition_ann", ty_json(&self.definition_ann)),
+            (
+                "definition_ann_text",
+                Json::str(self.definition_ann.to_string()),
+            ),
             (
                 "cursor_path",
                 Json::arr(
@@ -309,6 +346,10 @@ impl HoleContext {
 
     pub fn to_prompt_block(&self) -> String {
         let mut out = String::new();
+        out.push_str(&format!(
+            "definition: {} : {}\n",
+            self.definition_name, self.definition_ann
+        ));
         out.push_str(&format!("cursor path: {:?}\n", self.cursor_path));
         out.push_str(&format!(
             "focus: {} ({})\n",
@@ -321,9 +362,10 @@ impl HoleContext {
             out.push_str("in scope:\n");
             for b in &self.bindings {
                 out.push_str(&format!(
-                    "  {} : {}{}\n",
+                    "  {} : {}{}{}\n",
                     b.name,
                     b.ty,
+                    if b.definition { "   (definition)" } else { "" },
                     if b.consistent_with_expected {
                         "   (fits the expected type)"
                     } else {
@@ -357,7 +399,6 @@ mod tests {
     use nothing_action::generate;
     use nothing_action::zipper::all_positions;
     use nothing_core::examples;
-    use nothing_core::typing::is_well_typed;
     use proptest::prelude::*;
 
     fn state_from(script: &str) -> EditState {
@@ -375,7 +416,7 @@ mod tests {
                 .apply(construction.action.clone())
                 .unwrap_or_else(|| panic!("offered construction did not apply: {construction:?}"));
             assert!(
-                is_well_typed(&next.exp()),
+                next.is_well_typed(),
                 "offered construction broke well-typedness: {construction:?}"
             );
             assert!(
@@ -390,7 +431,7 @@ mod tests {
     fn at_a_num_hole_no_offered_construction_produces_a_non_empty_hole() {
         let state = state_from("construct-num 1\nconstruct-binop add\n");
         assert_eq!(
-            ctx_and_expected_ty_at(&state.zipper).1,
+            ctx_and_expected_ty_at_in(&state.scope(), &state.zipper).1,
             Ty::Num,
             "the right operand of + expects Num"
         );
@@ -417,7 +458,10 @@ mod tests {
     #[test]
     fn a_bool_hole_does_not_offer_a_number() {
         let state = state_from("construct-if\n");
-        assert_eq!(ctx_and_expected_ty_at(&state.zipper).1, Ty::Bool);
+        assert_eq!(
+            ctx_and_expected_ty_at_in(&state.scope(), &state.zipper).1,
+            Ty::Bool
+        );
         let steps: Vec<String> = well_typed_constructions(&state)
             .into_iter()
             .filter_map(|c| c.step)
@@ -459,10 +503,14 @@ mod tests {
         let ctx = hole_context(&state);
         assert!(ctx.at_empty_hole);
         assert_eq!(ctx.expected_ty, Ty::Num);
-        assert_eq!(ctx.bindings.len(), 1);
-        assert_eq!(ctx.bindings[0].name, "n");
-        assert_eq!(ctx.bindings[0].ty, Ty::Num);
-        assert!(ctx.bindings[0].consistent_with_expected);
+
+        assert_eq!(ctx.bindings.len(), 2);
+        assert!(ctx.bindings[0].definition, "the definition comes first");
+        assert_eq!(ctx.bindings[0].name, "main");
+        assert_eq!(ctx.bindings[1].name, "n");
+        assert!(!ctx.bindings[1].definition);
+        assert_eq!(ctx.bindings[1].ty, Ty::Num);
+        assert!(ctx.bindings[1].consistent_with_expected);
         assert!(
             ctx.constructions
                 .iter()
@@ -488,11 +536,11 @@ mod tests {
         ];
         for exp in examples {
             for z in all_positions(&exp) {
-                let state = EditState {
-                    zipper: z,
-                    fresh: nothing_action::act::Fresh::from_program(&exp),
-                    names: examples::names(),
-                };
+                let state = EditState::at(
+                    z,
+                    nothing_action::act::Fresh::from_program(&exp),
+                    examples::names(),
+                );
                 assert_constructions_are_clean(&state);
             }
         }
@@ -505,22 +553,28 @@ mod tests {
              construct-lam\nmove-parent\nrename x\nset-ann Num\nmove-child 0\n",
         );
         let ctx = hole_context(&state);
-        assert_eq!(ctx.bindings.len(), 2);
-        assert!(ctx.bindings[0].shadowed, "the outer `x` is shadowed");
-        assert!(!ctx.bindings[1].shadowed);
+
+        assert_eq!(ctx.bindings.len(), 3);
+        assert!(ctx.bindings[0].definition);
+        assert_eq!(ctx.bindings[0].name, "main");
+        assert!(ctx.bindings[1].shadowed, "the outer `x` is shadowed");
+        assert!(!ctx.bindings[2].shadowed);
         let var_steps: Vec<&str> = ctx
             .constructions
             .iter()
             .filter(|c| matches!(c.action, Action::ConstructVar(_)))
             .filter_map(|c| c.step.as_deref())
             .collect();
-        assert_eq!(var_steps, vec!["construct-var x"]);
+        assert_eq!(var_steps, vec!["construct-var main", "construct-var x"]);
         let var_actions = ctx
             .constructions
             .iter()
             .filter(|c| matches!(c.action, Action::ConstructVar(_)))
             .count();
-        assert_eq!(var_actions, 2, "both bindings are reachable structurally");
+        assert_eq!(
+            var_actions, 3,
+            "both bindings and the definition are reachable structurally"
+        );
     }
 
     #[test]
@@ -530,8 +584,14 @@ mod tests {
         let parsed = crate::json::parse(&text).unwrap();
         assert_eq!(parsed.get("at_empty_hole").unwrap().as_bool(), Some(true));
         let bindings = parsed.get("bindings").unwrap().as_arr().unwrap();
-        assert_eq!(bindings[0].get("name").unwrap().as_str(), Some("n"));
-        assert_eq!(bindings[0].get("ty_text").unwrap().as_str(), Some("Num"));
+        assert_eq!(bindings[0].get("name").unwrap().as_str(), Some("main"));
+        assert_eq!(bindings[0].get("definition").unwrap().as_bool(), Some(true));
+        assert_eq!(bindings[1].get("name").unwrap().as_str(), Some("n"));
+        assert_eq!(bindings[1].get("ty_text").unwrap().as_str(), Some("Num"));
+        assert_eq!(
+            parsed.get("definition_name").unwrap().as_str(),
+            Some("main")
+        );
         assert!(
             !parsed
                 .get("constructions")
@@ -553,17 +613,17 @@ mod tests {
             let exp = generate::well_typed_exp(seed);
             let positions = all_positions(&exp);
             let z = positions[position as usize % positions.len()].clone();
-            let state = EditState {
-                zipper: z,
-                fresh: nothing_action::act::Fresh::from_program(&exp),
-                names: examples::names(),
-            };
+            let state = EditState::at(
+                z,
+                nothing_action::act::Fresh::from_program(&exp),
+                examples::names(),
+            );
             let before = holes(&state.exp()).1;
             for construction in well_typed_constructions(&state) {
                 let next = state.apply(construction.action.clone());
                 prop_assert!(next.is_some(), "offered construction did not apply");
                 let next = next.unwrap();
-                prop_assert!(is_well_typed(&next.exp()));
+                prop_assert!(next.is_well_typed());
                 prop_assert!(
                     holes(&next.exp()).1 <= before,
                     "offered construction produced a non-empty hole: {}",
@@ -579,11 +639,11 @@ mod tests {
                 if !matches!(z.focus, Exp::EmptyHole(_)) {
                     continue;
                 }
-                let state = EditState {
-                    zipper: z,
-                    fresh: nothing_action::act::Fresh::from_program(&exp),
-                    names: examples::names(),
-                };
+                let state = EditState::at(
+                    z,
+                    nothing_action::act::Fresh::from_program(&exp),
+                    examples::names(),
+                );
                 prop_assert!(
                     !well_typed_constructions(&state).is_empty(),
                     "no construction was offered at an empty hole"

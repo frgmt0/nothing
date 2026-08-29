@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use nothing_core::doc::Doc;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side};
 use nothing_core::ty::Ty;
 use nothing_store::nodes::{Digest, NodeEntry, build_node_table, content_hash};
@@ -147,13 +148,22 @@ fn combine(a: Digest, b: Digest) -> Digest {
     *hasher.finalize().as_bytes()
 }
 
-fn env_fingerprint(exp: &Exp, env: &IncrEnv) -> Digest {
+fn env_fingerprint_with_defs(
+    exp: &Exp,
+    env: &IncrEnv,
+    def_digests: &HashMap<Id, Digest>,
+) -> Digest {
     let free = free_vars(exp);
     let mut relevant: Vec<(Id, Digest)> = env
         .iter()
         .filter(|(id, _)| free.contains(id))
         .map(|(id, (_, dig))| (*id, *dig))
         .collect();
+    relevant.extend(
+        free.iter()
+            .filter(|id| !env.contains_key(*id))
+            .filter_map(|id| def_digests.get(id).map(|dig| (*id, *dig))),
+    );
     relevant.sort_by_key(|(id, _)| *id);
     let mut hasher = blake3::Hasher::new();
     for (id, dig) in &relevant {
@@ -169,12 +179,59 @@ struct CacheKey {
     env_fp: Digest,
 }
 
+pub fn definition_digests(doc: &Doc) -> HashMap<Id, Digest> {
+    let bodies: HashMap<Id, Digest> = doc
+        .defs()
+        .iter()
+        .map(|def| (def.id, content_hash(&def.body)))
+        .collect();
+    let refs: HashMap<Id, HashSet<Id>> = doc
+        .defs()
+        .iter()
+        .map(|def| {
+            let mut direct = free_vars(&def.body);
+            direct.retain(|id| bodies.contains_key(id));
+            (def.id, direct)
+        })
+        .collect();
+
+    doc.defs()
+        .iter()
+        .map(|def| {
+            let mut reached: HashSet<Id> = HashSet::new();
+            let mut stack = vec![def.id];
+            while let Some(id) = stack.pop() {
+                if !reached.insert(id) {
+                    continue;
+                }
+                if let Some(direct) = refs.get(&id) {
+                    stack.extend(direct.iter().copied());
+                }
+            }
+            let mut parts: Vec<(Id, Digest)> = reached
+                .into_iter()
+                .filter_map(|id| bodies.get(&id).map(|d| (id, *d)))
+                .collect();
+            parts.sort_by_key(|(id, _)| *id);
+            let mut hasher = blake3::Hasher::new();
+            for (id, dig) in &parts {
+                hasher.update(id.uuid().as_bytes());
+                hasher.update(dig);
+            }
+            (def.id, *hasher.finalize().as_bytes())
+        })
+        .collect()
+}
+
 pub struct IncrEngine {
     cache: HashMap<CacheKey, Value>,
     pub node_evals: usize,
     fuel: usize,
     fuel_budget: usize,
     exhausted: bool,
+    defs: HashMap<Id, Arc<Exp>>,
+    def_digests: HashMap<Id, Digest>,
+    unfolding: HashSet<Id>,
 }
 
 impl Default for IncrEngine {
@@ -191,6 +248,33 @@ impl IncrEngine {
             fuel: 0,
             fuel_budget: 0,
             exhausted: false,
+            defs: HashMap::new(),
+            def_digests: HashMap::new(),
+            unfolding: HashSet::new(),
+        }
+    }
+
+    pub fn set_document(&mut self, doc: &Doc) {
+        self.defs = doc
+            .defs()
+            .iter()
+            .map(|def| (def.id, Arc::new(def.body.clone())))
+            .collect();
+        self.def_digests = definition_digests(doc);
+    }
+
+    pub fn definitions(&self) -> usize {
+        self.defs.len()
+    }
+
+    pub fn eval_definition(&mut self, doc: &Doc, id: Id, fuel: usize) -> Outcome {
+        self.set_document(doc);
+        match doc.get(id) {
+            Some(def) => {
+                let body = def.body.clone();
+                self.eval_with_fuel(&body, fuel)
+            }
+            None => self.eval_with_fuel(&Exp::var(id), fuel),
         }
     }
 
@@ -210,6 +294,7 @@ impl IncrEngine {
         self.fuel = fuel;
         self.fuel_budget = fuel;
         self.exhausted = false;
+        self.unfolding.clear();
         let value = std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .stack_size(64 * 1024 * 1024)
@@ -238,7 +323,7 @@ impl IncrEngine {
 
     fn eval_node(&mut self, exp: &Exp, env: &IncrEnv) -> (Value, Digest) {
         let node_hash = content_hash(exp);
-        let env_fp = env_fingerprint(exp, env);
+        let env_fp = env_fingerprint_with_defs(exp, env, &self.def_digests);
         let key = CacheKey { node_hash, env_fp };
         let digest = combine(node_hash, env_fp);
         if let Some(v) = self.cache.get(&key) {
@@ -256,7 +341,14 @@ impl IncrEngine {
         match exp {
             Exp::Var(id) => match env.get(id) {
                 Some((v, _)) => v.clone(),
-                None => Value::Var(*id),
+                None => match self.defs.get(id).cloned() {
+                    Some(body) if self.unfolding.insert(*id) => {
+                        let value = self.eval_node(&body, &IncrEnv::new()).0;
+                        self.unfolding.remove(id);
+                        value
+                    }
+                    _ => Value::Var(*id),
+                },
             },
             Exp::Num(n) => Value::Num(*n),
             Exp::Bool(b) => Value::Bool(*b),
@@ -641,6 +733,189 @@ mod tests {
         match outcome {
             Outcome::OutOfFuel { steps, .. } => assert_eq!(steps, 4_000),
             other => panic!("expected exhaustion, got {other:?}"),
+        }
+    }
+
+    mod definitions {
+        use super::*;
+        use nothing_core::doc::Def;
+        use nothing_core::ty::Ty;
+
+        const FUEL: usize = 10_000;
+
+        fn ids() -> (Id, Id, Id, Id) {
+            (
+                Id::from_u128(0x11),
+                Id::from_u128(0x22),
+                Id::from_u128(0x33),
+                Id::from_u128(0x44),
+            )
+        }
+
+        fn program(helper_offset: i64, unused_value: i64) -> Doc {
+            let (main, helper, unused, x) = ids();
+            Doc::new(vec![
+                Def::new(main, Ty::Hole, Exp::ap(Exp::var(helper), Exp::num(1))),
+                Def::new(
+                    helper,
+                    Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Num)),
+                    Exp::lam(
+                        x,
+                        Ty::Num,
+                        Exp::bin_op(Op::Add, Exp::var(x), Exp::num(helper_offset)),
+                    ),
+                ),
+                Def::new(unused, Ty::Num, Exp::num(unused_value)),
+            ])
+            .expect("three distinct definitions")
+        }
+
+        #[test]
+        fn a_cross_definition_call_resolves_by_id() {
+            let (main, _, _, _) = ids();
+            let doc = program(1, 7);
+            assert!(doc.is_well_typed());
+            let mut engine = IncrEngine::new();
+            let outcome = engine.eval_definition(&doc, main, FUEL);
+            assert_eq!(outcome.num(), Some(2), "{outcome:?}");
+        }
+
+        #[test]
+        fn editing_a_helper_re_evaluates_its_dependent_and_an_unused_edit_re_evaluates_nothing() {
+            let (main, _, _, _) = ids();
+            let mut engine = IncrEngine::new();
+
+            let first = engine.eval_definition(&program(1, 7), main, FUEL);
+            assert_eq!(first.num(), Some(2));
+            let after_cold = engine.node_evals;
+            assert!(after_cold > 0, "the cold run evaluated nothing");
+
+            let again = engine.eval_definition(&program(1, 7), main, FUEL);
+            assert_eq!(again.num(), Some(2));
+            assert_eq!(
+                engine.node_evals,
+                after_cold,
+                "re-running an unchanged document re-evaluated {} nodes",
+                engine.node_evals - after_cold
+            );
+
+            let edited_helper = engine.eval_definition(&program(2, 7), main, FUEL);
+            assert_eq!(edited_helper.num(), Some(3));
+            let after_helper_edit = engine.node_evals;
+            assert!(
+                after_helper_edit > after_cold,
+                "editing helper re-evaluated nothing: main did not see the change"
+            );
+
+            let edited_unused = engine.eval_definition(&program(2, 8), main, FUEL);
+            assert_eq!(edited_unused.num(), Some(3));
+            assert_eq!(
+                engine.node_evals,
+                after_helper_edit,
+                "editing an unused definition re-evaluated {} nodes",
+                engine.node_evals - after_helper_edit
+            );
+        }
+
+        #[test]
+        fn a_definition_digest_covers_what_that_definition_reaches_and_nothing_else() {
+            let (main, helper, unused, _) = ids();
+
+            let base = definition_digests(&program(1, 7));
+            let helper_edited = definition_digests(&program(2, 7));
+            let unused_edited = definition_digests(&program(1, 8));
+
+            assert_ne!(base[&main], helper_edited[&main]);
+            assert_ne!(base[&helper], helper_edited[&helper]);
+            assert_eq!(base[&unused], helper_edited[&unused]);
+
+            assert_eq!(base[&main], unused_edited[&main]);
+            assert_eq!(base[&helper], unused_edited[&helper]);
+            assert_ne!(base[&unused], unused_edited[&unused]);
+        }
+
+        #[test]
+        fn mutually_recursive_definitions_share_one_digest_and_still_terminate() {
+            let (a, b, _, n) = ids();
+            let ty = Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Bool));
+            let body = |other: Id, at_zero: bool| {
+                Exp::lam(
+                    n,
+                    Ty::Num,
+                    Exp::if_(
+                        Exp::bin_op(Op::Lt, Exp::var(n), Exp::num(1)),
+                        Exp::bool_(at_zero),
+                        Exp::ap(
+                            Exp::var(other),
+                            Exp::bin_op(Op::Sub, Exp::var(n), Exp::num(1)),
+                        ),
+                    ),
+                )
+            };
+            let doc = Doc::new(vec![
+                Def::new(a, ty.clone(), body(b, true)),
+                Def::new(b, ty, body(a, false)),
+            ])
+            .expect("two definitions");
+            assert!(doc.is_well_typed());
+
+            let digests = definition_digests(&doc);
+            assert_eq!(
+                digests[&a], digests[&b],
+                "two definitions in one cycle reach the same set, so they share a digest"
+            );
+
+            let caller = Id::from_u128(0xca11);
+            let mut defs = doc.defs().to_vec();
+            defs.push(Def::new(
+                caller,
+                Ty::Hole,
+                Exp::ap(Exp::var(a), Exp::num(6)),
+            ));
+            let doc = Doc::new(defs).expect("the caller id is fresh");
+
+            let mut engine = IncrEngine::new();
+            let outcome = engine.eval_definition(&doc, caller, FUEL);
+            assert_eq!(outcome.bool(), Some(true), "{outcome:?}");
+        }
+
+        #[test]
+        fn a_self_referencing_definition_evaluates_without_the_combinator() {
+            let (fact, _, _, n) = ids();
+            let doc = Doc::new(vec![Def::new(
+                fact,
+                Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Num)),
+                Exp::lam(
+                    n,
+                    Ty::Num,
+                    Exp::if_(
+                        Exp::bin_op(Op::Lt, Exp::var(n), Exp::num(1)),
+                        Exp::num(1),
+                        Exp::bin_op(
+                            Op::Mul,
+                            Exp::var(n),
+                            Exp::ap(
+                                Exp::var(fact),
+                                Exp::bin_op(Op::Sub, Exp::var(n), Exp::num(1)),
+                            ),
+                        ),
+                    ),
+                ),
+            )])
+            .expect("one definition");
+
+            let caller = Id::from_u128(0xca11);
+            let mut defs = doc.defs().to_vec();
+            defs.push(Def::new(
+                caller,
+                Ty::Num,
+                Exp::ap(Exp::var(fact), Exp::num(5)),
+            ));
+            let doc = Doc::new(defs).expect("the caller id is fresh");
+
+            let mut engine = IncrEngine::new();
+            let outcome = engine.eval_definition(&doc, caller, FUEL);
+            assert_eq!(outcome.num(), Some(120), "{outcome:?}");
         }
     }
 }

@@ -1,13 +1,14 @@
 use std::path::Path;
 
-use nothing_eval::{Outcome, eval, render};
+use nothing_core::doc::MAIN_NAME;
+use nothing_eval::{Outcome, eval_doc, render};
 
 use crate::fileio::read_document;
 
 pub const HELP: &str = "\
 nothing run <file>
 
-Evaluate the program in <file> and print the outcome:
+Evaluate the definition named `main` in <file> and print the outcome:
   - a value, if evaluation finished
   - an indeterminate result and the holes it is blocked on
   - a partial result, if evaluation ran out of fuel
@@ -27,7 +28,17 @@ pub fn run(path: &Path) -> i32 {
         }
     };
 
-    match eval(&doc.exp) {
+    let Some(main) = doc.main_id() else {
+        eprintln!("error: this document has no definition named `{MAIN_NAME}`");
+        eprintln!("it defines:");
+        for def in doc.doc.defs() {
+            eprintln!("  {} : {}", doc.names.display(def.id), def.ann);
+        }
+        eprintln!("rename one of them to `{MAIN_NAME}` to say where to start");
+        return 1;
+    };
+
+    match eval_doc(&doc.doc, main) {
         Outcome::Value(value) => {
             println!("{}", render(&value, &doc.names));
             0

@@ -228,7 +228,7 @@ fn the_shell_opens_on_factorial_and_quits() {
     let state = AppState::factorial();
     let screen = render_to_string(&state, 80, 10);
     assert!(
-        screen.contains("»λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈«"),
+        screen.contains("»λx0:Num. if x0 == 0 then 1 else x0 * main (x0 - 1)«"),
         "{screen}"
     );
 

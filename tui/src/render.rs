@@ -53,6 +53,61 @@ fn slot_marked(state: &AppState) -> Option<String> {
     ))
 }
 
+pub const DEF_PANE_WIDTH: u16 = 22;
+
+pub fn definition_lines(state: &AppState) -> Vec<String> {
+    let names = state.names();
+    let current = state.definition_id();
+    state
+        .definitions()
+        .into_iter()
+        .map(|id| {
+            let marker = if id == current { ">" } else { " " };
+            let ann = state
+                .edit
+                .doc()
+                .get(id)
+                .map(|def| def.ann.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            format!("{marker} {} : {ann}", names.display(id))
+        })
+        .collect()
+}
+
+pub fn definition_title(state: &AppState) -> String {
+    format!(
+        " defs {}/{} ",
+        state.definition_index() + 1,
+        state.definition_count()
+    )
+}
+
+fn definition_spans(state: &AppState, width: usize) -> Vec<Line<'static>> {
+    let current = state.definition_index();
+    definition_lines(state)
+        .into_iter()
+        .enumerate()
+        .map(|(i, text)| {
+            let mut text = text;
+            if text.chars().count() > width && width > 1 {
+                text = text.chars().take(width - 1).collect::<String>();
+                text.push('…');
+            }
+            let style = if i == current {
+                match state.slot {
+                    Slot::DefName | Slot::DefAnn => {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    }
+                    _ => Style::default().add_modifier(Modifier::BOLD),
+                }
+            } else {
+                Style::default().add_modifier(Modifier::DIM)
+            };
+            Line::from(Span::styled(text, style))
+        })
+        .collect()
+}
+
 fn columns(text: &str) -> usize {
     Span::raw(text).width()
 }
@@ -245,7 +300,7 @@ fn entry_line(state: &AppState) -> Option<String> {
 
 pub fn key_line() -> &'static str {
     "↑↓←→ move · Tab hole · 0-9 a-z literal · +-*<= op · space \\?;,[]! form · :. slot · \
-     Enter fit · C-z undo · C-q quit"
+     Enter fit · C-↑↓ defs · C-n/d add/drop · C-l/t name/type · C-z undo · C-q quit"
 }
 
 fn focus_label(exp: &Exp) -> &'static str {
@@ -270,9 +325,31 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Constraint::Min(3),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(2),
+        Constraint::Length(3),
     ])
     .areas(frame.area());
+
+    let show_defs = program_area.width > DEF_PANE_WIDTH * 2 && state.definition_count() > 1;
+    let (defs_area, program_area) = if show_defs {
+        let [defs, rest] =
+            Layout::horizontal([Constraint::Length(DEF_PANE_WIDTH), Constraint::Min(10)])
+                .areas(program_area);
+        (Some(defs), rest)
+    } else {
+        (None, program_area)
+    };
+
+    if let Some(area) = defs_area {
+        let inner = Block::bordered()
+            .padding(Padding::horizontal(1))
+            .inner(area);
+        let pane = Paragraph::new(definition_spans(state, inner.width as usize)).block(
+            Block::bordered()
+                .title(definition_title(state))
+                .padding(Padding::horizontal(1)),
+        );
+        frame.render_widget(pane, area);
+    }
 
     let inner = Block::bordered()
         .padding(Padding::horizontal(1))
@@ -284,7 +361,20 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     let visible = focus_spans(&lines)[offset..end].to_vec();
 
     let kind = crate::projection::active_kind(state);
-    let mut title = program_title(offset, end - offset, lines.len());
+    let mut title = if defs_area.is_some() || state.definition_count() > 1 {
+        format!(" {} : {} ", state.definition_name(), state.definition_ann())
+    } else {
+        program_title(offset, end - offset, lines.len())
+    };
+    if lines.len() > end - offset {
+        title = format!(
+            "{}· lines {}-{} of {} ",
+            title,
+            offset + 1,
+            end,
+            lines.len()
+        );
+    }
     if kind != crate::projection::ProjectionKind::Text {
         title = format!("{} · {} ", title.trim_end(), kind.label());
     }
@@ -549,7 +639,7 @@ mod tests {
     fn the_factorial_example_is_on_screen() {
         let screen = render_to_string(&AppState::factorial(), 60, 8);
         assert!(
-            screen.contains("»λx0:Num. if x0 == 0 then 1 else x0 * ⦇⦈«"),
+            screen.contains("»λx0:Num. if x0 == 0 then 1 else x0 * main (x0 - 1)«"),
             "{screen}"
         );
         assert!(screen.contains("C-q quit"), "{screen}");
@@ -559,7 +649,7 @@ mod tests {
     fn long_programs_wrap_rather_than_vanish() {
         let screen = render_to_string(&AppState::factorial(), 24, 10);
         assert!(screen.contains("»λx0:Num. if x0"), "{screen}");
-        assert!(screen.contains("⦇⦈«"), "{screen}");
+        assert!(screen.contains("main (x0 - 1)«"), "{screen}");
     }
 
     #[test]

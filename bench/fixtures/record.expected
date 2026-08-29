@@ -1,1 +1,2 @@
-let x0 = (λx1:Num. λx2:Num. (x1, x2)) in λx3:Num * Num. fst x3
+main : Num * Num -> Num = λx0:Num * Num. fst x0
+mk : Num -> Num -> Num * Num = λx1:Num. λx2:Num. (x1, x2)

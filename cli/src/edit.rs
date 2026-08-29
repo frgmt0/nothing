@@ -18,7 +18,11 @@ Options:
 
 pub fn load(path: &Path) -> Result<(AppState, ActionLog), String> {
     match read_document(path) {
-        Ok(doc) => Ok((AppState::with_names(doc.exp, doc.names), doc.log)),
+        Ok(doc) => {
+            let edit = nothing_action::act::EditState::with_doc(&doc.doc, doc.names, 0)
+                .expect("a decoded document always has a first definition");
+            Ok((AppState::from_edit(edit), doc.log))
+        }
         Err(_) if !path.exists() => Ok((AppState::empty(), ActionLog::new())),
         Err(err) => Err(err),
     }
@@ -30,7 +34,7 @@ pub fn save(path: &Path, final_state: &AppState, base_log: ActionLog) -> Result<
     for action in final_state.actions() {
         log.append(action.clone(), now_millis(), author);
     }
-    let doc = Document::new(final_state.program(), final_state.names().clone(), log);
+    let doc = Document::from_doc(final_state.edit.doc(), final_state.names().clone(), log);
     write_document(path, &doc)
 }
 

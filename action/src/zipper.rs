@@ -238,7 +238,11 @@ impl Zipper {
     }
 
     pub fn ctx(&self) -> Ctx {
-        let mut ctx = Ctx::empty();
+        self.ctx_in(&Ctx::empty())
+    }
+
+    pub fn ctx_in(&self, base: &Ctx) -> Ctx {
+        let mut ctx = base.clone();
         for frame in &self.path {
             match frame {
                 Frame::LamBody(id, ty) => ctx = ctx.extend(*id, ty.clone()),

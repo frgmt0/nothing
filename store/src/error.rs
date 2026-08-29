@@ -14,6 +14,8 @@ pub enum DecodeError {
     BadRootIndex,
     HashMismatch,
     TrailingBytes,
+    EmptyDocument,
+    DuplicateDefinition,
 }
 
 impl std::fmt::Display for DecodeError {

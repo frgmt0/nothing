@@ -3,9 +3,12 @@ use std::process::{Command, Stdio};
 
 use nothing_action::log::ActionLog;
 use nothing_agentapi::json::parse;
+use nothing_core::doc::{Def, Doc};
 use nothing_core::examples;
-use nothing_core::exp::Exp;
-use nothing_merge::{Version, merge};
+use nothing_core::exp::{Exp, Id};
+use nothing_core::names::NameTable;
+use nothing_core::ty::Ty;
+use nothing_merge::{DocVersion, merge_documents};
 use nothing_store::{Document, encode_document};
 
 fn bin() -> &'static str {
@@ -23,6 +26,28 @@ fn write_fixture(name: &str, exp: Exp) -> std::path::PathBuf {
     let doc = Document::new(exp, examples::names(), ActionLog::new());
     std::fs::write(&path, encode_document(&doc)).unwrap();
     path
+}
+
+fn write_document(name: &str, defs: Vec<Def>, names: NameTable) -> std::path::PathBuf {
+    let path = scratch_dir().join(name);
+    let doc = Document::from_doc(
+        Doc::new(defs).expect("distinct ids"),
+        names,
+        ActionLog::new(),
+    );
+    std::fs::write(&path, encode_document(&doc)).unwrap();
+    path
+}
+
+fn factorial_definitions() -> (Vec<Def>, NameTable) {
+    use nothing_eval::definitions::{FactorialIds, recursive_factorial};
+    let ids = FactorialIds::fresh();
+    let mut names = NameTable::new();
+    names.set(ids.fact, "factorial");
+    names.set(ids.n, "n");
+    let mut fact = recursive_factorial(ids);
+    fact.id = ids.fact;
+    (vec![fact], names)
 }
 
 fn run(args: &[&str]) -> (i32, String, String) {
@@ -111,16 +136,52 @@ fn run_reports_an_indeterminate_result_and_its_hole() {
 }
 
 #[test]
+fn run_evaluates_the_definition_named_main_across_definitions() {
+    let (mut defs, mut names) = factorial_definitions();
+    let fact = defs[0].id;
+    let main = Id::fresh();
+    names.set(main, "main");
+    defs.push(Def::new(
+        main,
+        Ty::Num,
+        Exp::ap(Exp::var(fact), Exp::num(5)),
+    ));
+    let path = write_document("run-main-across-definitions.nothing", defs, names);
+
+    let (code, stdout, _) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+    assert_eq!(
+        stdout.trim(),
+        "120",
+        "a self-referencing definition, no combinator"
+    );
+}
+
+#[test]
+fn run_lists_the_definitions_when_there_is_no_main() {
+    let (defs, names) = factorial_definitions();
+    let path = write_document("run-without-main.nothing", defs, names);
+
+    let (code, stdout, stderr) = run(&["run", path.to_str().unwrap()]);
+    assert_eq!(code, 1, "stdout: {stdout} stderr: {stderr}");
+    let said = format!("{stdout}{stderr}");
+    assert!(said.contains("no definition named `main`"), "{said}");
+    assert!(said.contains("factorial"), "{said}");
+    assert!(said.contains("Num -> Num"), "{said}");
+}
+
+#[test]
 fn merge_writes_a_clean_result_and_matches_the_library() {
     let base_exp = Exp::pair(Exp::num(1), Exp::num(2));
     let ours_exp = Exp::pair(Exp::num(9), Exp::num(2));
     let theirs_exp = Exp::pair(Exp::num(1), Exp::num(8));
 
-    let names = examples::names();
-    let expected = merge(
-        &Version::new(base_exp.clone(), names.clone()),
-        &Version::new(ours_exp.clone(), names.clone()),
-        &Version::new(theirs_exp.clone(), names.clone()),
+    let mut names = examples::names();
+    names.set(nothing_core::doc::MAIN_ID, nothing_core::doc::MAIN_NAME);
+    let expected = merge_documents(
+        &DocVersion::single(base_exp.clone(), names.clone()),
+        &DocVersion::single(ours_exp.clone(), names.clone()),
+        &DocVersion::single(theirs_exp.clone(), names.clone()),
     );
     assert!(expected.is_clean(), "fixture is expected to merge cleanly");
 

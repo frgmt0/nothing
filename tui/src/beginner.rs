@@ -262,7 +262,7 @@ mod tests {
         let state = AppState::factorial();
         assert_eq!(
             phrase(&state.program(), state.names()),
-            "a function taking x0 (a number) and returning if whether x0 equals 0 then 1 otherwise the product of x0 and (blank)"
+            "a function taking x0 (a number) and returning if whether x0 equals 0 then 1 otherwise the product of x0 and main applied to the difference between x0 and 1"
         );
     }
 

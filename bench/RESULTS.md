@@ -283,3 +283,124 @@ To be explicit, because the instruction that prompted this run said otherwise:
 them.** Every ratio in the 2026-08-27 pre-fix table was already between 0.16×
 and 0.51×; nothing in this project's recorded measurements has ever exceeded
 1×, let alone 3×.
+
+---
+
+## 2026-08-28 — Phase B1, definition-era re-run
+
+Reproduce with:
+
+```
+cargo run -p nothing-bench -- keytable
+cargo run -p nothing-bench -- table
+cargo test -p nothing-tui --test references -- --nocapture
+```
+
+The re-run required by Phase B1's fourth checkbox. Programs are no longer a
+single expression: a program is now a *document* of named, annotated
+top-level definitions, and a definition's body may call any definition in
+the document by id — including itself. Two of the five reference fixtures
+were rebuilt to say what they always meant, and three were left alone.
+
+- **factorial** is now the real reference program. The 2026-08-26 and
+  2026-08-27 entries both carried the caveat that "factorial's recursive
+  call is an empty hole" because Phase 1 had no recursion. It is no longer a
+  hole: `main : Num -> Num = λx0:Num. if x0 == 0 then 1 else x0 * main (x0 - 1)`,
+  where `main` is the definition being written, resolved by id. No
+  Z-combinator, no approximation.
+- **record** is now two definitions, `main` and `mk`, instead of one
+  expression smuggling the constructor through a `let`.
+- **list_map**, **state_machine** and **nested_conditional** are unchanged
+  programs; they gained the document header (`main : ? = …`) and nothing
+  else, because a second definition would have been decoration.
+
+| # | Program | Neovim keystrokes | `nothing` keystrokes | `nothing` actions | Ratio | vs. 2026-08-27 | Guard |
+|---|---------|------------------:|----------------------:|-------------------:|------:|:--------------:|:-----:|
+| 1 | factorial | 84 | 28 | 33 | 0.33x | 0.19x → 0.33x | OK |
+| 2 | list_map * | 114 | 29 | 35 | 0.25x | unchanged | OK |
+| 3 | record | 65 | 46 | 40 | 0.71x | 0.51x → 0.71x | OK |
+| 4 | state_machine * | 151 | 24 | 33 | 0.16x | unchanged | OK |
+| 5 | nested_conditional | 146 | 31 | 42 | 0.21x | unchanged | OK |
+
+`*` — the approximation caveat now applies to **two** fixtures, not four.
+`list_map` is still map-over-a-pair (no lists) and `state_machine` is still
+a chain of `if`s (no `match`). `factorial`, `record` and
+`nested_conditional` are like-for-like comparisons against the reference
+pseudocode; `factorial` and `record` only became like-for-like in this run.
+
+### Two ratios went up, and that is the entry's whole point
+
+**These are worse numbers for a better editor, and the increase is the
+honest price of the approximations the earlier entries flagged.**
+
+`factorial` went 16 → 28 keystrokes. Twelve of those keystrokes buy the
+recursive call `main (x0 - 1)` that the previous fixture left as `⦇⦈` while
+still charging Neovim all 84 keystrokes for typing the whole function. The
+old 0.19× was measuring a program with a hole in it against a program
+without one. 0.33× is the first factorial ratio in this file that compares
+two complete programs.
+
+`record` went 33 → 46 keystrokes. The extra thirteen are a second
+definition's name, its `Num -> Num -> Num * Num` annotation and the
+navigation between them. The old fixture bound the constructor with `let`,
+which is one keystroke of syntax and no annotation; the new one gives it a
+name and a type at the top level, which is what "a two-field record
+constructor plus accessor" actually is. Note the *action* count moved the
+other way, 30 → 25 (see the table below): the definition is fewer tree
+operations and more keystrokes, because typing a type is many keys and one
+action.
+
+The three unchanged fixtures are the control: their keystroke counts,
+action counts and ratios are byte-identical to 2026-08-27, so nothing in
+the definition work taxed the existing grammar. The new bindings (`C-n`,
+`C-d`, `C-l`, `C-t`, `C-↑`, `C-↓`) cost zero keystrokes in a program that
+does not use them.
+
+### Action counts, for comparison with the pre-keybinding table
+
+```
+cargo run -p nothing-bench -- table
+```
+
+| # | Program | Neovim | actions | Ratio | 2026-08-26 actions |
+|---|---------|-------:|--------:|------:|-------------------:|
+| 1 | factorial | 84 | 23 | 0.27x | 16 |
+| 2 | list_map * | 114 | 22 | 0.19x | 22 |
+| 3 | record | 65 | 25 | 0.38x | 30 |
+| 4 | state_machine * | 151 | 24 | 0.16x | 24 |
+| 5 | nested_conditional | 146 | 35 | 0.24x | 35 |
+
+Composition of the rebuilt fixtures (`set-def-ann` and `rename` of a
+definition are counted as metadata, as `set-ann`/`set-binder-id` were):
+
+| Program | Total | Movement | Construction | Metadata |
+|---------|------:|---------:|-------------:|---------:|
+| factorial | 23 | 7 | 13 | 3 |
+| record | 25 | 7 | 8 | 9 (+1 `create-definition`) |
+
+`record`'s metadata column is now 9 of 25 actions — the two definition
+names and the two definition types. That is the definition era's standing
+cost and it is visible rather than hidden inside a `let`.
+
+### Guard status: PASS
+
+Worst case is `record` at **0.71×**, still under a quarter of the 3× guard
+from Phase 0; best is `state_machine` at 0.16×. Both tripwires
+(`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
+and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
+pass, so the guard is still asserted in code on every `cargo test
+--workspace` rather than by re-reading this file.
+
+The trend to watch is that the two ratios that moved both moved *up*, and
+both moved up because a fixture stopped approximating. If a later phase
+removes the remaining two approximations (lists for `list_map`, `match` for
+`state_machine`) those ratios should be expected to rise too. A ratio that
+only ever falls in this file would be evidence that the fixtures are
+getting easier, not that the editor is getting better.
+
+### What is still open, unchanged
+
+Still not an editing session: these fixtures type a known program once,
+correctly, with no exploration, no mistakes and no backtracking — the
+caveat carried forward from 2026-08-26 §3 and repeated in both 2026-08-27
+entries. Nothing in this run changes that.

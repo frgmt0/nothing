@@ -46,7 +46,7 @@ optional. The methods are:
 | `load` | `path` | read a `store` document and adopt it |
 | `log` | — | the action log up to the undo cursor |
 | `provenance` | — | per-node author and time, from the replayed log |
-| `annotate` | `agents` (array of author ids), `style` | an author-annotated render |
+| `annotate` | `agents` (array of author ids), `style` | an author-annotated render (`annotated`, one definition; `annotated_document`, all of them) |
 | `help` | — | the protocol version, the method list, the step grammar |
 | `quit` | — | answer, then exit |
 
@@ -61,7 +61,17 @@ this is the same text that `bench/fixtures/*.actions` is written in:
 {"method": "apply", "params": {"step": "construct-num 42"}}
 {"method": "apply", "params": {"step": "construct-var xs"}}
 {"method": "apply", "params": {"step": "set-ann Num -> Bool"}}
+{"method": "apply", "params": {"step": "create-definition"}}
+{"method": "apply", "params": {"step": "rename-def helper"}}
+{"method": "apply", "params": {"step": "set-def-ann Num -> Num"}}
+{"method": "apply", "params": {"step": "move-to-def helper"}}
 ```
+
+The definition steps are `create-definition`, `delete-definition`,
+`rename-def NAME`, `set-def-ann TY`, `move-next-def`, `move-prev-def` and
+`move-to-def NAME`. `construct-var NAME` resolves against the definitions of
+the document as well as the binders in scope, which is how one definition
+calls another and how a definition calls itself.
 
 **Structured**, for clients that would rather not build strings, and for the one
 case the textual grammar cannot express — referring to a binder that is shadowed
@@ -99,8 +109,17 @@ program looks like now.
 
 ```json
 {
-  "render": "λn:Num. if n == 0 then 1 else n * ⦇⦈",
-  "render_with_cursor": "λn:Num. if n == 0 then 1 else n * »⦇⦈«",
+  "render": "λn:Num. if n == 0 then 1 else n * main (n - 1)",
+  "render_with_cursor": "λn:Num. if n == 0 then 1 else n * main (n - »1«)",
+  "render_document": "main : Num -> Num = λn:Num. if n == 0 then 1 else n * main (n - 1)",
+  "definitions": [
+    {"id": "…", "name": "main", "ann": {…}, "ann_text": "Num -> Num", "current": true}
+  ],
+  "definition": "…",
+  "definition_name": "main",
+  "definition_index": 0,
+  "definition_count": 1,
+  "definition_ann": {"ty": "Arrow", …},
   "cursor_path": [0, 2, 1],
   "focus_kind": "EmptyHole",
   "expected_ty": {"ty": "Num"},
@@ -122,6 +141,17 @@ program looks like now.
 same coordinate system `merge`'s `Path` uses. `complete` is true when the program
 contains neither kind of hole. `well_typed` is reported rather than assumed; it
 has never been observed false, because the calculus does not permit it.
+
+Since the document era (Phase B1) a program is an ordered list of named
+top-level definitions. `render`, `render_with_cursor`, `exp` and `cursor_path`
+all describe **the definition the cursor is in**; `render_document` and
+`definitions` describe the whole document. `well_typed` is the *document's*
+well-typedness, which is the only meaningful one — a body that calls another
+definition by id is not well typed in isolation. `definition` is the id of the
+definition the cursor is in, `definition_index` its position in
+`definitions`, and `definition_ann` its type annotation. There is always at
+least one definition; a document loaded from a version 1 file has exactly one,
+named `main`.
 
 ---
 
@@ -147,14 +177,20 @@ next edit, and nothing it would have to guess:
      "action": {"action":"ConstructNum","value":0},
      "produces": "λn:Num. n * »0«", "cursor_after": [0, 1]}
   ],
-  "movements": ["move-parent", "move-prev-sibling"],
-  "other_actions": ["delete"]
+  "movements": ["move-parent", "move-prev-sibling", "move-next-def"],
+  "other_actions": ["delete", "create-definition", "set-def-ann Num", "rename-def <name>"],
+  "definition": "…",
+  "definition_name": "main",
+  "definition_ann": {"ty": "Num"}
 }
 ```
 
-**Bindings** are the binders in scope at the cursor, outermost first, each with
-its type from the typing context, its *display name* from the name table, and
-whether that type is consistent with the expected type. `shadowed` marks a
+**Bindings** are the definitions of the document followed by the binders in
+scope at the cursor, outermost first, each with its type from the typing
+context, its *display name* from the name table, and whether that type is
+consistent with the expected type. A binding with `"definition": true` is a
+top-level definition rather than a path binder — including the definition the
+cursor is in, which is how a recursive call is written. `shadowed` marks a
 binding whose display name is taken by a nearer binding — it is still reachable
 through the structured `ConstructVar` form, and its `step` is `null`, because
 the textual `construct-var NAME` would resolve to the other one.
@@ -184,7 +220,8 @@ Consequences worth stating, all of them covered by tests in
 - a property test over random well-typed programs and random cursors applies
   every offered construction and asserts no non-empty hole appeared.
 
-Movements and the remaining actions (`delete`, `finish`, `set-ann`, `rename`)
+Movements and the remaining actions (`delete`, `finish`, `set-ann`, `rename`,
+`create-definition`, `delete-definition`, `set-def-ann`, `rename-def`)
 are listed separately because they are not constructions: they do not fill the
 hole, so the well-typedness question above does not apply to them. Only the ones
 that actually apply at this cursor are listed.
@@ -196,8 +233,8 @@ that actually apply at this cursor are listed.
 Every log entry carries an author and a timestamp (Phase 2). The protocol turns
 the log into a **per-node** projection.
 
-`{"method": "provenance"}` answers with one record per node of the current
-program:
+`{"method": "provenance"}` answers with one record per node of the definition
+the cursor is in:
 
 ```json
 [{"path": [0, 1], "author": 2, "timestamp": 1756392012345, "entry": 11}]
@@ -226,8 +263,18 @@ program:
 `Rename` creates no node, so it changes no node's provenance; it is recorded
 against the binder's `Id` instead.
 
+Provenance is kept **per definition**: the rule above is applied to every
+definition's body after every entry, so an edit inside one definition cannot
+reattribute another, and a definition created by an author is that author's
+from its first empty hole onwards. Deleting a definition rewrites references to
+it into empty holes, and those holes are attributed to whoever deleted it,
+which is correct — they were not there before.
+
 `{"method": "annotate", "params": {"agents": [2], "style": "brackets"}}` renders
-the program with the spans written by those authors visually distinguished. A
+the program with the spans written by those authors visually distinguished. The
+reply carries `annotated` (the definition the cursor is in) and
+`annotated_document` (every definition, one per line, headed by its name and
+type). A
 marker opens wherever the class changes, so the spans are maximal and a
 human-authored node sitting inside a model-authored one is marked back out:
 

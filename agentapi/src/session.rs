@@ -163,7 +163,7 @@ impl AgentSession {
         for entry in self.log.entries().iter().take(self.cursor) {
             log.append(entry.action.clone(), entry.timestamp, entry.author);
         }
-        Document::new(self.exp(), self.names().flatten(), log)
+        Document::from_doc(self.state.doc(), self.names().flatten(), log)
     }
 
     pub fn save(&self, path: &str) -> Result<usize, String> {
@@ -181,11 +181,12 @@ impl AgentSession {
 
     pub fn adopt(&mut self, doc: Document) {
         let replayed = replay_log(&doc.log);
-        if replayed.exp() == doc.exp {
+        if replayed.doc() == doc.doc {
             self.base = EditState::empty();
             self.log = doc.log;
         } else {
-            self.base = EditState::with_names(doc.exp, doc.names);
+            self.base = EditState::with_doc(&doc.doc, doc.names, 0)
+                .expect("a decoded document always has a first definition");
             self.log = doc.log;
         }
         self.cursor = self.log.len();

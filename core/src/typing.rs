@@ -133,6 +133,10 @@ pub fn is_well_typed(exp: &Exp) -> bool {
     syn(&Ctx::empty(), exp).is_some()
 }
 
+pub fn is_well_typed_in(ctx: &Ctx, exp: &Exp) -> bool {
+    syn(ctx, exp).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
