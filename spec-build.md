@@ -105,7 +105,7 @@ Written in `nothing`, stored in the binary format, shipped inside the binary. Th
 
 - [ ] **The stranger test.** One person who has never seen the project, a fresh machine, the README, no help. Target: installed, tutorial done, one example modified and re-run, inside 30 minutes. Watch silently; log every stumble as a friction entry. **Done when** the run succeeds inside the timebox, or the stumbles are fixed and a second stranger succeeds.
 - [ ] **Cut v0.1.0.** CHANGELOG finalised, tag pushed, binaries published, format version frozen with the migration guarantee stated. **Done when** `nothing --version` on a downloaded binary prints 0.1.0.
-- [ ] **Write the v0.1.0 postscript into ESSAY.md or its sequel.** What the full-thread rule actually cost per feature (the B2 numbers from DECISIONS.md), whether the "features get cheap after the calculus" bet paid, and the post-B5 agent benchmark verdict. **Done when** it is written with the same honesty standard as bench/AGENT.md.
+- [x] **Write the v0.1.0 postscript into ESSAY.md or its sequel.** What the full-thread rule actually cost per feature (the B2 numbers from DECISIONS.md), whether the "features get cheap after the calculus" bet paid, and the post-B5 agent benchmark verdict. **Done when** it is written with the same honesty standard as bench/AGENT.md.
 
 ---
 
