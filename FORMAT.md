@@ -6,15 +6,19 @@ the other way around. A hand-rolled binary codec, not JSON — see
 `DECISIONS.md`, 2026-08-28, on why `nothing` is the name that appears in the
 magic bytes below.
 
-A "document" is the three things a saved program needs: the **definitions**,
-the name table, and the action log that produced it.
+A "document" is the four things a saved program needs: the **definitions**,
+the name table, the doc table, and the action log that produced it.
 
-**Format version 7** (this revision) adds effects: four node tags (`Print`,
-`Readline`, `CmdPure`, `CmdBind`), one `Ty` tag (`Cmd`), and four action
-tags, and nothing else — the layout of §3.1 is unchanged from version 2.
-Versions 1, 2, 3, 4, 5 and 6 still open — see §11, which is normative: a
-migrating reader for every previous version ships with every format change
-from here on.
+**Format version 8** (this revision) adds documentation: a **doc table**
+(§7.1) between the name table and the action log, and one action tag
+(`SetDoc`). It is the first version since 2 to change the *shape* of the
+body, which is why it is a major bump rather than a tag addition. Versions
+1 through 7 still open — see §11, which is normative: a migrating reader
+for every previous version ships with every format change from here on.
+
+**Format version 7** added effects: four node tags (`Print`, `Readline`,
+`CmdPure`, `CmdBind`), one `Ty` tag (`Cmd`), and four action tags, and
+nothing else — the layout of §3.1 was unchanged from version 2.
 
 **Format version 6** added variants: two node tags (`Inj`, `Match`), one
 `Ty` tag (`Variant`), and six action tags.
@@ -115,7 +119,7 @@ raw bytes.
 ```
 offset  size  field
 0       4     magic:   4E 54 48 47   ("NTHG", ASCII)
-4       1     version_major:  0x07
+4       1     version_major:  0x08
 5       1     version_minor:  0x00
 6       1     kind:    0x01 (Document — the only kind this version defines)
 ```
@@ -130,11 +134,12 @@ node-table-only export); this version of the format only ever writes
 `0x01`.
 
 Everything after the 7-byte header is, in order: the **definition list**
-(§3.1), the **name table**, the **action log**. A `version_major` of `0x01`
-selects the version-1 layout instead (**node table**, **root index**, name
-table, action log) and is decoded through the migrating reader in §11; a
-`version_major` of `0x02` or `0x03` selects a layout identical to this one
-minus the tags added after it, and is read by the same body decoder.
+(§3.1), the **name table** (§7), the **doc table** (§7.1), the **action
+log** (§8). A `version_major` of `0x01` selects the version-1 layout
+instead (**node table**, **root index**, name table, action log) and is
+decoded through the migrating reader in §11; a `version_major` of `0x02`
+through `0x07` selects the same layout as this one *without* the doc
+table, and is read by the same body decoder minus that section.
 
 ## 3.1 The definition list
 
@@ -433,6 +438,41 @@ the resulting table — but it makes two independent encodings of the same
 `NameTable` byte-identical regardless of the source `im::HashMap`'s
 internal iteration order, which is what the round-trip test in §9 needs.
 
+## 7.1 Doc table
+
+A definition may carry one line of documentation. Docs are **metadata, not
+AST**: a doc line is not a node, it has no type, it does not participate in
+content addressing (§6), and changing one cannot make a program ill-typed.
+It is stored exactly the way a display name is — a table keyed by the
+definition's `Id`, beside the tree rather than inside it — for exactly the
+same reason: it is a fact *about* a binder, not a part of the term it binds
+(see `DECISIONS.md`, 2026-08-29, "Doc lines are metadata beside the tree").
+
+`DocTable` (`core::docs`) is layered like `NameTable`, and is flattened the
+same way before writing, for the same reasons (§7). An id with an empty doc
+line has no entry: setting a doc line to the empty string removes it, so
+there is exactly one encoding of "undocumented".
+
+```
+doc_table:
+  entry_count: varint
+  entry_count × doc_entry
+
+doc_entry:
+  id:   16 bytes
+  line: string (§1)
+```
+
+Entries are written in ascending order of the `Id`'s raw `u128` value, for
+the byte-identical round-trip reason given in §7.
+
+A document written by a session that has the standard library in scope
+stores **only its own layer** (`DocTable::own`, `NameTable::own`): the
+prelude's names and doc lines belong to the prelude shipped in the binary,
+not to the file. A file that borrows `min` from the standard library
+contains a `Var` node with `min`'s id and nothing else about `min` — no
+name entry, no doc entry, no copy of its body.
+
 ## 8. Action log
 
 Each entry in `action::log::ActionLog` is a `(Action, timestamp: u64,
@@ -501,14 +541,22 @@ log_entry:
 | 45 | `ConstructReadline` | empty |
 | 46 | `ConstructPure` | empty |
 | 47 | `ConstructBind` | empty |
+| 48 | `SetDoc(id, string)` | 16 bytes + string (§1) |
 
-This table is exhaustive over the forty-eight `Action` variants as of
-format version 7. Tags 0–19 are unchanged from version 1, tags 0–25 from
+This table is exhaustive over the forty-nine `Action` variants as of
+format version 8. Tags 0–19 are unchanged from version 1, tags 0–25 from
 version 2, tags 0–26 from version 3, tags 0–29 from version 4, tags
-0–37 from version 5 and tags 0–43 from version 6, so an older log decodes
-under the current reader without translation. The same rule as §5 applies
-to a future forty-ninth variant: next tag, new row, hard decode error on an
-unrecognised tag rather than a silent skip.
+0–37 from version 5, tags 0–43 from version 6 and tags 0–47 from version
+7, so an older log decodes under the current reader without translation.
+The same rule as §5 applies to a future fiftieth variant: next tag, new
+row, hard decode error on an unrecognised tag rather than a silent skip.
+
+`SetDoc` carries the id it documents rather than documenting whatever the
+cursor is in, for the same reason `Rename` carries one: a doc line is
+metadata keyed by an `Id`, and the action that writes one says which. Like
+`Rename` it is total — it cannot fail, it cannot change a type, and it
+produces exactly one log entry. Setting an empty line is how a doc is
+cleared.
 
 `AddArm` and `RemoveArm` carry no payload for the reason `AddField` and
 `RemoveField` carry none: the identities they mint come from the
@@ -562,7 +610,10 @@ two encoded byte vectors are `==`. This is the whole reason §7 fixes the
 name table's entry order and §4 fixes the node table's post-order walk —
 without a canonical order, two semantically-identical documents could
 legally encode to different bytes, which would fail this test even though
-nothing was actually wrong.
+nothing was actually wrong. §7.1 fixes the doc table's entry order for the
+same reason, and the standard library is the largest document this holds
+for: `stdlib/std.n` is asserted to re-encode byte-identically from the
+replay of its own action log.
 
 ## 10. Debug JSON export
 
@@ -574,7 +625,7 @@ byte-for-byte here the way the binary format is; it is not a wire format,
 and Phase 7 only asks that it exist.
 
 
-## 11. Migration from versions 1, 2, 3, 4, 5 and 6
+## 11. Migration from versions 1, 2, 3, 4, 5, 6 and 7
 
 Format stability starts at version 1, so every earlier version's files
 open. The reader dispatches on `version_major` in the header (§3):
@@ -630,7 +681,17 @@ open. The reader dispatches on `version_major` in the header (§3):
   of them carry variant nodes, which are the thing version 6 could express
   and version 5 could not, asserted by
   `a_version_six_artifact_still_carries_the_variants_that_made_it_version_six`.
-- `0x07` → the current layout in §3.1.
+- `0x07` → the same version-2/§3.1 body layout, without the doc table
+  version 8 added. `store::v7::encode_document_v7` exists for the same
+  reason `encode_document_v6` does — the committed v7 fixtures under
+  `store/fixtures/v7/` were generated by the *unmodified* version-7 encoder
+  before the doc table was written, asserted rather than assumed by
+  `store/tests/migration.rs::no_version_seven_artifact_carries_a_doc_line`
+   — so the version-8 reader is exercised against bytes an older build
+  really produced. Several of them carry command nodes, which are the thing
+  version 7 could express and version 6 could not, asserted by
+  `a_version_seven_artifact_still_carries_the_commands_that_made_it_version_seven`.
+- `0x08` → the current layout: §3.1, name table, doc table, action log.
 - anything else → `DecodeError::UnsupportedVersion`.
 
 A version-1 file is a single expression. It becomes a document with
@@ -656,11 +717,19 @@ the same thing under the current version, and each new version only added
 tags the older one never wrote. The migration is the header bump, and it
 happens on save.
 
+Version 7 → 8 is the first migration since 1 → 2 that changes a shape
+rather than adding a tag, and it is still not a rewrite: a version-7 file
+has no doc table, and a document decoded from one gets an **empty** one.
+Undocumented is the honest reading of a file written before doc lines
+existed, and it is representable — the doc table's empty-string rule (§7.1)
+means "no entry" and "no doc" are the same state. Saving writes version 8
+with whatever doc lines the session has since set.
+
 Migration is read-only and lossless in the direction that matters: the
 name table and the action log carry across untouched (§8's tags 0–19 are
-version-stable across all seven versions, 20–25 across the last six, 26–29
-across the last four, 30–37 across the last three, 38–43 across the last
-two, and 44–47 are new in version 7),
+version-stable across all eight versions, 20–25 across the last seven,
+26–29 across the last five, 30–37 across the last four, 38–43 across the
+last three, 44–47 across the last two, and 48 is new in version 8),
 and the expression is byte-identical after re-encoding as the single
 definition's node table. There is no downgrading writer; saving a migrated
 file writes the current version, and the older bytes on disk are only

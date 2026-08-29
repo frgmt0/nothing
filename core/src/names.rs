@@ -100,6 +100,13 @@ impl NameTable {
         flat
     }
 
+    pub fn own(&self) -> NameTable {
+        NameTable {
+            layer: self.layer.clone(),
+            base: None,
+        }
+    }
+
     pub fn holds_name(&self, name: &str) -> bool {
         self.ids().into_iter().any(|id| self.get(id) == Some(name))
     }
@@ -220,6 +227,23 @@ mod tests {
         assert_eq!(mine.get_own(b), None, "b is not in the overlay's own layer");
         assert_eq!(mine.depth(), 2);
         assert_eq!(mine.base().and_then(|b| b.get(a)), Some("xs"));
+    }
+
+    #[test]
+    fn own_keeps_only_the_top_layer_so_a_document_never_saves_its_prelude() {
+        let (a, b, c) = ids();
+        let mut base = NameTable::new();
+        base.set(a, "xs");
+        base.set(b, "n");
+        let mut mine = NameTable::overlay(&base);
+        mine.set(c, "acc");
+
+        let own = mine.own();
+        assert_eq!(own.depth(), 1);
+        assert_eq!(own.len(), 1);
+        assert_eq!(own.get(c), Some("acc"));
+        assert_eq!(own.get(a), None);
+        assert_eq!(mine.flatten().len(), 3);
     }
 
     #[test]

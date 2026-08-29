@@ -5,6 +5,7 @@ members = [
     "action",
     "eval",
     "store",
+    "stdlib",
     "tui",
     "bench",
     "merge",

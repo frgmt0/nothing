@@ -28,6 +28,7 @@ pub struct Provenance {
     nodes: Nodes,
     per_def: HashMap<Id, Nodes>,
     names: HashMap<Id, NodeProvenance>,
+    docs: HashMap<Id, NodeProvenance>,
 }
 
 impl Provenance {
@@ -48,6 +49,7 @@ impl Provenance {
             nodes: self.per_def.get(&definition).cloned().unwrap_or_default(),
             per_def: self.per_def.clone(),
             names: self.names.clone(),
+            docs: self.docs.clone(),
         }
     }
 
@@ -59,6 +61,10 @@ impl Provenance {
 
     pub fn name_provenance(&self, id: Id) -> Option<NodeProvenance> {
         self.names.get(&id).copied()
+    }
+
+    pub fn doc_provenance(&self, id: Id) -> Option<NodeProvenance> {
+        self.docs.get(&id).copied()
     }
 
     pub fn paths(&self) -> Vec<Path> {
@@ -239,6 +245,7 @@ pub fn provenance_of(base: &EditState, entries: &[LogEntry]) -> Provenance {
         .map(|(id, body)| (id, untouched(&body)))
         .collect();
     let mut names: HashMap<Id, NodeProvenance> = HashMap::new();
+    let mut docs: HashMap<Id, NodeProvenance> = HashMap::new();
 
     for (index, entry) in entries.iter().enumerate() {
         let old: HashMap<Id, Exp> = bodies(&state).into_iter().collect();
@@ -252,6 +259,9 @@ pub fn provenance_of(base: &EditState, entries: &[LogEntry]) -> Provenance {
         };
         if let Action::Rename(id, _) = &entry.action {
             names.insert(*id, stamp);
+        }
+        if let Action::SetDoc(id, _) = &entry.action {
+            docs.insert(*id, stamp);
         }
 
         let mut next: HashMap<Id, Nodes> = HashMap::new();
@@ -270,6 +280,7 @@ pub fn provenance_of(base: &EditState, entries: &[LogEntry]) -> Provenance {
         nodes,
         per_def,
         names,
+        docs,
     }
 }
 

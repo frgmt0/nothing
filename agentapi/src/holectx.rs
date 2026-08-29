@@ -17,6 +17,8 @@ pub struct Binding {
     pub consistent_with_expected: bool,
     pub shadowed: bool,
     pub definition: bool,
+    pub stdlib: bool,
+    pub doc: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -64,6 +66,7 @@ pub fn in_scope(state: &EditState) -> Vec<Binding> {
         .iter()
         .filter(|id| !binders.contains(id))
         .map(|id| (*id, true))
+        .chain(state.prelude_ids().into_iter().map(|id| (id, true)))
         .chain(binders.iter().map(|id| (*id, false)))
         .collect();
     let mut out: Vec<Binding> = Vec::new();
@@ -77,6 +80,8 @@ pub fn in_scope(state: &EditState) -> Vec<Binding> {
             ty,
             shadowed: false,
             definition: *definition,
+            stdlib: state.prelude().contains(*id),
+            doc: state.doc_line(*id).map(str::to_string),
         });
     }
     for i in 0..out.len() {
@@ -97,6 +102,7 @@ fn resolves_to(state: &EditState, name: &str, id: Id) -> bool {
             state
                 .definition_ids()
                 .into_iter()
+                .chain(state.prelude_ids())
                 .find(|other| state.names.get(*other) == Some(name))
         });
     found == Some(id)
@@ -300,6 +306,14 @@ impl Binding {
             ),
             ("shadowed", Json::Bool(self.shadowed)),
             ("definition", Json::Bool(self.definition)),
+            ("stdlib", Json::Bool(self.stdlib)),
+            (
+                "doc",
+                match &self.doc {
+                    Some(line) => Json::str(line.clone()),
+                    None => Json::Null,
+                },
+            ),
         ])
     }
 }

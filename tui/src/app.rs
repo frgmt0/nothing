@@ -107,10 +107,15 @@ impl AppState {
             .edit
             .definition_ids()
             .into_iter()
+            .chain(self.edit.prelude_ids())
             .filter(|id| !binders.contains(id))
             .collect();
         out.extend(binders);
         out
+    }
+
+    pub fn doc_line(&self, id: Id) -> Option<&str> {
+        self.edit.doc_line(id)
     }
 
     pub fn definitions(&self) -> Vec<Id> {
@@ -594,27 +599,11 @@ fn children(exp: &Exp) -> Vec<&Exp> {
     }
 }
 
-pub fn index_path(z: &Zipper) -> Vec<usize> {
-    z.path.iter().map(Frame::child_index).collect()
-}
+pub use nothing_action::zipper::{index_path, moves_between};
 
 fn position_index(positions: &[Zipper], z: &Zipper) -> Option<usize> {
     let target = index_path(z);
     positions.iter().position(|p| index_path(p) == target)
-}
-
-pub fn moves_between(from: &Zipper, to: &Zipper) -> Vec<Action> {
-    let from_path = index_path(from);
-    let to_path = index_path(to);
-    let common = from_path
-        .iter()
-        .zip(to_path.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-
-    let mut actions = vec![Action::MoveParent; from_path.len() - common];
-    actions.extend(to_path[common..].iter().map(|&i| Action::MoveChild(i)));
-    actions
 }
 
 #[cfg(test)]

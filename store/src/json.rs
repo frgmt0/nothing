@@ -223,6 +223,22 @@ fn names_json(names: &NameTable) -> String {
     format!("[{}]", items.join(","))
 }
 
+fn docs_json(docs: &nothing_core::docs::DocTable) -> String {
+    let mut entries = docs.flatten().entries();
+    entries.sort_by_key(|(id, _)| id.as_u128());
+    let items: Vec<String> = entries
+        .iter()
+        .map(|(id, line)| {
+            format!(
+                "{{\"id\":{},\"doc\":{}}}",
+                escape(&id.to_string()),
+                escape(line)
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 fn action_json(action: &Action) -> String {
     match action {
         Action::MoveChild(n) => format!("{{\"action\":\"MoveChild\",\"n\":{n}}}"),
@@ -269,6 +285,11 @@ fn action_json(action: &Action) -> String {
             "{{\"action\":\"Rename\",\"id\":{},\"name\":{}}}",
             escape(&id.to_string()),
             escape(name)
+        ),
+        Action::SetDoc(id, line) => format!(
+            "{{\"action\":\"SetDoc\",\"id\":{},\"doc\":{}}}",
+            escape(&id.to_string()),
+            escape(line)
         ),
         Action::Finish => "{\"action\":\"Finish\"}".to_string(),
         Action::CreateDefinition => "{\"action\":\"CreateDefinition\"}".to_string(),
@@ -346,9 +367,10 @@ fn defs_json(doc: &nothing_core::doc::Doc) -> String {
 
 pub fn to_debug_json(doc: &Document) -> String {
     format!(
-        "{{\"defs\":{},\"names\":{},\"log\":{}}}",
+        "{{\"defs\":{},\"names\":{},\"docs\":{},\"log\":{}}}",
         defs_json(&doc.doc),
         names_json(&doc.names),
+        docs_json(&doc.docs),
         log_json(&doc.log)
     )
 }

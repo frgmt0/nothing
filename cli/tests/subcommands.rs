@@ -93,7 +93,7 @@ fn top_level_help_fits_one_screen() {
 
 #[test]
 fn every_subcommand_help_fits_one_screen() {
-    for command in ["edit", "run", "check", "repl", "protocol", "merge"] {
+    for command in ["edit", "run", "check", "doc", "repl", "protocol", "merge"] {
         let (code, stdout, _) = run(&[command, "--help"]);
         assert_eq!(code, 0, "`{command} --help` did not exit 0");
         help_fits_one_screen(&stdout);

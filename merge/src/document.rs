@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use nothing_core::ctx::Ctx;
 use nothing_core::doc::{Def, Doc, references, vacate};
+use nothing_core::docs::DocTable;
 use nothing_core::exp::{Exp, HoleId, Id};
 use nothing_core::names::NameTable;
 use nothing_core::ty::Ty;
@@ -14,17 +15,32 @@ use crate::version::Version;
 pub struct DocVersion {
     pub doc: Doc,
     pub names: NameTable,
+    pub docs: DocTable,
 }
 
 impl DocVersion {
     pub fn new(doc: Doc, names: NameTable) -> DocVersion {
-        DocVersion { doc, names }
+        DocVersion {
+            doc,
+            names,
+            docs: DocTable::new(),
+        }
+    }
+
+    pub fn documented(doc: Doc, names: NameTable, docs: DocTable) -> DocVersion {
+        DocVersion { doc, names, docs }
+    }
+
+    pub fn with_docs(mut self, docs: DocTable) -> DocVersion {
+        self.docs = docs;
+        self
     }
 
     pub fn single(exp: Exp, names: NameTable) -> DocVersion {
         DocVersion {
             doc: Doc::single(exp),
             names,
+            docs: DocTable::new(),
         }
     }
 
@@ -49,6 +65,7 @@ pub enum DocConflictKind {
     CompetingAnnotations,
     CompetingOrder,
     CompetingNames,
+    CompetingDocs,
 }
 
 impl DocConflictKind {
@@ -60,6 +77,7 @@ impl DocConflictKind {
             DocConflictKind::CompetingAnnotations => "competing definition annotations",
             DocConflictKind::CompetingOrder => "competing definition order",
             DocConflictKind::CompetingNames => "competing definition names",
+            DocConflictKind::CompetingDocs => "competing documentation lines",
         }
     }
 }
@@ -232,6 +250,47 @@ fn merged_names(
     out
 }
 
+fn merged_docs(
+    base: &DocVersion,
+    ours: &DocVersion,
+    theirs: &DocVersion,
+    names: &NameTable,
+    conflicts: &mut Vec<DocConflict>,
+) -> DocTable {
+    let mut out = ours.docs.flatten();
+    let mut ids: Vec<Id> = base.docs.ids();
+    for id in theirs.docs.ids().into_iter().chain(ours.docs.ids()) {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids.sort_by_key(|id| id.as_u128());
+
+    for id in ids {
+        let was = base.docs.get(id);
+        let mine = ours.docs.get(id);
+        let yours = theirs.docs.get(id);
+        match (was == mine, was == yours) {
+            (true, true) | (false, true) => {}
+            (true, false) => out.set(id, yours.unwrap_or_default()),
+            (false, false) => {
+                if mine != yours {
+                    conflicts.push(conflict(
+                        DocConflictKind::CompetingDocs,
+                        id,
+                        names,
+                        "both sides documented the same definition differently",
+                        was.unwrap_or("(undocumented)").to_string(),
+                        mine.unwrap_or("(undocumented)").to_string(),
+                        yours.unwrap_or("(undocumented)").to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn merged_ann(
     id: Id,
     base: &Ty,
@@ -328,6 +387,7 @@ pub fn merge_documents(
 ) -> DocMergeOutcome {
     let mut conflicts: Vec<DocConflict> = Vec::new();
     let names = merged_names(base, ours, theirs, &mut conflicts);
+    let docs = merged_docs(base, ours, theirs, &names, &mut conflicts);
 
     let mut ids: Vec<Id> = base.doc.ids();
     for id in ours.doc.ids().into_iter().chain(theirs.doc.ids()) {
@@ -456,7 +516,7 @@ pub fn merge_documents(
     let doc = settle_annotations(doc, &ctx);
 
     DocMergeOutcome {
-        merged: DocVersion::new(doc, names),
+        merged: DocVersion::documented(doc, names, docs),
         conflicts,
         ours_changes: changes(base, ours),
         theirs_changes: changes(base, theirs),

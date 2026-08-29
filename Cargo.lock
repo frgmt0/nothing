@@ -805,6 +805,7 @@ dependencies = [
  "nothing-core",
  "nothing-eval",
  "nothing-merge",
+ "nothing-stdlib",
  "nothing-store",
  "nothing-tui",
 ]
@@ -838,6 +839,15 @@ dependencies = [
  "nothing-core",
  "nothing-store",
  "proptest",
+]
+
+[[package]]
+name = "nothing-stdlib"
+version = "0.1.0"
+dependencies = [
+ "nothing-action",
+ "nothing-core",
+ "nothing-store",
 ]
 
 [[package]]

@@ -285,16 +285,18 @@ fn entry_line(state: &AppState) -> Option<String> {
     let mut line = format!("typing `{}`", state.entry);
     if state.slot == Slot::Node {
         let expected = state.expected_ty();
-        let offers: Vec<String> = complete::candidates(state, &state.entry)
+        let ranked = complete::candidates(state, &state.entry);
+        let offers: Vec<String> = ranked
             .iter()
             .take(4)
             .enumerate()
             .map(|(i, c)| {
                 let fit = if c.fits(&expected) { "" } else { " ✗" };
+                let from = if c.from_stdlib() { "std·" } else { "" };
                 if i == 0 && state.entry_committed {
-                    format!("‹{}:{}{fit}›", c.name, c.ty)
+                    format!("‹{from}{}:{}{fit}›", c.name, c.ty)
                 } else {
-                    format!("{}:{}{fit}", c.name, c.ty)
+                    format!("{from}{}:{}{fit}", c.name, c.ty)
                 }
             })
             .collect();
@@ -308,6 +310,16 @@ fn entry_line(state: &AppState) -> Option<String> {
         ));
     }
     Some(line)
+}
+
+pub fn candidate_doc_line(state: &AppState) -> Option<String> {
+    if state.entry.is_empty() || state.slot != Slot::Node {
+        return None;
+    }
+    let ranked = complete::candidates(state, &state.entry);
+    let best = ranked.first()?;
+    let doc = best.doc.as_deref()?;
+    Some(format!("{} — {doc}", best.name))
 }
 
 pub fn key_line() -> &'static str {
@@ -345,10 +357,12 @@ fn focus_label(exp: &Exp) -> &'static str {
 }
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
-    let [program_area, value_area, status_area, keys_area] = Layout::vertical([
+    let doc = candidate_doc_line(state);
+    let [program_area, value_area, status_area, doc_area, keys_area] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(1),
         Constraint::Length(1),
+        Constraint::Length(u16::from(doc.is_some())),
         Constraint::Length(3),
     ])
     .areas(frame.area());
@@ -417,6 +431,12 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Paragraph::new(status_line(state)).style(Style::default().add_modifier(Modifier::DIM)),
         status_area,
     );
+    if let Some(doc) = doc {
+        frame.render_widget(
+            Paragraph::new(doc).style(Style::default().add_modifier(Modifier::ITALIC)),
+            doc_area,
+        );
+    }
     frame.render_widget(
         Paragraph::new(key_line())
             .wrap(Wrap { trim: false })
@@ -590,6 +610,56 @@ mod tests {
 
         let unresolved = handle_key(key(KeyCode::Char('q')), state);
         assert!(status_line(&unresolved).contains("unresolved"));
+    }
+
+    #[test]
+    fn the_status_line_marks_a_prelude_candidate_and_shows_its_doc() {
+        use crate::keys::{handle_key, key};
+        use nothing_action::act::EditState;
+        use nothing_core::doc::Def;
+        use nothing_core::docs::DocTable;
+        use nothing_core::exp::Id;
+        use nothing_core::names::NameTable;
+        use nothing_core::prelude::Prelude;
+        use nothing_core::ty::Ty;
+        use ratatui::crossterm::event::KeyCode;
+        use std::sync::Arc;
+
+        let twice = Id::fresh();
+        let mut names = NameTable::new();
+        names.set(twice, "twice");
+        let mut docs = DocTable::new();
+        docs.set(twice, "twice a number");
+        let prelude = Arc::new(Prelude::from_defs(
+            vec![Def::new(twice, Ty::Num, Exp::Num(2))],
+            names,
+            docs,
+        ));
+        let state = AppState::from_edit(EditState::empty().under(prelude));
+        let typing = ['t', 'w']
+            .into_iter()
+            .fold(state, |s, c| handle_key(key(KeyCode::Char(c)), s));
+
+        let status = status_line(&typing);
+        assert!(
+            status.contains("std·twice"),
+            "a prelude candidate is marked as coming from the standard library: {status}"
+        );
+        assert_eq!(
+            candidate_doc_line(&typing).as_deref(),
+            Some("twice — twice a number"),
+            "the doc of the highlighted candidate gets a line of its own"
+        );
+
+        let screen = render_to_string(&typing, 60, 14);
+        assert!(
+            screen.contains("twice a number"),
+            "and it survives a terminal too narrow for the candidate list:\n{screen}"
+        );
+        assert!(
+            candidate_doc_line(&AppState::empty()).is_none(),
+            "a session with nothing being typed has no doc row at all"
+        );
     }
 
     #[test]

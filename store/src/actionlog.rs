@@ -110,6 +110,11 @@ fn encode_action_body(buf: &mut Vec<u8>, action: &Action) {
         Action::ConstructReadline => buf.push(45),
         Action::ConstructPure => buf.push(46),
         Action::ConstructBind => buf.push(47),
+        Action::SetDoc(id, line) => {
+            buf.push(48);
+            write_id(buf, *id);
+            write_string(buf, line);
+        }
     }
 }
 
@@ -211,6 +216,11 @@ fn decode_action_body(bytes: &[u8], pos: &mut usize) -> Result<Action, DecodeErr
         45 => Ok(Action::ConstructReadline),
         46 => Ok(Action::ConstructPure),
         47 => Ok(Action::ConstructBind),
+        48 => {
+            let id = read_id(bytes, pos)?;
+            let line = read_string(bytes, pos)?;
+            Ok(Action::SetDoc(id, line))
+        }
         43 => {
             let id = read_id(bytes, pos)?;
             Ok(Action::SetArmBinderId(id))

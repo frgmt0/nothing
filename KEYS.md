@@ -527,7 +527,7 @@ the same reason it was worst in Phase 3 (deep nesting, four binders).
 | `ConstructMatch` | `\|` | `SetConstructor(Id)` | typing in the constructor slot `` ` `` opened |
 | `AddArm` | `C-n` with the cursor in a match | `RemoveArm` | `C-d` with the cursor in a match arm |
 | `Rename(Id, String)` of a **constructor** | typing in the constructor slot `←` reaches | `SetArmBinderId(Id)` | no binding: an arm's payload binder is minted by `AddArm` and named by `Rename`, so the keyboard never sets its identity (the protocol has it by name) |
-| `SetConstructor(Id)` re-aiming an **arm** | no binding: the same reason — an arm's case is minted by `AddArm`; the protocol has it, the keyboard does not | | |
+| `SetConstructor(Id)` re-aiming an **arm** | no binding: the same reason — an arm's case is minted by `AddArm`; the protocol has it, the keyboard does not | `SetDoc(Id, String)` | no binding: a doc line has no type to get wrong, so it needs no slot — see §Phase B4 |
 
 Editor-level, backed by the action log: `Tab`/`S-Tab` (next/previous hole,
 either kind), undo as truncate-and-replay **per keystroke** (one `C-z` undoes
@@ -1180,3 +1180,24 @@ same `Action`s from §Coverage, just sometimes by a different route.
   key back — it has no vocabulary of its own — which is what makes this
   phase additive: every binding and every test above this line is exactly
   as it was.
+
+## Phase B4 — doc lines
+
+One action, no new binding. `SetDoc(id, line)` writes a definition's line of
+documentation into the doc table (`FORMAT.md` §7.1) — metadata beside the
+tree, like a name, never part of the AST. It is total, like `Rename`: it
+cannot fail, it cannot change a type, and it costs exactly one log entry.
+
+- **No keyboard binding, deliberately.** The keyboard's slots are for the
+  parts of the program that have to be well-typed at every instant; a doc
+  line has no type to get wrong, so it needs no slot to protect it. The
+  keyscript and the protocol have it as `set-doc TEXT`, which is how the
+  standard library's thirty-seven doc lines were actually written. If a
+  friction session shows a person wanting to write one without leaving the
+  TUI, the binding to add is a `C-l`-shaped free-text slot, not a mode.
+- **What the keyboard *does* gain is reading them.** A candidate in the
+  name run that came from the standard library is prefixed `std·`, and the
+  top-ranked candidate's doc line is appended to the status line — so the
+  doc arrives while choosing the name, which is the only moment it is
+  wanted. Pinned by `tui/src/render.rs::the_status_line_marks_a_prelude_candidate_and_shows_its_doc`
+  and the two prelude tests in `tui/src/complete.rs`.

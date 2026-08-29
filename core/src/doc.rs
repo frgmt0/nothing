@@ -81,13 +81,21 @@ impl Doc {
     }
 
     pub fn ctx(&self) -> Ctx {
-        self.defs
-            .iter()
-            .fold(Ctx::empty(), |ctx, def| ctx.extend(def.id, def.ann.clone()))
+        self.ctx_in(&Ctx::empty())
+    }
+
+    pub fn ctx_in(&self, outer: &Ctx) -> Ctx {
+        self.defs.iter().fold(outer.clone(), |ctx, def| {
+            ctx.extend(def.id, def.ann.clone())
+        })
     }
 
     pub fn is_well_typed(&self) -> bool {
-        let ctx = self.ctx();
+        self.is_well_typed_in(&Ctx::empty())
+    }
+
+    pub fn is_well_typed_in(&self, outer: &Ctx) -> bool {
+        let ctx = self.ctx_in(outer);
         self.defs.iter().all(|def| def_is_well_typed(&ctx, def))
     }
 

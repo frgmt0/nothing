@@ -12,6 +12,7 @@ nothing-core = { path = "../core" }
 nothing-action = { path = "../action" }
 nothing-eval = { path = "../eval" }
 nothing-store = { path = "../store" }
+nothing-stdlib = { path = "../stdlib" }
 nothing-tui = { path = "../tui" }
 nothing-merge = { path = "../merge" }
 nothing-agentapi = { path = "../agentapi" }

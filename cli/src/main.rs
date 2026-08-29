@@ -1,4 +1,5 @@
 mod check;
+mod doc_cmd;
 mod edit;
 mod fileio;
 mod holes;
@@ -19,6 +20,7 @@ Commands:
   edit <file>            open <file> in the TUI editor
   run <file>             evaluate <file>, or perform it if it is a command
   check <file>           check <file> is well-typed
+  doc [<file>]           render a reference for <file>, or for the stdlib
   repl                   the action-name REPL
   protocol               speak the JSON agent protocol over stdio
   merge <base> <a> <b>   three-way structural merge
@@ -56,6 +58,7 @@ fn dispatch(args: &[String]) -> u8 {
         "edit" => run_file_command(rest, edit::HELP, edit::run),
         "run" => run_command(rest),
         "check" => run_file_command(rest, check::HELP, check::run),
+        "doc" => doc_command(rest),
         "repl" => {
             if wants_help(rest) {
                 println!("{}", repl_cmd::HELP);
@@ -140,6 +143,37 @@ fn run_command(args: &[String]) -> u8 {
             1
         }
     }
+}
+
+fn doc_command(args: &[String]) -> u8 {
+    if wants_help(args) {
+        println!("{}", doc_cmd::HELP);
+        return 0;
+    }
+
+    let mut path: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "-o" {
+            let Some(target) = args.get(i + 1) else {
+                eprintln!("error: `-o` needs a path");
+                eprintln!("{}", doc_cmd::HELP);
+                return 1;
+            };
+            out = Some(PathBuf::from(target));
+            i += 2;
+        } else if path.is_none() {
+            path = Some(PathBuf::from(&args[i]));
+            i += 1;
+        } else {
+            eprintln!("error: `doc` renders one document, and was given more than one");
+            eprintln!("{}", doc_cmd::HELP);
+            return 1;
+        }
+    }
+
+    doc_cmd::run(path.as_deref(), out.as_deref()) as u8
 }
 
 fn merge_command(args: &[String]) -> u8 {

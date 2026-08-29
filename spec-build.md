@@ -76,10 +76,10 @@ A language that cannot print is a calculator. Smallest honest design, decided be
 
 Written in `nothing`, stored in the binary format, shipped inside the binary. The stdlib is also the first real multi-definition dogfood.
 
-- [ ] **Author the stdlib in the editor.** Arithmetic helpers, comparison, list map/filter/fold/length/append via the fold primitive, string helpers, pair utilities. Target: 25–40 definitions. Author them *through the TUI or the protocol* — the commit that adds a stdlib definition must be a serialised document plus its action log, proving it was built with the product. **Done when** the stdlib file loads, every definition is well-typed, and `nothing run` programs can reference it.
-- [ ] **Doc metadata.** A doc-string table beside the name table (same id-keyed pattern; docs are metadata, never AST). The editor shows the doc for the completion candidate under the cursor. **Done when** every stdlib definition has a doc line and completion displays it.
-- [ ] **`nothing doc`.** Renders the stdlib (or any document) as a static reference: name, type, doc, beginner-projection rendering of the body. **Done when** the generated stdlib reference is committed and legible.
-- [ ] **Friction audit #2.** Two hours building a real program against the stdlib, frictions logged, top five fixed, benchmark re-run. Same rules as Phase 4: no fixing during the session. **Done when** the friction file exists with fifteen-plus entries and the five fixes land without benchmark regression.
+- [x] **Author the stdlib in the editor.** Arithmetic helpers, comparison, list map/filter/fold/length/append via the fold primitive, string helpers, pair utilities. Target: 25–40 definitions. Author them *through the TUI or the protocol* — the commit that adds a stdlib definition must be a serialised document plus its action log, proving it was built with the product. **Done when** the stdlib file loads, every definition is well-typed, and `nothing run` programs can reference it.
+- [x] **Doc metadata.** A doc-string table beside the name table (same id-keyed pattern; docs are metadata, never AST). The editor shows the doc for the completion candidate under the cursor. **Done when** every stdlib definition has a doc line and completion displays it.
+- [x] **`nothing doc`.** Renders the stdlib (or any document) as a static reference: name, type, doc, beginner-projection rendering of the body. **Done when** the generated stdlib reference is committed and legible.
+- [x] **Friction audit #2.** Two hours building a real program against the stdlib, frictions logged, top five fixed, benchmark re-run. Same rules as Phase 4: no fixing during the session. **Done when** the friction file exists with fifteen-plus entries and the five fixes land without benchmark regression.
 
 ---
 

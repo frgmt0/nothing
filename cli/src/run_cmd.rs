@@ -22,6 +22,9 @@ writes a line to standard output, `readline` reads one from standard input,
 printed; the value it finally yields is not printed. A command that reaches
 a hole performs everything up to the hole and then reports it.
 
+The standard library is in scope, so a program may call `min`, `map`, `join`
+and the rest without defining them; `nothing doc` lists what there is.
+
 Exit status: 0 on a value, 2 on an indeterminate result, 3 on out-of-fuel,
 1 on a file error.
 
@@ -67,36 +70,34 @@ pub fn run_with_fuel(path: &Path, fuel: usize) -> i32 {
         return 1;
     };
 
-    let performing = runs_as_a_command(&doc.doc, main);
+    let program = nothing_stdlib::prelude().extend(&doc.doc);
+    let performing = runs_as_a_command(&program, main);
     let outcome = if performing {
-        perform_doc(&doc.doc, main, fuel, &mut StdIo).outcome
+        perform_doc(&program, main, fuel, &mut StdIo).outcome
     } else {
-        eval_doc_with_fuel(&doc.doc, main, fuel)
+        eval_doc_with_fuel(&program, main, fuel)
     };
+    let names = nothing_stdlib::prelude().names_for(&doc.names);
 
     match outcome {
         Outcome::Value(value) => {
             if !performing {
-                println!("{}", render(&value, &doc.names));
+                println!("{}", render(&value, &names));
             }
             0
         }
         Outcome::Indeterminate { result, blocked } => {
-            println!("indeterminate: {}", render(&result, &doc.names));
+            println!("indeterminate: {}", render(&result, &names));
             for hole in &blocked {
                 println!("  blocked on hole {:?} ({:?})", hole.hole, hole.kind);
                 for (id, value) in hole.known() {
-                    println!(
-                        "    {} = {}",
-                        doc.names.display(id),
-                        render(&value, &doc.names)
-                    );
+                    println!("    {} = {}", names.display(id), render(&value, &names));
                 }
             }
             if performing && blocked.is_empty() {
                 println!(
                     "  this command cannot go any further: {} is stuck",
-                    main_type(&doc.doc, main)
+                    main_type(&program, main)
                 );
             }
             2
@@ -104,7 +105,7 @@ pub fn run_with_fuel(path: &Path, fuel: usize) -> i32 {
         Outcome::OutOfFuel { partial, steps } => {
             println!(
                 "out of fuel after {steps} steps: {}",
-                render(&partial, &doc.names)
+                render(&partial, &names)
             );
             if performing {
                 println!(

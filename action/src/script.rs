@@ -12,6 +12,7 @@ pub enum Step {
     Var(String),
     Rename(String),
     RenameDef(String),
+    SetDoc(String),
     Def(String),
     Field(String),
     PickField(String),
@@ -35,6 +36,7 @@ impl Step {
                 )),
             },
             Step::RenameDef(name) => Ok(Action::Rename(state.def_id(), name.clone())),
+            Step::SetDoc(line) => Ok(Action::SetDoc(state.def_id(), line.clone())),
             Step::Def(name) => match lookup_definition(state, name) {
                 Some(id) => Ok(Action::MoveToDef(id)),
                 None => Err(ParseError(format!("no definition named `{name}`"))),
@@ -153,6 +155,7 @@ fn lookup_definition(state: &EditState, name: &str) -> Option<Id> {
     state
         .definition_ids()
         .into_iter()
+        .chain(state.prelude_ids())
         .find(|id| state.names.get(*id) == Some(name))
 }
 
@@ -249,6 +252,7 @@ definitions:
   move-prev-def           move the cursor to the previous definition
   move-to-def NAME        move the cursor to the definition displayed as NAME
   rename-def NAME         give this definition the display name NAME
+  set-doc TEXT            give this definition the doc line TEXT (empty clears)
 harness:
   show                    re-print the current program
   reset                   start again from ⦇⦈
@@ -346,6 +350,7 @@ pub fn parse_step(line: &str) -> Result<Step, ParseError> {
         "move-prev-def" => no_arg(Action::MovePrevDef),
         "move-to-def" => Ok(Step::Def(parse_name(head, rest)?)),
         "rename-def" => Ok(Step::RenameDef(parse_name(head, rest)?)),
+        "set-doc" => Ok(Step::SetDoc(rest.to_string())),
 
         "" => Err(ParseError("empty command".to_string())),
         other => Err(ParseError(format!("unknown action `{other}`"))),
@@ -358,6 +363,7 @@ pub fn step_name(step: &Step) -> String {
         Step::Var(name) => format!("construct-var {name}"),
         Step::Rename(name) => format!("rename {name}"),
         Step::RenameDef(name) => format!("rename-def {name}"),
+        Step::SetDoc(line) => format!("set-doc {line}"),
         Step::Def(name) => format!("move-to-def {name}"),
         Step::Field(name) => format!("construct-field {name}"),
         Step::PickField(name) => format!("set-field {name}"),
@@ -410,6 +416,7 @@ pub fn action_name(action: &Action) -> String {
         Action::SetAnn(ty) => format!("set-ann {ty}"),
         Action::SetBinderId(id) => format!("set-binder-id {id}"),
         Action::Rename(id, name) => format!("rename {name} {id}"),
+        Action::SetDoc(id, line) => format!("set-doc {line} {id}"),
         Action::Finish => "finish".to_string(),
         Action::CreateDefinition => "create-definition".to_string(),
         Action::DeleteDefinition => "delete-definition".to_string(),
@@ -723,6 +730,7 @@ mod tests {
         steps.push(Step::Rename("total".to_string()));
         steps.push(Step::PickConstructor("Red".to_string()));
         steps.push(Step::RenameConstructor("Green".to_string()));
+        steps.push(Step::SetDoc("the smaller of two numbers".to_string()));
         steps
     }
 

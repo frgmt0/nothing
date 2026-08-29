@@ -1,4 +1,5 @@
 use nothing_core::doc::{Def, Doc, MAIN_NAME, references};
+use nothing_core::docs::DocTable;
 use nothing_core::exp::{Exp, HoleId, Id, Op};
 use nothing_core::names::NameTable;
 use nothing_core::ty::Ty;
@@ -169,6 +170,62 @@ fn competing_renames_of_the_same_definition_conflict() {
     let outcome = merge_documents(&base(), &ours, &theirs);
     assert!(!outcome.is_clean());
     assert_eq!(outcome.conflicts[0].kind, DocConflictKind::CompetingNames);
+}
+
+fn documented(defs: Vec<Def>, docs: DocTable) -> DocVersion {
+    DocVersion::documented(Doc::new(defs).expect("distinct ids"), names(), docs)
+}
+
+fn doc_table(line: &str) -> DocTable {
+    let mut docs = DocTable::new();
+    docs.set(helper_id(), line);
+    docs
+}
+
+#[test]
+fn a_doc_line_written_on_one_side_survives_the_merge() {
+    let defs = vec![main_def(1), helper(1), other(0)];
+    let ours = documented(defs.clone(), doc_table("adds one to a number"));
+    let theirs = version(defs);
+
+    let outcome = merge_documents(&base(), &ours, &theirs);
+    assert!(outcome.is_clean(), "{}", outcome.report());
+    assert_eq!(
+        outcome.merged.docs.get(helper_id()),
+        Some("adds one to a number")
+    );
+}
+
+#[test]
+fn competing_doc_lines_for_the_same_definition_conflict() {
+    let defs = vec![main_def(1), helper(1), other(0)];
+    let ours = documented(defs.clone(), doc_table("adds one to a number"));
+    let theirs = documented(defs, doc_table("the next number up"));
+
+    let outcome = merge_documents(&base(), &ours, &theirs);
+    assert!(!outcome.is_clean());
+    assert!(
+        outcome
+            .conflicts
+            .iter()
+            .any(|c| c.kind == DocConflictKind::CompetingDocs),
+        "{:?}",
+        outcome.conflicts
+    );
+}
+
+#[test]
+fn the_same_doc_line_written_on_both_sides_is_not_a_conflict() {
+    let defs = vec![main_def(1), helper(1), other(0)];
+    let ours = documented(defs.clone(), doc_table("adds one to a number"));
+    let theirs = documented(defs, doc_table("adds one to a number"));
+
+    let outcome = merge_documents(&base(), &ours, &theirs);
+    assert!(outcome.is_clean(), "{}", outcome.report());
+    assert_eq!(
+        outcome.merged.docs.get(helper_id()),
+        Some("adds one to a number")
+    );
 }
 
 #[test]

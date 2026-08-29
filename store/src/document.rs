@@ -1,16 +1,18 @@
 use nothing_action::log::ActionLog;
 use nothing_core::doc::{Def, Doc, MAIN_ID, MAIN_NAME};
+use nothing_core::docs::DocTable;
 use nothing_core::exp::Exp;
 use nothing_core::names::NameTable;
 
 use crate::actionlog::{decode_log, encode_log};
 use crate::codec::{decode_ty, encode_ty, read_id, read_u8, read_varint, write_id, write_varint};
+use crate::docs::{decode_docs, encode_docs};
 use crate::error::DecodeError;
 use crate::names::{decode_names, encode_names};
 use crate::nodes::{NodeEntry, build_node_table, content_hash, decode_node_table};
 
 pub const MAGIC: [u8; 4] = *b"NTHG";
-pub const VERSION_MAJOR: u8 = 7;
+pub const VERSION_MAJOR: u8 = 8;
 pub const VERSION_MINOR: u8 = 0;
 pub const VERSION_MAJOR_V1: u8 = 1;
 pub const VERSION_MAJOR_V2: u8 = 2;
@@ -18,12 +20,14 @@ pub const VERSION_MAJOR_V3: u8 = 3;
 pub const VERSION_MAJOR_V4: u8 = 4;
 pub const VERSION_MAJOR_V5: u8 = 5;
 pub const VERSION_MAJOR_V6: u8 = 6;
+pub const VERSION_MAJOR_V7: u8 = 7;
 pub const KIND_DOCUMENT: u8 = 1;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Document {
     pub doc: Doc,
     pub names: NameTable,
+    pub docs: DocTable,
     pub log: ActionLog,
 }
 
@@ -33,7 +37,26 @@ impl Document {
     }
 
     pub fn from_doc(doc: Doc, names: NameTable, log: ActionLog) -> Document {
-        Document { doc, names, log }
+        Document {
+            doc,
+            names,
+            docs: DocTable::new(),
+            log,
+        }
+    }
+
+    pub fn documented(doc: Doc, names: NameTable, docs: DocTable, log: ActionLog) -> Document {
+        Document {
+            doc,
+            names,
+            docs,
+            log,
+        }
+    }
+
+    pub fn with_docs(mut self, docs: DocTable) -> Document {
+        self.docs = docs;
+        self
     }
 
     pub fn exp(&self) -> Exp {
@@ -125,7 +148,7 @@ pub(crate) fn read_header(bytes: &[u8], pos: &mut usize) -> Result<(u8, u8), Dec
     Ok((major, minor))
 }
 
-pub(crate) fn encode_defs(buf: &mut Vec<u8>, doc: &Document) {
+fn encode_def_table(buf: &mut Vec<u8>, doc: &Document) {
     write_varint(buf, doc.doc.len() as u64);
     for def in doc.doc.defs() {
         let mut body = Vec::new();
@@ -135,8 +158,18 @@ pub(crate) fn encode_defs(buf: &mut Vec<u8>, doc: &Document) {
         write_varint(buf, body.len() as u64);
         buf.extend_from_slice(&body);
     }
+}
 
+pub(crate) fn encode_defs(buf: &mut Vec<u8>, doc: &Document) {
+    encode_def_table(buf, doc);
     encode_names(buf, &doc.names);
+    encode_log(buf, &doc.log);
+}
+
+pub(crate) fn encode_defs_v8(buf: &mut Vec<u8>, doc: &Document) {
+    encode_def_table(buf, doc);
+    encode_names(buf, &doc.names);
+    encode_docs(buf, &doc.docs);
     encode_log(buf, &doc.log);
 }
 
@@ -146,7 +179,7 @@ pub fn encode_document(doc: &Document) -> Vec<u8> {
     buf.push(VERSION_MAJOR);
     buf.push(VERSION_MINOR);
     buf.push(KIND_DOCUMENT);
-    encode_defs(&mut buf, doc);
+    encode_defs_v8(&mut buf, doc);
     buf
 }
 
@@ -154,16 +187,15 @@ pub fn decode_document(bytes: &[u8]) -> Result<Document, DecodeError> {
     let mut pos = 0usize;
     let (major, minor) = read_header(bytes, &mut pos)?;
     match major {
-        VERSION_MAJOR_V1 => return crate::v1::decode_document_v1(bytes),
+        VERSION_MAJOR_V1 => crate::v1::decode_document_v1(bytes),
         VERSION_MAJOR_V2 | VERSION_MAJOR_V3 | VERSION_MAJOR_V4 | VERSION_MAJOR_V5
-        | VERSION_MAJOR_V6 | VERSION_MAJOR => {}
-        _ => return Err(DecodeError::UnsupportedVersion(major, minor)),
+        | VERSION_MAJOR_V6 | VERSION_MAJOR_V7 => decode_defs(bytes, &mut pos),
+        VERSION_MAJOR => decode_defs_v8(bytes, &mut pos),
+        _ => Err(DecodeError::UnsupportedVersion(major, minor)),
     }
-
-    decode_defs(bytes, &mut pos)
 }
 
-pub(crate) fn decode_defs(bytes: &[u8], pos: &mut usize) -> Result<Document, DecodeError> {
+fn decode_def_table(bytes: &[u8], pos: &mut usize) -> Result<Doc, DecodeError> {
     let def_count = read_varint(bytes, pos)?;
     if def_count == 0 {
         return Err(DecodeError::EmptyDocument);
@@ -180,8 +212,11 @@ pub(crate) fn decode_defs(bytes: &[u8], pos: &mut usize) -> Result<Document, Dec
         }
         defs.push(Def::new(id, ann, body));
     }
-    let doc = Doc::new(defs).ok_or(DecodeError::DuplicateDefinition)?;
+    Doc::new(defs).ok_or(DecodeError::DuplicateDefinition)
+}
 
+pub(crate) fn decode_defs(bytes: &[u8], pos: &mut usize) -> Result<Document, DecodeError> {
+    let doc = decode_def_table(bytes, pos)?;
     let names = decode_names(bytes, pos)?;
     let log = decode_log(bytes, pos)?;
 
@@ -190,6 +225,19 @@ pub(crate) fn decode_defs(bytes: &[u8], pos: &mut usize) -> Result<Document, Dec
     }
 
     Ok(Document::from_doc(doc, names, log))
+}
+
+pub(crate) fn decode_defs_v8(bytes: &[u8], pos: &mut usize) -> Result<Document, DecodeError> {
+    let doc = decode_def_table(bytes, pos)?;
+    let names = decode_names(bytes, pos)?;
+    let docs = decode_docs(bytes, pos)?;
+    let log = decode_log(bytes, pos)?;
+
+    if *pos != bytes.len() {
+        return Err(DecodeError::TrailingBytes);
+    }
+
+    Ok(Document::documented(doc, names, docs, log))
 }
 
 #[cfg(test)]

@@ -985,3 +985,78 @@ not about the merge, which emits the same operations either way. The `Cmd`
 forms are covered where the coverage is real: the diff/replay property in
 `merge/tests/merge_preserves_well_typedness.rs` generates them, and it caught
 a genuine bug doing so.
+
+---
+
+## 2026-08-29 — Phase B4, the standard library and the friction-2 fixes
+
+```
+cargo run -p nothing-bench -- keytable
+cargo run -p nothing-bench -- table
+```
+
+**No new reference program, and no row moved.** B4 adds a standard library,
+doc metadata, `nothing doc`, and the five fixes from `FRICTION2.md`. None of
+those is a new *form*: the language grammar the keyboard drives is exactly
+the one B3 left behind, so there is nothing here a reference program could
+newly express. The benchmark is run to prove the fixes cost nothing, not to
+add a row.
+
+### Keystrokes — every row unchanged
+
+| # | Program | Neovim keystrokes | `nothing` keystrokes | `nothing` actions | Ratio | vs. 2026-08-29 (B3) | Guard |
+|---|---------|------------------:|----------------------:|-------------------:|------:|:-------------------:|:-----:|
+| 1 | factorial * | 84 | 28 | 23 | 0.33x | = | pass |
+| 2 | list_map * | 114 | 44 | 37 | 0.39x | = | pass |
+| 3 | record * | 65 | 50 | 27 | 0.77x | = | pass |
+| 4 | state_machine * | 151 | 41 | 36 | 0.27x | = | pass |
+| 5 | nested_conditional | 146 | 31 | 35 | 0.21x | = | pass |
+| 6 | greeting * | 127 | 52 | 27 | 0.41x | = | pass |
+| 7 | greeting_command | 66 | 30 | 11 | 0.45x | = | pass |
+
+### Why nothing moved, fix by fix
+
+The five fixes were chosen from `FRICTION2.md` by severity, and four of the
+five are outside the key handler entirely:
+
+- **#1**, an unapplied action answers `ok: false` — `agentapi::protocol`
+  only. The keyboard never sees a protocol reply.
+- **#2**, `nothing doc` resolves stdlib names — `cli::doc_cmd` only.
+- **#3**, the stdlib is fetched once instead of riding every reply —
+  `agentapi::protocol` only. `state.names` now carries the document's own
+  layer plus the prelude ids it actually references; the new `stdlib` method
+  hands over the catalogue.
+- **#5/#6**, `move_to_hole` and hole locations — a new protocol method built
+  from `MoveParent`/`MoveChild`, plus `index_path`/`moves_between` moved from
+  `tui::app` down into `action::zipper` so the protocol and the keyboard walk
+  by the same code. The TUI re-exports them, so `Tab` is byte-for-byte the
+  same sequence of actions it was, which is why rows 1–7 could not move.
+- **#9**, the doc line gets its own row under the status line — `render` only,
+  and only when the highlighted candidate is a documented prelude definition.
+  It adds no binding, logs no action, and is not reachable in any reference
+  fixture (they all run with an empty prelude).
+
+The one thing that could have moved a row is the `index_path`/`moves_between`
+relocation, because `Tab` is built on it. It is pure code motion — the
+function bodies are unchanged and the TUI now calls them through a `pub use`.
+`tui/tests/references.rs` replays all seven fixtures keystroke by keystroke
+and still counts what it counted.
+
+### Guard status: PASS
+
+Worst case is still `record` at **0.77×**, unchanged, a quarter of the 3×
+budget. Both tripwires
+(`tui/tests/references.rs::no_reference_program_exceeds_the_three_times_guard`
+and `nothing-bench`'s `no_keystroke_ratio_exceeds_the_three_times_guard`)
+cover seven programs and pass.
+
+### The merge benchmark, same day
+
+Unchanged: 21 scenarios, `git merge-file` clean 2, clean and correct 2;
+structural clean 18, well-typed 21/21. B4 adds no scenario. Doc lines are the
+one new thing the merge engine learned this phase, and they merge exactly the
+way display names do — `merged_docs` mirrors `merged_names` line for line —
+so the scenarios that exercise competing renames already exercise the shape.
+The three new cases in `merge/tests/document_merge.rs` (a doc written on one
+side, competing docs, the same doc on both sides) cover the new
+`CompetingDocs` conflict directly, which is where the coverage is real.

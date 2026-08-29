@@ -1,13 +1,17 @@
 use std::collections::HashSet;
 
+use std::sync::Arc;
+
 use nothing_core::ctx::Ctx;
 use nothing_core::doc::{
     Def, Doc, MAIN_ID, MAIN_NAME, projects, quarantine_projections, references, vacate,
 };
+use nothing_core::docs::DocTable;
 use nothing_core::exp::{Exp, HoleId, Id, Op, Side, UuidStream};
 use nothing_core::names::{
     NameTable, fresh_binder_name, fresh_constructor_name, fresh_definition_name, fresh_field_name,
 };
+use nothing_core::prelude::Prelude;
 use nothing_core::ty::{
     Ty, matched_arrow, matched_cmd, matched_list, matched_prod, matched_record, matched_variant,
     variant_constructors,
@@ -67,6 +71,7 @@ pub enum Action {
     SetBinderId(Id),
 
     Rename(Id, String),
+    SetDoc(Id, String),
 
     Finish,
 
@@ -114,6 +119,13 @@ impl Fresh {
 
     pub fn observe_doc(&mut self, doc: &Doc) {
         for def in doc.defs() {
+            self.bump_id(def.id);
+            self.observe(&def.body);
+        }
+    }
+
+    pub fn observe_prelude(&mut self, prelude: &Prelude) {
+        for def in prelude.defs() {
             self.bump_id(def.id);
             self.observe(&def.body);
         }
@@ -578,7 +590,8 @@ pub fn apply_with_in(
 
         Action::Finish => finish(scope, zipper),
 
-        Action::CreateDefinition
+        Action::SetDoc(..)
+        | Action::CreateDefinition
         | Action::DeleteDefinition
         | Action::SetDefAnn(_)
         | Action::MoveNextDef
@@ -1139,6 +1152,8 @@ pub struct EditState {
     pub zipper: Zipper,
     pub fresh: Fresh,
     pub names: NameTable,
+    pub docs: DocTable,
+    prelude: Arc<Prelude>,
     before: Vec<Def>,
     def_id: Id,
     def_ann: Ty,
@@ -1166,6 +1181,8 @@ impl EditState {
             zipper: unzip(current.body.clone()),
             fresh: Fresh::from_doc(doc),
             names,
+            docs: DocTable::new(),
+            prelude: Prelude::shared_empty(),
             before: defs[..index].to_vec(),
             def_id: current.id,
             def_ann: current.ann.clone(),
@@ -1173,11 +1190,47 @@ impl EditState {
         })
     }
 
+    pub fn with_docs(mut self, docs: DocTable) -> EditState {
+        self.docs = self.prelude.docs_for(&docs);
+        self
+    }
+
+    pub fn under(mut self, prelude: Arc<Prelude>) -> EditState {
+        self.fresh.observe_prelude(&prelude);
+        self.names = prelude.names_for(&self.names);
+        self.docs = prelude.docs_for(&self.docs);
+        self.prelude = prelude;
+        self
+    }
+
+    pub fn prelude(&self) -> &Prelude {
+        &self.prelude
+    }
+
+    pub fn prelude_handle(&self) -> Arc<Prelude> {
+        self.prelude.clone()
+    }
+
+    pub fn prelude_ids(&self) -> Vec<Id> {
+        let mine = self.doc().ids();
+        self.prelude
+            .ids()
+            .into_iter()
+            .filter(|id| !mine.contains(id))
+            .collect()
+    }
+
+    pub fn doc_line(&self, id: Id) -> Option<&str> {
+        self.docs.get(id)
+    }
+
     pub fn at(zipper: Zipper, fresh: Fresh, names: NameTable) -> EditState {
         EditState {
             zipper,
             fresh,
             names,
+            docs: DocTable::new(),
+            prelude: Prelude::shared_empty(),
             before: Vec::new(),
             def_id: MAIN_ID,
             def_ann: Ty::Hole,
@@ -1194,6 +1247,8 @@ impl EditState {
             zipper: unzip(Exp::empty_hole(hole)),
             fresh,
             names,
+            docs: DocTable::new(),
+            prelude: Prelude::shared_empty(),
             before: Vec::new(),
             def_id: MAIN_ID,
             def_ann: Ty::Hole,
@@ -1233,7 +1288,7 @@ impl EditState {
     }
 
     pub fn scope(&self) -> DefScope {
-        DefScope::new(self.doc().ctx(), self.def_ann.clone())
+        DefScope::new(self.doc().ctx_in(self.prelude.ctx()), self.def_ann.clone())
     }
 
     pub fn definition_ids(&self) -> Vec<Id> {
@@ -1261,13 +1316,15 @@ impl EditState {
     }
 
     pub fn is_well_typed(&self) -> bool {
-        self.doc().is_well_typed()
+        self.doc().is_well_typed_in(self.prelude.ctx())
     }
 
     fn moved_to(&self, index: usize) -> Option<EditState> {
         let doc = self.doc();
         let mut next = EditState::with_doc(&doc, self.names.clone(), index)?;
         next.fresh = self.fresh.clone();
+        next.docs = self.docs.clone();
+        next.prelude = self.prelude.clone();
         Some(next)
     }
 
@@ -1283,6 +1340,8 @@ impl EditState {
             zipper: unzip(Exp::empty_hole(hole)),
             fresh,
             names,
+            docs: self.docs.clone(),
+            prelude: self.prelude.clone(),
             before,
             def_id: id,
             def_ann: Ty::Hole,
@@ -1315,11 +1374,13 @@ impl EditState {
         let mut defs = before;
         defs.extend(after);
         let doc = Doc::new(defs)?;
-        if !doc.is_well_typed() {
+        if !doc.is_well_typed_in(self.prelude.ctx()) {
             return None;
         }
         let mut next = EditState::with_doc(&doc, self.names.clone(), index)?;
         next.fresh = fresh;
+        next.docs = self.docs.clone();
+        next.prelude = self.prelude.clone();
         Some(next)
     }
 
@@ -1458,6 +1519,11 @@ impl EditState {
                 next.names.rename(id, name);
                 Some(next)
             }
+            Action::SetDoc(id, line) => {
+                let mut next = self.clone();
+                next.docs.set(id, line);
+                Some(next)
+            }
             _ => {
                 let scope = self.scope();
                 let mut fresh = self.fresh.clone();
@@ -1496,8 +1562,10 @@ pub fn all_document_positions(state: &EditState) -> Vec<EditState> {
     let doc = state.doc();
     let mut out = Vec::new();
     for (index, def) in doc.defs().iter().enumerate() {
-        let base = EditState::with_doc(&doc, state.names.clone(), index)
+        let mut base = EditState::with_doc(&doc, state.names.clone(), index)
             .expect("index is in range by construction");
+        base.docs = state.docs.clone();
+        base.prelude = state.prelude.clone();
         for zipper in crate::zipper::all_positions(&def.body) {
             let mut at = base.clone();
             at.zipper = zipper;

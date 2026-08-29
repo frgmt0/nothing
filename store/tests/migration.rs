@@ -16,6 +16,7 @@ use nothing_store::v3::encode_document_v3;
 use nothing_store::v4::encode_document_v4;
 use nothing_store::v5::encode_document_v5;
 use nothing_store::v6::encode_document_v6;
+use nothing_store::v7::encode_document_v7;
 use nothing_store::{decode_document, encode_document};
 
 const FACTORIAL: &str = include_str!("../../bench/fixtures/factorial.actions");
@@ -24,6 +25,7 @@ const RECORD: &str = include_str!("../../bench/fixtures/record.actions");
 const STATE_MACHINE: &str = include_str!("../../bench/fixtures/state_machine.actions");
 const NESTED_CONDITIONAL: &str = include_str!("../../bench/fixtures/nested_conditional.actions");
 const GREETING: &str = include_str!("../../bench/fixtures/greeting.actions");
+const GREETING_COMMAND: &str = include_str!("../../bench/fixtures/greeting_command.actions");
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v1")
@@ -47,6 +49,10 @@ fn v5_fixture_dir() -> PathBuf {
 
 fn v6_fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v6")
+}
+
+fn v7_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/v7")
 }
 
 fn sample_log() -> ActionLog {
@@ -186,6 +192,7 @@ fn every_migrated_artifact_round_trips_at_the_current_version() {
         .chain(v4_artifacts())
         .chain(v5_artifacts())
         .chain(v6_artifacts())
+        .chain(v7_artifacts())
     {
         let bytes = fs::read(&path).expect("the artifact is readable");
         let migrated = decode_document(&bytes).expect("the artifact migrates");
@@ -766,6 +773,81 @@ fn a_version_six_document_keeps_every_definition_it_had() {
     }
 }
 
+fn every_v7_program() -> Vec<(String, Doc, NameTable)> {
+    let mut out = every_v4_program();
+    let replayed =
+        replay_script(GREETING_COMMAND).expect("the greeting command fixture replays cleanly");
+    out.push((
+        "bench_greeting_command".to_string(),
+        replayed.doc(),
+        replayed.names.clone(),
+    ));
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn ensure_v7_fixtures() {
+    let dir = v7_fixture_dir();
+    fs::create_dir_all(&dir).expect("the fixture directory is creatable");
+    for (name, doc, names) in every_v7_program() {
+        let path = dir.join(format!("{name}.v7.nothing"));
+        if !path.exists() {
+            let document = Document::from_doc(doc, names, sample_log());
+            fs::write(&path, encode_document_v7(&document)).expect("the fixture is writable");
+        }
+    }
+}
+
+fn v7_artifacts() -> Vec<PathBuf> {
+    ensure_v7_fixtures();
+    let mut paths: Vec<PathBuf> = fs::read_dir(v7_fixture_dir())
+        .expect("the fixture directory exists")
+        .map(|entry| entry.expect("a readable directory entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "nothing"))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn there_are_version_seven_artifacts_to_migrate() {
+    let paths = v7_artifacts();
+    assert!(
+        paths.len() >= 18,
+        "only {} v7 artifacts were found; the v7 migration path is barely exercised",
+        paths.len()
+    );
+    for path in &paths {
+        let bytes = fs::read(path).expect("the artifact is readable");
+        assert_eq!(&bytes[0..4], b"NTHG", "{path:?} is not a nothing file");
+        assert_eq!(
+            bytes[4], 7,
+            "{path:?} is not version 7, so it does not test migration"
+        );
+    }
+}
+
+#[test]
+fn a_version_seven_artifact_still_carries_the_commands_that_made_it_version_seven() {
+    let paths = v7_artifacts();
+    let with_commands = paths
+        .iter()
+        .filter(|path| {
+            let bytes = fs::read(path).expect("the artifact is readable");
+            let document = decode_document(&bytes).expect("the artifact decodes");
+            document
+                .doc
+                .defs()
+                .iter()
+                .any(|d| mentions_a_command(&d.body))
+        })
+        .count();
+    assert!(
+        with_commands > 0,
+        "no v7 fixture contains a command, so the v7 corpus is indistinguishable from the v6 one"
+    );
+}
+
 #[test]
 fn a_version_seven_file_carries_a_command_no_earlier_version_could() {
     let line = nothing_core::exp::Id::from_u128(21);
@@ -779,9 +861,8 @@ fn a_version_seven_file_carries_a_command_no_earlier_version_could() {
         )),
     );
     let document = Document::new(program.clone(), NameTable::new(), sample_log());
-    let bytes = encode_document(&document);
-    assert_eq!(bytes[4], VERSION_MAJOR);
-    assert_eq!(VERSION_MAJOR, 7);
+    let bytes = encode_document_v7(&document);
+    assert_eq!(bytes[4], 7);
     let reopened = decode_document(&bytes).expect("a command document opens");
     assert_eq!(reopened.exp(), program);
     assert_eq!(
@@ -792,6 +873,72 @@ fn a_version_seven_file_carries_a_command_no_earlier_version_could() {
     assert!(
         encode_document_v6(&document) != bytes,
         "the v6 and v7 encoders must at least disagree about the version byte"
+    );
+}
+
+#[test]
+fn no_version_seven_artifact_carries_a_doc_line() {
+    for path in v7_artifacts() {
+        let bytes = fs::read(&path).expect("the artifact is readable");
+        let document = decode_document(&bytes).expect("the artifact decodes");
+        assert!(
+            document.docs.is_empty(),
+            "{path:?} carries a doc line, so it is not bytes a version-7 build could have \
+             written and it does not test the migration it claims to"
+        );
+    }
+}
+
+#[test]
+fn a_version_seven_document_keeps_every_definition_it_had() {
+    for (name, doc, names) in every_v7_program() {
+        let before = Document::from_doc(doc, names, sample_log());
+        let bytes = encode_document_v7(&before);
+        assert_eq!(bytes[4], 7, "{name} was not written as version 7");
+        let after = decode_document(&bytes).expect("the v7 bytes migrate");
+        assert_eq!(after.doc, before.doc, "{name} lost a definition");
+        assert_eq!(after.log, before.log, "{name} lost its action log");
+        assert!(after.docs.is_empty(), "{name} invented a doc line");
+    }
+}
+
+#[test]
+fn a_version_eight_file_carries_a_doc_line_no_earlier_version_could() {
+    let helper = nothing_core::exp::Id::from_u128(31);
+    let doc = Doc::new(vec![nothing_core::doc::Def::new(
+        helper,
+        Ty::Num,
+        Exp::num(7),
+    )])
+    .expect("one definition");
+    let mut names = NameTable::new();
+    names.set(helper, "seven");
+    let mut docs = nothing_core::docs::DocTable::new();
+    docs.set(helper, "the number seven, for want of a better example");
+
+    let document = Document::documented(doc, names, docs.clone(), sample_log());
+    let bytes = encode_document(&document);
+    assert_eq!(bytes[4], VERSION_MAJOR);
+    assert_eq!(VERSION_MAJOR, 8);
+
+    let reopened = decode_document(&bytes).expect("a documented document opens");
+    assert_eq!(
+        reopened.docs.get(helper),
+        Some("the number seven, for want of a better example")
+    );
+    assert_eq!(reopened.docs, docs);
+
+    let seven = encode_document_v7(&document);
+    assert!(
+        seven != bytes,
+        "the v7 and v8 encoders must at least disagree about the version byte"
+    );
+    assert!(
+        decode_document(&seven)
+            .expect("the v7 bytes still open")
+            .docs
+            .is_empty(),
+        "a v7 file cannot carry the doc line, which is what makes v8 a new version"
     );
 }
 

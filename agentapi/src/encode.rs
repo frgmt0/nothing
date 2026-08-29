@@ -386,6 +386,11 @@ pub fn action_json(action: &Action) -> Json {
             ("id", Json::str(id.to_string())),
             ("name", Json::str(name.clone())),
         ]),
+        Action::SetDoc(id, line) => Json::obj(vec![
+            ("action", Json::str("SetDoc")),
+            ("id", Json::str(id.to_string())),
+            ("doc", Json::str(line.clone())),
+        ]),
         Action::Finish => Json::obj(vec![("action", Json::str("Finish"))]),
         Action::CreateDefinition => Json::obj(vec![("action", Json::str("CreateDefinition"))]),
         Action::DeleteDefinition => Json::obj(vec![("action", Json::str("DeleteDefinition"))]),
@@ -516,6 +521,15 @@ pub fn action_from_json(value: &Json) -> Result<Action, String> {
                 name.to_string(),
             ))
         }
+        "SetDoc" => {
+            let line = field(value, "doc", tag)?
+                .as_str()
+                .ok_or_else(|| "`SetDoc` needs a string `doc`".to_string())?;
+            Ok(Action::SetDoc(
+                id_field(value, "id", tag)?,
+                line.to_string(),
+            ))
+        }
         "Finish" => Ok(Action::Finish),
         "CreateDefinition" => Ok(Action::CreateDefinition),
         "DeleteDefinition" => Ok(Action::DeleteDefinition),
@@ -541,6 +555,22 @@ pub fn entry_json(entry: &LogEntry) -> Json {
         ("timestamp", Json::Int(entry.timestamp as i64)),
         ("author", author_json(entry.author)),
     ])
+}
+
+pub fn docs_json(docs: &nothing_core::docs::DocTable) -> Json {
+    let mut entries = docs.flatten().entries();
+    entries.sort_by_key(|(id, _)| id.as_u128());
+    Json::arr(
+        entries
+            .into_iter()
+            .map(|(id, line)| {
+                Json::obj(vec![
+                    ("id", Json::str(id.to_string())),
+                    ("doc", Json::str(line)),
+                ])
+            })
+            .collect(),
+    )
 }
 
 pub fn names_json(names: &NameTable) -> Json {

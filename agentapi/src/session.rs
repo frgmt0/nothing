@@ -152,7 +152,7 @@ impl AgentSession {
     }
 
     pub fn reset(&mut self) {
-        self.base = EditState::empty();
+        self.base = EditState::empty().under(self.base.prelude_handle());
         self.log = ActionLog::new();
         self.cursor = 0;
         self.state = self.base.clone();
@@ -163,7 +163,12 @@ impl AgentSession {
         for entry in self.log.entries().iter().take(self.cursor) {
             log.append(entry.action.clone(), entry.timestamp, entry.author);
         }
-        Document::from_doc(self.state.doc(), self.names().flatten(), log)
+        Document::documented(
+            self.state.doc(),
+            self.names().own(),
+            self.state.docs.own(),
+            log,
+        )
     }
 
     pub fn save(&self, path: &str) -> Result<usize, String> {
@@ -180,13 +185,16 @@ impl AgentSession {
     }
 
     pub fn adopt(&mut self, doc: Document) {
-        let replayed = replay_log(&doc.log);
-        if replayed.doc() == doc.doc {
-            self.base = EditState::empty();
+        let prelude = self.base.prelude_handle();
+        let replayed = replay_log_under(&doc.log, &self.base);
+        if replayed.doc() == doc.doc && replayed.docs.own() == doc.docs {
+            self.base = EditState::empty().under(prelude);
             self.log = doc.log;
         } else {
             self.base = EditState::with_doc(&doc.doc, doc.names, 0)
-                .expect("a decoded document always has a first definition");
+                .expect("a decoded document always has a first definition")
+                .with_docs(doc.docs)
+                .under(prelude);
             self.log = doc.log;
         }
         self.cursor = self.log.len();
@@ -208,7 +216,11 @@ impl AgentSession {
 }
 
 pub fn replay_log(log: &ActionLog) -> EditState {
-    let mut state = EditState::empty();
+    replay_log_under(log, &EditState::empty())
+}
+
+pub fn replay_log_under(log: &ActionLog, like: &EditState) -> EditState {
+    let mut state = EditState::empty().under(like.prelude_handle());
     for entry in log.entries() {
         state.apply_mut(entry.action.clone());
     }

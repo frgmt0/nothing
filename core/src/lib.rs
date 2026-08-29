@@ -1,8 +1,10 @@
 pub mod ctx;
 pub mod doc;
+pub mod docs;
 pub mod examples;
 pub mod exp;
 pub mod names;
+pub mod prelude;
 pub mod render;
 pub mod ty;
 pub mod typing;

@@ -13,14 +13,36 @@ pub enum CandidateKind {
     Readline,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Origin {
+    Local,
+    Stdlib,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Candidate {
     pub name: String,
     pub ty: Ty,
     pub kind: CandidateKind,
+    pub origin: Origin,
+    pub doc: Option<String>,
 }
 
 impl Candidate {
+    fn literal(name: impl Into<String>, ty: Ty, kind: CandidateKind) -> Candidate {
+        Candidate {
+            name: name.into(),
+            ty,
+            kind,
+            origin: Origin::Local,
+            doc: None,
+        }
+    }
+
+    pub fn from_stdlib(&self) -> bool {
+        self.origin == Origin::Stdlib
+    }
+
     pub fn action(&self) -> Action {
         match self.kind {
             CandidateKind::Var(id) => Action::ConstructVar(id),
@@ -59,6 +81,12 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
             name,
             ty,
             kind: CandidateKind::Var(id),
+            origin: if state.edit.prelude().contains(id) {
+                Origin::Stdlib
+            } else {
+                Origin::Local
+            },
+            doc: state.edit.doc_line(id).map(str::to_string),
         };
         out.push((rank_key(&candidate, &expected, prefix, scope), candidate));
     }
@@ -67,30 +95,22 @@ pub fn candidates(state: &AppState, prefix: &str) -> Vec<Candidate> {
         if !name.starts_with(prefix) {
             continue;
         }
-        let candidate = Candidate {
-            name,
-            ty: Ty::Bool,
-            kind: CandidateKind::Bool(b),
-        };
+        let candidate = Candidate::literal(name, Ty::Bool, CandidateKind::Bool(b));
 
         out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
     }
 
     if "nil".starts_with(prefix) {
-        let candidate = Candidate {
-            name: "nil".to_string(),
-            ty: Ty::List(Box::new(Ty::Hole)),
-            kind: CandidateKind::Nil,
-        };
+        let candidate = Candidate::literal("nil", Ty::List(Box::new(Ty::Hole)), CandidateKind::Nil);
         out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
     }
 
     if "readline".starts_with(prefix) {
-        let candidate = Candidate {
-            name: "readline".to_string(),
-            ty: Ty::Cmd(Box::new(Ty::Str)),
-            kind: CandidateKind::Readline,
-        };
+        let candidate = Candidate::literal(
+            "readline",
+            Ty::Cmd(Box::new(Ty::Str)),
+            CandidateKind::Readline,
+        );
         out.push((rank_key(&candidate, &expected, prefix, 0), candidate));
     }
 
@@ -182,6 +202,7 @@ mod tests {
     use super::*;
     use crate::keys::{handle_key, key};
     use crossterm::event::KeyCode;
+    use nothing_action::act::EditState;
 
     fn typed(keys: &str) -> AppState {
         keys.chars().fold(AppState::empty(), |state, c| {
@@ -461,6 +482,75 @@ mod tests {
             "ranking never filters: a case that does not fit is still reachable by prefix, and \
              the calculus quarantines it rather than refusing it"
         );
+    }
+
+    fn state_under_a_prelude() -> AppState {
+        use nothing_core::doc::Def;
+        use nothing_core::docs::DocTable;
+        use nothing_core::names::NameTable;
+        use nothing_core::prelude::Prelude;
+        use std::sync::Arc;
+
+        let double = Id::fresh();
+        let arg = Id::fresh();
+        let flag = Id::fresh();
+        let mut names = NameTable::new();
+        names.set(double, "double");
+        names.set(flag, "double_checked");
+        let mut docs = DocTable::new();
+        docs.set(double, "twice a number");
+        let defs = vec![
+            Def::new(
+                double,
+                Ty::Arrow(Box::new(Ty::Num), Box::new(Ty::Num)),
+                Exp::Lam(
+                    arg,
+                    Ty::Num,
+                    Box::new(Exp::BinOp(
+                        nothing_core::exp::Op::Add,
+                        Box::new(Exp::Var(arg)),
+                        Box::new(Exp::Var(arg)),
+                    )),
+                ),
+            ),
+            Def::new(flag, Ty::Bool, Exp::Bool(true)),
+        ];
+        let prelude = Arc::new(Prelude::from_defs(defs, names, docs));
+        AppState::from_edit(EditState::empty().under(prelude))
+    }
+
+    #[test]
+    fn a_candidate_from_the_prelude_says_where_it_came_from_and_carries_its_doc() {
+        let state = state_under_a_prelude();
+        let offered = candidates(&state, "double");
+        let double = offered
+            .iter()
+            .find(|c| c.name == "double")
+            .expect("the prelude definition is offered");
+        assert!(double.from_stdlib());
+        assert_eq!(double.doc.as_deref(), Some("twice a number"));
+
+        let undocumented = offered
+            .iter()
+            .find(|c| c.name == "double_checked")
+            .expect("an undocumented prelude definition is still offered");
+        assert!(undocumented.from_stdlib());
+        assert_eq!(undocumented.doc, None);
+    }
+
+    #[test]
+    fn a_binder_of_ones_own_is_not_marked_as_coming_from_the_prelude() {
+        let state = state_under_a_prelude();
+        let bound = ['\\', 'y', ':', 'n', '.']
+            .into_iter()
+            .fold(state, |s, c| handle_key(key(KeyCode::Char(c)), s));
+        let offered = candidates(&bound, "y");
+        let local = offered
+            .iter()
+            .find(|c| c.name == "y")
+            .expect("the binder is offered");
+        assert_eq!(local.origin, Origin::Local);
+        assert_eq!(local.doc, None);
     }
 
     #[test]

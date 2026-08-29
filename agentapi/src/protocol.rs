@@ -3,11 +3,18 @@ use nothing_action::cursor_render::render_with_cursor;
 use nothing_action::log::AuthorId;
 use nothing_action::script::{HELP, parse_step};
 
-use crate::encode::{action_json, entry_json, exp_json, exp_kind, holes, names_json, ty_json};
+use crate::encode::{
+    action_json, docs_json, entry_json, exp_json, exp_kind, holes, names_json, ty_json,
+};
 use crate::holectx::hole_context;
 use crate::json::{Json, parse};
 use crate::provenance::{Palette, annotate, annotate_document, provenance_json, provenance_of};
 use crate::session::AgentSession;
+use nothing_action::zipper::{all_positions, index_path, moves_between, unfinished_positions};
+use nothing_core::doc::references;
+use nothing_core::docs::DocTable;
+use nothing_core::exp::Exp;
+use nothing_core::names::NameTable;
 
 pub const PROTOCOL_VERSION: &str = "1";
 
@@ -16,6 +23,8 @@ pub const METHODS: &[&str] = &[
     "apply",
     "script",
     "hole_context",
+    "stdlib",
+    "move_to_hole",
     "undo",
     "redo",
     "reset",
@@ -40,6 +49,7 @@ fn state_json(session: &AgentSession) -> Json {
     let (empty, non_empty) = holes(&exp);
     let (_, expected) = ctx_and_expected_ty_at_in(&state.scope(), &state.zipper);
     let doc = state.doc();
+    let vocabulary = vocabulary(session);
     Json::obj(vec![
         ("render", Json::str(state.render())),
         ("render_document", Json::str(state.render_document())),
@@ -54,6 +64,13 @@ fn state_json(session: &AgentSession) -> Json {
                             ("name", Json::str(session.names().display(def.id))),
                             ("ann", ty_json(&def.ann)),
                             ("ann_text", Json::str(def.ann.to_string())),
+                            (
+                                "doc",
+                                match state.doc_line(def.id) {
+                                    Some(line) => Json::str(line),
+                                    None => Json::Null,
+                                },
+                            ),
                             ("current", Json::Bool(def.id == state.def_id())),
                         ])
                     })
@@ -64,6 +81,13 @@ fn state_json(session: &AgentSession) -> Json {
         (
             "definition_name",
             Json::str(session.names().display(state.def_id())),
+        ),
+        (
+            "definition_doc",
+            match state.doc_line(state.def_id()) {
+                Some(line) => Json::str(line),
+                None => Json::Null,
+            },
         ),
         ("definition_index", Json::Int(state.def_index() as i64)),
         ("definition_count", Json::Int(state.def_count() as i64)),
@@ -88,14 +112,115 @@ fn state_json(session: &AgentSession) -> Json {
         ("well_typed", Json::Bool(state.is_well_typed())),
         ("empty_holes", Json::Int(empty as i64)),
         ("non_empty_holes", Json::Int(non_empty as i64)),
+        (
+            "holes",
+            Json::arr(
+                unfinished_positions(&exp)
+                    .into_iter()
+                    .map(|path| Json::arr(path.into_iter().map(|n| Json::Int(n as i64)).collect()))
+                    .collect(),
+            ),
+        ),
+        (
+            "document_empty_holes",
+            Json::Int(document_holes(session).0 as i64),
+        ),
+        (
+            "document_non_empty_holes",
+            Json::Int(document_holes(session).1 as i64),
+        ),
         ("complete", Json::Bool(empty == 0 && non_empty == 0)),
         ("log_len", Json::Int(session.cursor() as i64)),
         ("can_undo", Json::Bool(session.can_undo())),
         ("can_redo", Json::Bool(session.can_redo())),
         ("author", Json::Int(session.author().0 as i64)),
         ("exp", exp_json(&exp, session.names())),
-        ("names", names_json(session.names())),
+        ("names", names_json(&vocabulary.0)),
+        ("docs", docs_json(&vocabulary.1)),
+        ("stdlib_count", Json::Int(state.prelude().len() as i64)),
     ])
+}
+
+fn document_holes(session: &AgentSession) -> (usize, usize) {
+    session
+        .state()
+        .doc()
+        .defs()
+        .iter()
+        .map(|def| holes(&def.body))
+        .fold((0, 0), |(a, b), (c, d)| (a + c, b + d))
+}
+
+fn hole_moves(session: &AgentSession, forward: bool) -> Option<Vec<Action>> {
+    let state = session.state();
+    let positions = all_positions(&state.exp());
+    let here = index_path(&state.zipper);
+    let at = positions.iter().position(|z| index_path(z) == here)?;
+    let holes: Vec<usize> = positions
+        .iter()
+        .enumerate()
+        .filter(|(_, z)| matches!(z.focus, Exp::EmptyHole(_) | Exp::NonEmptyHole(..)))
+        .map(|(i, _)| i)
+        .collect();
+    if holes.is_empty() {
+        return None;
+    }
+    let target = if forward {
+        holes
+            .iter()
+            .copied()
+            .find(|&i| i > at)
+            .unwrap_or_else(|| holes[0])
+    } else {
+        holes
+            .iter()
+            .copied()
+            .rev()
+            .find(|&i| i < at)
+            .unwrap_or_else(|| holes[holes.len() - 1])
+    };
+    Some(moves_between(&state.zipper, &positions[target]))
+}
+
+fn vocabulary(session: &AgentSession) -> (NameTable, DocTable) {
+    let state = session.state();
+    let mut names = session.names().own();
+    let mut docs = state.docs.own();
+    let doc = state.doc();
+    for id in state.prelude_ids() {
+        if doc.defs().iter().any(|def| references(&def.body, id)) {
+            names.set(id, state.names.display(id));
+            if let Some(line) = state.doc_line(id) {
+                docs.set(id, line);
+            }
+        }
+    }
+    (names, docs)
+}
+
+fn stdlib_json(session: &AgentSession) -> Json {
+    let state = session.state();
+    Json::arr(
+        state
+            .prelude_ids()
+            .into_iter()
+            .filter_map(|id| state.prelude().get(id).map(|def| (id, def)))
+            .map(|(id, def)| {
+                Json::obj(vec![
+                    ("id", Json::str(id.to_string())),
+                    ("name", Json::str(state.names.display(id))),
+                    ("ann_text", Json::str(def.ann.to_string())),
+                    (
+                        "doc",
+                        match state.doc_line(id) {
+                            Some(line) => Json::str(line),
+                            None => Json::Null,
+                        },
+                    ),
+                ])
+            })
+            .collect(),
+    )
 }
 
 fn ok(id: Option<&Json>, applied: bool, session: &AgentSession, extra: Vec<(&str, Json)>) -> Json {
@@ -178,7 +303,7 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
                 } else {
                     Json::Obj(vec![
                         ("id".to_string(), id.cloned().unwrap_or(Json::Null)),
-                        ("ok".to_string(), Json::Bool(true)),
+                        ("ok".to_string(), Json::Bool(false)),
                         ("applied".to_string(), Json::Bool(false)),
                         (
                             "error".to_string(),
@@ -233,12 +358,21 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
                     }
                 }
             }
-            ok(
-                id,
-                all_applied,
-                session,
-                vec![("steps", Json::arr(results))],
-            )
+            if all_applied {
+                ok(id, true, session, vec![("steps", Json::arr(results))])
+            } else {
+                Json::Obj(vec![
+                    ("id".to_string(), id.cloned().unwrap_or(Json::Null)),
+                    ("ok".to_string(), Json::Bool(false)),
+                    ("applied".to_string(), Json::Bool(false)),
+                    (
+                        "error".to_string(),
+                        Json::str("a step in this script did not apply; see `steps`"),
+                    ),
+                    ("steps".to_string(), Json::arr(results)),
+                    ("state".to_string(), state_json(session)),
+                ])
+            }
         }
 
         "hole_context" => ok(
@@ -248,15 +382,47 @@ pub fn handle(session: &mut AgentSession, request: &Json) -> Outcome {
             vec![("hole_context", hole_context(session.state()).to_json())],
         ),
 
-        "undo" => {
-            let applied = session.undo();
-            ok(id, applied, session, vec![])
+        "stdlib" => ok(id, false, session, vec![("stdlib", stdlib_json(session))]),
+
+        "move_to_hole" => {
+            let forward = params
+                .get("forward")
+                .and_then(Json::as_bool)
+                .unwrap_or(true);
+            match hole_moves(session, forward) {
+                None => err(
+                    id,
+                    "there is no hole and no quarantine left in this definition",
+                    session,
+                ),
+                Some(moves) => {
+                    let author = author_of(session, params);
+                    let mut applied = Vec::new();
+                    for action in moves {
+                        if !session.apply_as(action.clone(), author) {
+                            break;
+                        }
+                        applied.push(action_json(&action));
+                    }
+                    ok(
+                        id,
+                        !applied.is_empty(),
+                        session,
+                        vec![("actions", Json::arr(applied))],
+                    )
+                }
+            }
         }
 
-        "redo" => {
-            let applied = session.redo();
-            ok(id, applied, session, vec![])
-        }
+        "undo" => match session.undo() {
+            true => ok(id, true, session, vec![]),
+            false => err(id, "there is nothing left to undo", session),
+        },
+
+        "redo" => match session.redo() {
+            true => ok(id, true, session, vec![]),
+            false => err(id, "there is nothing to redo", session),
+        },
 
         "reset" => {
             session.reset();
@@ -428,6 +594,178 @@ mod tests {
         parse(text).unwrap()
     }
 
+    fn prelude_session() -> AgentSession {
+        use nothing_core::doc::Def;
+        use nothing_core::exp::Exp;
+        use nothing_core::prelude::Prelude;
+        use nothing_core::ty::Ty;
+        use std::sync::Arc;
+
+        let twice = nothing_core::exp::Id::fresh();
+        let unused = nothing_core::exp::Id::fresh();
+        let mut names = NameTable::new();
+        names.set(twice, "twice");
+        names.set(unused, "unused");
+        let mut docs = DocTable::new();
+        docs.set(twice, "two of them");
+        docs.set(unused, "never called");
+        let prelude = Arc::new(Prelude::from_defs(
+            vec![
+                Def::new(twice, Ty::Num, Exp::Num(2)),
+                Def::new(unused, Ty::Num, Exp::Num(0)),
+            ],
+            names,
+            docs,
+        ));
+        AgentSession::from_base(
+            nothing_action::act::EditState::empty().under(prelude),
+            nothing_action::log::ActionLog::new(),
+            AuthorId::new(1),
+        )
+    }
+
+    #[test]
+    fn state_carries_the_prelude_names_a_document_uses_and_no_others() {
+        let mut s = prelude_session();
+        let out = handle(&mut s, &request(r#"{"method":"state"}"#));
+        let st = out.value.get("state").unwrap();
+        let names: Vec<&str> = st
+            .get("names")
+            .and_then(Json::as_arr)
+            .unwrap()
+            .iter()
+            .filter_map(|n| n.get("name").and_then(Json::as_str))
+            .collect();
+        assert!(
+            !names.contains(&"twice") && !names.contains(&"unused"),
+            "an untouched document borrows no names: {names:?}"
+        );
+        assert_eq!(st.get("stdlib_count").unwrap().as_i64(), Some(2));
+
+        handle(
+            &mut s,
+            &request(r#"{"method":"apply","params":{"step":"construct-var twice"}}"#),
+        );
+        let out = handle(&mut s, &request(r#"{"method":"state"}"#));
+        let st = out.value.get("state").unwrap();
+        let names: Vec<&str> = st
+            .get("names")
+            .and_then(Json::as_arr)
+            .unwrap()
+            .iter()
+            .filter_map(|n| n.get("name").and_then(Json::as_str))
+            .collect();
+        assert!(
+            names.contains(&"twice"),
+            "a name the document now references must be resolvable: {names:?}"
+        );
+        assert!(
+            !names.contains(&"unused"),
+            "a prelude name the document does not reference stays out: {names:?}"
+        );
+        let docs: Vec<&str> = st
+            .get("docs")
+            .and_then(Json::as_arr)
+            .unwrap()
+            .iter()
+            .filter_map(|d| d.get("doc").and_then(Json::as_str))
+            .collect();
+        assert_eq!(docs, vec!["two of them"]);
+    }
+
+    #[test]
+    fn move_to_hole_walks_to_the_next_unfinished_thing_and_logs_ordinary_moves() {
+        let mut s = session();
+        handle(
+            &mut s,
+            &request(
+                r#"{"method":"script","params":{"steps":["construct-if","construct-bool true","move-parent"]}}"#,
+            ),
+        );
+        assert_eq!(s.state().render(), "if true then ⦇⦈ else ⦇⦈");
+        let before = s.log().len();
+
+        let out = handle(&mut s, &request(r#"{"method":"move_to_hole"}"#));
+        assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(true));
+        assert!(matches!(
+            s.state().zipper.focus,
+            nothing_core::exp::Exp::EmptyHole(_)
+        ));
+        assert!(
+            s.log().len() > before,
+            "the moves it made are ordinary logged actions, not a hidden jump"
+        );
+
+        let done = handle(
+            &mut s,
+            &request(
+                r#"{"method":"script","params":{"steps":["construct-num 1","move-parent","move-child 2","construct-num 2","move-parent"]}}"#,
+            ),
+        );
+        assert_eq!(done.value.get("ok").unwrap().as_bool(), Some(true));
+        let out = handle(&mut s, &request(r#"{"method":"move_to_hole"}"#));
+        assert_eq!(
+            out.value.get("ok").unwrap().as_bool(),
+            Some(false),
+            "a finished definition has nowhere to jump to, and says so"
+        );
+    }
+
+    #[test]
+    fn state_says_where_the_holes_are_and_counts_the_whole_document() {
+        let mut s = session();
+        handle(
+            &mut s,
+            &request(r#"{"method":"apply","params":{"step":"construct-if"}}"#),
+        );
+        let out = handle(&mut s, &request(r#"{"method":"state"}"#));
+        let st = out.value.get("state").unwrap();
+        let holes = st.get("holes").and_then(Json::as_arr).unwrap();
+        assert_eq!(holes.len(), 3, "an if has three holes when it is written");
+        assert_eq!(st.get("document_empty_holes").unwrap().as_i64(), Some(3));
+
+        handle(
+            &mut s,
+            &request(
+                r#"{"method":"script","params":{"steps":["create-definition","construct-num 1"]}}"#,
+            ),
+        );
+        let out = handle(&mut s, &request(r#"{"method":"state"}"#));
+        let st = out.value.get("state").unwrap();
+        assert_eq!(
+            st.get("empty_holes").unwrap().as_i64(),
+            Some(0),
+            "the definition the cursor is in is finished"
+        );
+        assert_eq!(
+            st.get("document_empty_holes").unwrap().as_i64(),
+            Some(3),
+            "the document is not, and now says so"
+        );
+    }
+
+    #[test]
+    fn the_stdlib_method_hands_over_the_whole_catalogue_once() {
+        let mut s = prelude_session();
+        let out = handle(&mut s, &request(r#"{"method":"stdlib"}"#));
+        assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(true));
+        let entries = out.value.get("stdlib").and_then(Json::as_arr).unwrap();
+        assert_eq!(entries.len(), 2);
+        let names: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| e.get("name").and_then(Json::as_str))
+            .collect();
+        assert_eq!(names, vec!["twice", "unused"]);
+        assert_eq!(
+            entries[0].get("doc").and_then(Json::as_str),
+            Some("two of them")
+        );
+        assert!(
+            out.value.get("state").unwrap().get("stdlib").is_none(),
+            "the catalogue rides on the reply that asked for it, not on every state"
+        );
+    }
+
     #[test]
     fn every_response_reports_whether_the_action_applied_and_the_render() {
         let mut s = session();
@@ -482,15 +820,39 @@ mod tests {
     }
 
     #[test]
-    fn an_action_that_does_not_apply_answers_ok_but_not_applied() {
+    fn an_action_that_does_not_apply_answers_not_ok() {
         let mut s = session();
         let out = handle(
             &mut s,
             &request(r#"{"method":"apply","params":{"step":"move-parent"}}"#),
         );
-        assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(true));
+        assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(false));
         assert_eq!(out.value.get("applied").unwrap().as_bool(), Some(false));
+        assert!(out.value.get("error").unwrap().as_str().is_some());
         assert_eq!(s.log().len(), 0);
+    }
+
+    #[test]
+    fn every_failure_answers_not_ok_whatever_shape_it_takes() {
+        let mut s = session();
+        for request_text in [
+            r#"{"method":"apply","params":{"step":"move-parent"}}"#,
+            r#"{"method":"apply","params":{"step":"frobnicate"}}"#,
+            r#"{"method":"script","params":{"steps":["move-parent"]}}"#,
+            r#"{"method":"undo"}"#,
+            r#"{"method":"redo"}"#,
+        ] {
+            let out = handle(&mut s, &request(request_text));
+            assert_eq!(
+                out.value.get("ok").unwrap().as_bool(),
+                Some(false),
+                "`ok` must be false whenever the request did not do what it asked: {request_text}"
+            );
+            assert!(
+                out.value.get("error").and_then(Json::as_str).is_some(),
+                "a failure carries an error: {request_text}"
+            );
+        }
     }
 
     #[test]
@@ -541,6 +903,7 @@ mod tests {
             &mut s,
             &request(r#"{"method":"script","params":{"steps":["move-parent","construct-num 1"]}}"#),
         );
+        assert_eq!(out.value.get("ok").unwrap().as_bool(), Some(false));
         assert_eq!(out.value.get("applied").unwrap().as_bool(), Some(false));
         assert_eq!(out.value.get("steps").unwrap().as_arr().unwrap().len(), 1);
         assert_eq!(s.log().len(), 0);

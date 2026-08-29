@@ -10,8 +10,10 @@ pub const HELP: &str = "\
 nothing edit <file>
 
 Open <file> in the TUI editor. If <file> does not exist, editing starts
-from the empty program. Quit with ctrl-q; the program and its name table
-are written back to <file> on exit.
+from the empty program. Quit with ctrl-q; the program, its name table and
+its doc lines are written back to <file> on exit. The standard library is in
+scope and offered in completion, marked `std·`; it is never written into
+<file>.
 
 Options:
   -h, --help   print this help and exit";
@@ -20,10 +22,17 @@ pub fn load(path: &Path) -> Result<(AppState, ActionLog), String> {
     match read_document(path) {
         Ok(doc) => {
             let edit = nothing_action::act::EditState::with_doc(&doc.doc, doc.names, 0)
-                .expect("a decoded document always has a first definition");
+                .expect("a decoded document always has a first definition")
+                .with_docs(doc.docs)
+                .under(nothing_stdlib::prelude());
             Ok((AppState::from_edit(edit), doc.log))
         }
-        Err(_) if !path.exists() => Ok((AppState::empty(), ActionLog::new())),
+        Err(_) if !path.exists() => Ok((
+            AppState::from_edit(
+                nothing_action::act::EditState::empty().under(nothing_stdlib::prelude()),
+            ),
+            ActionLog::new(),
+        )),
         Err(err) => Err(err),
     }
 }
@@ -34,7 +43,12 @@ pub fn save(path: &Path, final_state: &AppState, base_log: ActionLog) -> Result<
     for action in final_state.actions() {
         log.append(action.clone(), now_millis(), author);
     }
-    let doc = Document::from_doc(final_state.edit.doc(), final_state.names().clone(), log);
+    let doc = Document::documented(
+        final_state.edit.doc(),
+        final_state.names().own(),
+        final_state.edit.docs.own(),
+        log,
+    );
     write_document(path, &doc)
 }
 

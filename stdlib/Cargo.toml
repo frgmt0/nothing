@@ -1,0 +1,9 @@
+[package]
+name = "nothing-stdlib"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nothing-core = { path = "../core" }
+nothing-action = { path = "../action" }
+nothing-store = { path = "../store" }

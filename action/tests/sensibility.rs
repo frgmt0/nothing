@@ -30,6 +30,7 @@ fn variant_name(action: &Action) -> &'static str {
         Action::SetAnn(_) => "SetAnn",
         Action::SetBinderId(_) => "SetBinderId",
         Action::Rename(..) => "Rename",
+        Action::SetDoc(..) => "SetDoc",
         Action::Finish => "Finish",
         Action::CreateDefinition => "CreateDefinition",
         Action::DeleteDefinition => "DeleteDefinition",
@@ -61,7 +62,7 @@ fn variant_name(action: &Action) -> &'static str {
     }
 }
 
-const ALL_VARIANTS: [&str; 48] = [
+const ALL_VARIANTS: [&str; 49] = [
     "MoveChild",
     "MoveParent",
     "MoveNextSibling",
@@ -82,6 +83,7 @@ const ALL_VARIANTS: [&str; 48] = [
     "SetAnn",
     "SetBinderId",
     "Rename",
+    "SetDoc",
     "Finish",
     "CreateDefinition",
     "DeleteDefinition",
@@ -178,6 +180,9 @@ pub fn arb_action() -> impl Strategy<Value = Action> {
         (arb_id(), arb_name())
             .prop_map(|(id, name)| Action::Rename(id, name))
             .boxed(),
+        (arb_id(), arb_name())
+            .prop_map(|(id, line)| Action::SetDoc(id, line))
+            .boxed(),
         Just(Action::Finish).boxed(),
         Just(Action::CreateDefinition).boxed(),
         Just(Action::DeleteDefinition).boxed(),
@@ -253,6 +258,8 @@ fn one_of_every_action_in(scope: &[Id], fields: &[Id], constructors: &[Id]) -> V
         Action::SetBinderId(Id::from_u128(9)),
         Action::Rename(Id::from_u128(0), "x".to_string()),
         Action::Rename(Id::from_u128(9), "items".to_string()),
+        Action::SetDoc(Id::from_u128(0), "a doc line".to_string()),
+        Action::SetDoc(Id::from_u128(9), String::new()),
         Action::Finish,
         Action::CreateDefinition,
         Action::DeleteDefinition,

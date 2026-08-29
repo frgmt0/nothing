@@ -1846,3 +1846,269 @@ in the table for the honest reason that it is the shortest program in it. The
 prediction the variants entry made — that the next feature would have to
 retire a key hint — is now literally true rather than nearly true: the hint
 line is at 160 of its 160 columns, pinned by a test.
+
+---
+
+### 2026-08-29 — The standard library is an ambient prelude, not an import
+
+**Decision.** The standard library's thirty-seven definitions are in scope in
+every session and every program, by default, without being written anywhere.
+They are in the typing context, in the name table and in the doc table, so
+completion offers them, `construct-var` resolves them, and `nothing run`
+finds them — and a saved document contains **none** of them: not their
+bodies, not their names, not their doc lines. A program that calls `min`
+stores an ordinary `Var` node holding `min`'s id, and nothing else.
+
+**The alternatives, and why not.**
+
+- **Copy the definitions into the document** (a "prelude paste"). This is
+  what a language with no module system usually does, and it is the one
+  option that needs no new concept anywhere. It is also wrong in the way that
+  matters most here: two documents that both call `map` would carry two
+  copies of `map`, with two different ids, and the merge engine — which
+  matches definitions by identity — would see an add-and-delete pair rather
+  than the same function. Content addressing would give the copies the same
+  *hash* and different *identities*, which is the worst of both.
+- **An import form** (`use min`, or a node that names a library). This is the
+  honest general answer and it is a whole feature: a new `Exp` variant or a
+  new document section, a resolution rule, a name-collision rule, an error
+  state for an import that does not resolve, a merge rule for competing
+  import lists, and a format version to carry it. v0.1.0 has one library and
+  it is shipped inside the binary. An import form would be paying the price of
+  a package system to describe a set that never varies.
+- **Make stdlib references a new node** (`StdRef(name)`). Rejected for
+  exactly the reason `DefRef` was rejected in the 2026-08-28 entry
+  "Definition references are `Var`": a definition is a binder, a reference to
+  one is a variable, and a second kind of reference means every walker in the
+  codebase — typing, rendering, diff, repair, content addressing, the
+  zipper — grows an arm that does the same thing as the arm beside it.
+
+**How it works.** `core::prelude::Prelude` holds the definitions, a name
+table, a doc table, and a cached `Ctx`. `EditState` carries one as an
+`Arc<Prelude>`; `EditState::under(prelude)` overlays the prelude's names and
+docs *beneath* the document's own layer and tells the fresh-id stream to
+observe the prelude's ids. Typing runs `Doc::ctx_in(prelude.ctx())`, so a
+prelude definition is a binder in scope like any other. Saving calls
+`NameTable::own()` and `DocTable::own()`, which return the top layer only —
+which is why nothing of the prelude reaches the file.
+
+**Consequences, recorded because they are the interesting part.**
+
+- **Stdlib ids are fixed constants.** They live in `stdlib/std.n`, which is
+  `include_bytes!`d into the binary. Two people who call `min` on two
+  machines reference the same uuid, so the merge engine matches their calls
+  and content addressing hashes them identically. The ids are not derived
+  from names: renaming `min` in a future version would keep every existing
+  reference working, and *replacing* `min` with a different function under
+  the same name would require a new id, which is the correct amount of
+  friction for that change.
+- **Content addressing is untouched.** A `Var` node hashes its id (or its
+  de-Bruijn index, when the binder is inside the term). A stdlib reference is
+  a free variable of the document, so it hashes as its id — the same rule
+  that already applied to a reference to another definition in the same file.
+  No hash changed, no fixture moved.
+- **A document may shadow a prelude name, and its own definition wins.**
+  `Prelude::extend` drops any prelude definition whose id the document
+  redefines, and a document definition with the same *name* and a different
+  id simply shadows in the name table. This is the right rule — a file must
+  be able to mean what it says — and `FRICTION2.md` point 15 records that it
+  currently happens in total silence, which is not.
+- **No stdlib id is `MAIN_ID`.** Enforced by a test, so `main` can never
+  collide with something the library shipped.
+- **`--no-stdlib` exists**, because the standard library itself had to be
+  built with nothing in scope.
+
+### 2026-08-29 — Doc lines are metadata beside the tree
+
+**Decision.** A definition's documentation is one line of text, stored in a
+`DocTable` keyed by the definition's `Id`, beside the AST. It is not a node,
+it has no type, it does not participate in content addressing, and no edit to
+it can make a program ill-typed. `Action::SetDoc(id, line)` writes one; like
+`Rename` it is total, costs exactly one log entry, and cannot fail. Setting
+the empty string removes the entry, so "undocumented" has exactly one
+representation.
+
+**Why not a node.** The tempting alternative is a `Doc(String, Box<Exp>)`
+wrapper, the way a comment is a node in some structure editors. It would put
+documentation where it is written, which is nice, and it would break three
+things that matter more. It would change every hash, because the tree would
+be different. It would give the cursor somewhere to stand that is not part of
+the program, which the zipper's whole design says it should not have. And it
+would make "add a doc" an edit that can fail — a wrapper has to go somewhere,
+and somewhere is a position in a tree that is not always available.
+
+**Why `DocTable` rather than a field on `NameTable`.** They are the same
+shape — layered overlays over an id-keyed map, flattened before writing — and
+a single table of `(name, doc)` pairs would halve the code. It would also
+mean that every `Rename` has to carry a doc line and every `SetDoc` has to
+carry a name, or that one of them can clear the other by accident. Two tables
+with the same shape and no shared state is the version where neither action
+can damage the other's data, and `merged_docs` mirrors `merged_names` line
+for line rather than sharing a code path that has to branch.
+
+**Consequences.** Format v8 inserts a doc-table section between the name
+table and the action log (`FORMAT.md` §7.1); v1–v7 files decode with an
+*empty* doc table, which is the honest reading of a file written before doc
+lines existed. The merge engine gained one conflict kind,
+`CompetingDocs` — a doc line merges exactly the way a display name does. The
+protocol reports a definition's doc in `state`, and a binding's doc in
+`hole_context`. The TUI shows the highlighted candidate's doc on a line of
+its own under the status line. And nothing in the evaluator, the diff, the
+content addressing or the type checker knows doc lines exist at all, which is
+the test of whether "metadata" was the right word.
+
+### 2026-08-29 — The `?` mush passed its revisit trigger, with evidence
+
+The design commitments name the trigger for revisiting the
+no-polymorphism-in-v0.1.0 decision: "ten functions of `?` mush". The standard
+library passed it on its first day. This entry is the evidence, as the
+commitments require — **not** a redesign, and not a proposal.
+
+**The count.** Seventeen of thirty-seven stdlib signatures contain a `?`.
+Fifteen of those are `?` because the function is genuinely generic; two
+(`print_labelled`, `print_all`) are `Cmd ?` because there is no unit type,
+which is a different missing feature.
+
+```
+is_empty   List ? -> Bool           map        (? -> ?) -> List ? -> List ?
+length     List ? -> Num            filter     (? -> Bool) -> List ? -> List ?
+append     List ? -> List ? -> …    any        (? -> Bool) -> List ? -> Bool
+reverse    List ? -> List ?         all        (? -> Bool) -> List ? -> Bool
+take       Num -> List ? -> List ?  count      (? -> Bool) -> List ? -> Num
+drop       Num -> List ? -> List ?  head_or    ? -> List ? -> ?
+swap       ? * ? -> ? * ?           map_fst    (? -> ?) -> ? * ? -> ? * ?
+                                    uncurry    (? -> ? -> ?) -> ? * ? -> ?
+```
+
+**The cost is not aesthetic.** A `?` in a signature is not a weaker way of
+saying "any type"; it is a hole in the checking. Concretely, driven through
+the protocol during the B4 friction session:
+
+```
+probe : List ? = map not (todo_report nil)
+well_typed: true    quarantines: 0
+```
+
+`not : Bool -> Bool` mapped over a `List Str`, accepted with nothing
+quarantined, because `map : (? -> ?) -> List ? -> List ?` has no way to say
+that its second `?` is the first one's *codomain* or that its third is the
+element type of its second. `not` is consistent with `? -> ?`; a `List Str`
+is consistent with `List ?`; the composition is consistent with everything.
+The library's most-used function does not check its own argument, and neither
+does `filter`, `any`, `all`, `count`, `map_fst` or `uncurry`.
+
+**Two related observations, so the record is complete.**
+
+- **The annotation is doing all the work.** `todo_report : List Str -> List
+  Str = λxs:List Str. map todo_bullet (filter todo_kept xs)` is well-typed
+  because `List ?` is consistent with `List Str`, not because anything
+  checked that `todo_bullet` returns a `Str`. Every generic call site is
+  re-anchored by the enclosing annotation, which works exactly as long as
+  there is one.
+- **Completion cannot rank what it cannot distinguish.** Ranking is by
+  consistency with the expected type; a signature made of `?` is consistent
+  with everything, so all seventeen sort into the same bucket. The candidate
+  list gets longer and no more useful the more generic the library gets.
+
+**What this entry does not do.** It does not propose parametric polymorphism,
+does not sketch an inference algorithm, and does not schedule the work.
+v0.1.0 ships gradual typing and a `?`-shaped standard library, and the
+programs in `bench/references.md` and the B4 friction session all type-check
+and all run. The trigger has fired; the evidence is written down; the
+decision to act on it belongs to whoever plans v0.2.0, and they now have a
+number (17 of 37), a reproduction (`map not xs`), and a named consequence
+(annotations, not signatures, are what hold generic code together today).
+
+### 2026-08-29 — What the standard library cost
+
+Phase B4 is the first phase since the checklist was written whose main
+deliverable is **not** a change to the language. Nothing was added to the
+grammar: no node tag, no type constructor, no operator, no key. What it adds
+is a document written in the language that already existed, plus the
+machinery to have that document in scope, plus one piece of metadata.
+
+**Files touched: 36 modified, 29 added.** By layer:
+
+| layer | files | what changed |
+|---|---:|---|
+| type grammar | 0 | nothing — B4 adds no type |
+| expression grammar | 0 | nothing — B4 adds no form |
+| document | 3 (+2 new) | `core/src/docs.rs`, `core/src/prelude.rs`, `Doc::ctx_in`/`is_well_typed_in`, `NameTable::own` |
+| actions | 3 | `Action::SetDoc`, `EditState::{docs, prelude, under, doc_line}`, the `set-doc` step, the variant tables |
+| serialisation | 6 (+19 new) | v7→v8, the doc-table section, action tag 48, `store/src/docs.rs`, `store/src/v7.rs`, 18 v7 fixtures, the migration suite |
+| merge | 2 | `DocVersion::documented`, `merged_docs`, `CompetingDocs`, three tests |
+| protocol | 5 | docs in `state` and `hole_context`, `SetDoc` json, provenance stamps, the `stdlib` and `move_to_hole` methods |
+| TUI | 3 | `Origin::Stdlib`, `Candidate::doc`, the `std·` marker, the doc row under the status line |
+| CLI | 6 (+2 new) | `nothing doc`, the prelude in `run`/`check`/`edit`/`protocol`, `cli/tests/stdlib.rs` |
+| the library itself | 2 (+4 new) | the workspace `Cargo.toml`/`Cargo.lock`, `stdlib/Cargo.toml`, `stdlib/src/lib.rs`, **`stdlib/std.n`**, `stdlib/REFERENCE.md` |
+| docs | 5 (+1 new) | `FORMAT.md` §7.1 and §11, `KEYS.md` Phase B4, `CHANGELOG.md`, `bench/RESULTS.md`, this file, and `FRICTION2.md` |
+
+**Tests: 51 added**, 4 honestly adapted, 0 deleted. The workspace went from
+914 to 965 (`cargo test --workspace`: 50 suites, 965 passed, 0 failed, 2
+ignored — the two `agentapi/tests/live_model.rs` tests that call the real
+`claude` CLI, ignored before this phase and ignored still).
+
+**Adapted, each for a real reason.** Four. Three are the same reason a version
+bump always produces:
+`a_version_seven_file_carries_a_command_no_earlier_version_could` now encodes
+through `encode_document_v7` and asserts the version byte rather than
+asserting `VERSION_MAJOR == 7`, exactly as its v6 predecessor was adapted in
+B3; and the two sensibility generators that enumerate the action alphabet went
+from 48 variants to 49. The fourth is the friction fix:
+`an_action_that_does_not_apply_answers_ok_but_not_applied` asserted the
+behaviour `FRICTION2.md` point 1 is about, so it was renamed to
+`an_action_that_does_not_apply_answers_not_ok` and its assertion inverted —
+the one test in this phase whose *expectation* changed rather than its
+scaffolding.
+
+**What the authorship rule actually cost.** The spec's rule for this phase is
+that the stdlib must be *built with the product* — "a serialised document
+plus its action log, proving it was built with the product". That is not a
+documentation requirement, it is a test requirement, and it is the single
+most valuable constraint in the phase. `stdlib/std.n` carries 1,289 action-log
+entries, and
+`stdlib::tests::the_committed_action_log_replays_to_the_committed_document`
+replays every one of them from `EditState::empty()` and asserts the resulting
+document, doc table and name table are the committed ones — then re-encodes
+and asserts the bytes match. The library cannot drift from its own history.
+
+Building it that way also found the bug that a hand-written library would
+have shipped: the first authoring run produced twenty-two definitions with
+quarantined operands, because `construct-binop`/`construct-cons` wrap the
+*focus* as the left operand, and I was writing the operand first. That is a
+fact about the editor that only writing 1,289 actions through it teaches.
+
+**What fought back.** Two things.
+
+**One: the format layering.** Version 8 is the first version since 2 to change
+the *shape* of the body rather than add a tag, which means the v7 fixtures had
+to be generated by an encoder that did not know about doc tables — and had to
+keep decoding identically afterwards. The answer is that `encode_defs` /
+`decode_defs` (defs + names + log) are frozen for v2–v7 and `encode_defs_v8` /
+`decode_defs_v8` are a separate pair that inserts the doc section. Eighteen v7
+fixtures were generated with the unmodified encoder *before* the doc table
+existed and are committed under `store/fixtures/v7/`, with a test asserting
+none of them carries a doc line — the same discipline the v3, v4, v5 and v6
+corpora follow, and the reason a migration path is exercised against bytes an
+older build really produced rather than against a hypothesis.
+
+**Two: the friction session found a defect in the protocol that had been there
+since Phase 8.** An action that does not apply answered `ok: true` with an
+error string beside it, while an unresolvable *name* answered `ok: false`. A
+client that keys on `ok` — which is what `ok` is for — is wrong exactly at the
+most common failure. It destroyed two subtrees in the session before I
+understood it (`FRICTION2.md` point 1) and it is now fixed, along with four
+others. This is the second phase running in which the friction audit, not the
+test suite, found the worst bug of the phase; the pattern is worth naming.
+
+**Verdict: worth it, and the cheapest phase per unit of capability so far.**
+Two of the seventeen checklist layers are empty for the first time, and the
+mass is where it should be — serialisation (a version's worth of fixtures,
+which is the format's own policy) and the library document itself. The
+keyboard gained no binding and the benchmark did not move a row, which is
+what "this phase adds no language" should look like when it is true. What
+the phase actually bought is that `map`, `filter`, `fold`-derived helpers,
+`join` and `repeat_str` are now things a program *has* rather than things a
+program must first define — which the friction session demonstrates by
+building a seven-definition program that calls thirteen of them and defines
+none of them.
