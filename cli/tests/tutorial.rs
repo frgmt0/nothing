@@ -136,11 +136,9 @@ impl Screen {
                 self.col = col.saturating_sub(1).min(COLS - 1);
             }
             'J' => self.clear(),
-            'K' => {
-                if self.row < ROWS {
-                    for cell in self.cells[self.row][self.col.min(COLS)..].iter_mut() {
-                        *cell = ' ';
-                    }
+            'K' if self.row < ROWS => {
+                for cell in self.cells[self.row][self.col.min(COLS)..].iter_mut() {
+                    *cell = ' ';
                 }
             }
             _ => {}
